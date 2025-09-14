@@ -11,7 +11,7 @@ export interface ListItemProps {
 }
 
 function csColor(score: number) {
-  if (score >= 0.97) return 'text-emerald-700';
+  if (score >= 0.95) return 'text-emerald-700';
   // if (score >= 0.94) return 'text-emerald-600';
   // if (score >= 0.9) return 'text-amber-700';
   return 'text-rose-700';
