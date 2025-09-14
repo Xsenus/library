@@ -1,7 +1,6 @@
 'use client';
 
 import { cn } from '@/lib/utils';
-import { CsBadge } from './cs-badge';
 
 export interface ListItemProps {
   title: string;
@@ -9,6 +8,13 @@ export interface ListItemProps {
   cs?: number | null;
   isSelected?: boolean;
   onClick?: () => void;
+}
+
+function csColor(score: number) {
+  if (score >= 0.97) return 'text-emerald-700';
+  // if (score >= 0.94) return 'text-emerald-600';
+  // if (score >= 0.9) return 'text-amber-700';
+  return 'text-rose-700';
 }
 
 export function ListItem({ title, subtitle, cs, isSelected, onClick }: ListItemProps) {
@@ -19,21 +25,22 @@ export function ListItem({ title, subtitle, cs, isSelected, onClick }: ListItemP
       type="button"
       onClick={onClick}
       className={cn(
-        'w-full text-left px-2 py-2 rounded-md transition-colors',
+        'w-full text-left px-2 py-1 rounded-md transition-colors',
         'hover:bg-accent/60 focus:outline-none',
         isSelected && 'bg-accent/70',
       )}>
-      <div className="font-medium leading-5 text-[12px] whitespace-normal break-words">{title}</div>
+      <div className="font-medium leading-4 text-[11px] whitespace-normal break-words">
+        {title}
+        {hasCs && (
+          <span className={cn('ml-1 font-extrabold tabular-nums', csColor((cs as number) ?? 0))}>
+            {(cs as number).toFixed(2)}
+          </span>
+        )}
+      </div>
 
       {subtitle && (
         <div className="mt-0.5 text-[11px] leading-4 text-muted-foreground whitespace-normal break-words">
           {subtitle}
-        </div>
-      )}
-
-      {hasCs && (
-        <div className="mt-1">
-          <CsBadge score={cs as number} className="scale-90 origin-left" />
         </div>
       )}
     </button>

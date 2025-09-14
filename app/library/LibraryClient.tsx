@@ -668,7 +668,6 @@ export default function LibraryPage() {
                       onLoadMore={loadMoreProdclasses}
                       getItemId={(item) => item.id}
                       getItemTitle={(item) => item.prodclass}
-                      getItemCs={(item) => item.best_cs ?? null}
                       emptyMessage={
                         selectedIndustry ? 'Нет классов предприятий' : 'Выберите индустрию'
                       }

@@ -17,8 +17,15 @@ type Props<T> = {
   getItemTitle: (item: T) => string;
   getItemCs?: (item: T) => number | null | undefined;
   emptyMessage?: string;
-  enabled?: boolean; // <- активен ли список (выбран ли предыдущий уровень)
+  enabled?: boolean;
 };
+
+function csColor(score: number) {
+  if (score >= 0.97) return 'text-emerald-700';
+  // if (score >= 0.94) return 'text-emerald-600';
+  // if (score >= 0.90) return 'text-amber-700';
+  return 'text-muted-foreground';
+}
 
 export function HierarchyList<T>(props: Props<T>) {
   const {
@@ -40,24 +47,15 @@ export function HierarchyList<T>(props: Props<T>) {
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
 
-  // Автодогрузка при прокрутке к низу — только если список активен
   useEffect(() => {
-    if (!enabled) return;
-    if (!onLoadMore) return;
-    if (!hasNextPage || loading) return;
-
+    if (!enabled || !onLoadMore || !hasNextPage || loading) return;
     const el = sentinelRef.current;
     if (!el) return;
 
     const io = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) {
-          if (e.isIntersecting) onLoadMore();
-        }
-      },
+      (entries) => entries.forEach((e) => e.isIntersecting && onLoadMore()),
       { root: el.parentElement, rootMargin: '200px', threshold: 0.01 },
     );
-
     io.observe(el);
     return () => io.disconnect();
   }, [enabled, hasNextPage, loading, onLoadMore]);
@@ -69,16 +67,16 @@ export function HierarchyList<T>(props: Props<T>) {
 
   return (
     <div className="flex h-full flex-col rounded-lg bg-background">
-      {/* header (только горизонтальная линия) */}
-      <div className="sticky top-0 z-10 bg-background px-3 py-2 text-sm font-medium border-b">
+      {/* компактный header */}
+      <div className="sticky top-0 z-10 bg-background px-2 py-1.5 text-[12px] font-medium border-b">
         {title}
       </div>
 
-      {/* optional search */}
+      {/* компактный поиск */}
       {typeof onSearchChange === 'function' && (
-        <div className="px-3 py-2 border-b">
+        <div className="px-2 py-1.5 border-b">
           <input
-            className="w-full rounded-md border px-2 py-1 text-xs disabled:opacity-50"
+            className="w-full rounded-md border px-2 py-1 text-[11px] disabled:opacity-50"
             placeholder="Поиск…"
             value={searchQuery ?? ''}
             onChange={(e) => onSearchChange(e.target.value)}
@@ -87,49 +85,56 @@ export function HierarchyList<T>(props: Props<T>) {
         </div>
       )}
 
-      {/* list (только горизонтальные разделители) */}
+      {/* список — только горизонтальные разделители */}
       <div className="flex-1 overflow-auto divide-y">
         {items.length === 0 && !loading ? (
-          <div className="px-3 py-3 text-xs text-muted-foreground">{emptyMessage}</div>
+          <div className="px-2 py-2 text-[11px] text-muted-foreground">{emptyMessage}</div>
         ) : (
           items.map((it) => {
             const id = getItemId(it);
             const selected = selectedId === id;
-            const cs = getItemCs?.(it);
+            const csVal = getItemCs?.(it);
+            const hasCs = Number.isFinite(csVal as number);
+
             return (
               <button
                 key={id}
                 type="button"
                 onClick={() => onItemSelect(it)}
                 className={cn(
-                  'w-full text-left px-3 py-2 text-[12px] leading-5',
+                  'w-full text-left px-2 py-1 text-[11px] leading-4',
                   'hover:bg-accent/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/40',
                   selected && 'bg-accent/80 ring-1 ring-primary/30',
                 )}>
-                <div className="font-medium">{getItemTitle(it)}</div>
-                {Number.isFinite(cs as number) && (
-                  <div className="mt-1 inline-flex items-center rounded bg-emerald-50 px-1.5 py-0.5 text-[10px] text-emerald-700">
-                    CS: {(cs as number).toFixed(2)}
-                  </div>
-                )}
+                <div className="font-medium">
+                  {getItemTitle(it)}
+                  {/* CS в конце названия: жирный и только цвет текста */}
+                  {hasCs && (
+                    <span
+                      className={cn(
+                        'ml-1 font-extrabold tabular-nums',
+                        csColor((csVal as number) ?? 0),
+                      )}
+                      title="Clean Score">
+                      {(csVal as number).toFixed(2)}
+                    </span>
+                  )}
+                </div>
               </button>
             );
           })
         )}
 
-        {/* скелетоны во время загрузки */}
-        {loading && <div className="px-3 py-2 text-xs text-muted-foreground">Загрузка…</div>}
+        {loading && <div className="px-2 py-1.5 text-[11px] text-muted-foreground">Загрузка…</div>}
 
-        {/* наблюдатель — только когда список активен */}
         {enabled && <div ref={sentinelRef} />}
 
-        {/* компактная ручная догрузка */}
         {showFooterManual && (
-          <div className="px-3 py-2">
+          <div className="px-2 py-1.5">
             <button
               type="button"
               onClick={onLoadMore!}
-              className="text-xs text-muted-foreground hover:text-foreground underline underline-offset-2">
+              className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2">
               Показать ещё
             </button>
           </div>
