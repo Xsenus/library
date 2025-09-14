@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'next/navigation';
+import Image from 'next/image';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
   Breadcrumb,
@@ -251,12 +252,10 @@ export default function LibraryPage() {
   }, []);
 
   // ========================= EFFECTS =========================
-  // Начальная загрузка индустрий
   useEffect(() => {
     fetchIndustries(1, debouncedIndustrySearch);
   }, [fetchIndustries, debouncedIndustrySearch]);
 
-  // Каскадные загрузки
   useEffect(() => {
     if (selectedIndustry) {
       setProdclassesState((prev) => ({ ...prev, page: 1 }));
@@ -284,14 +283,13 @@ export default function LibraryPage() {
     }
   }, [selectedEquipment, fetchEquipmentDetail]);
 
-  // Загрузка CleanScore при открытии вкладки / поиске
   useEffect(() => {
     if (tab === 'cleanscore') {
       fetchCleanScore(1, csQueryDebounced);
     }
   }, [tab, csQueryDebounced, fetchCleanScore]);
 
-  // Поддержка deep-link (?industryId=&prodclassId=&workshopId=&equipmentId=...)
+  // Поддержка deep-link
   useEffect(() => {
     const iid = Number(searchParams.get('industryId') ?? '');
     const pid = Number(searchParams.get('prodclassId') ?? '');
@@ -331,7 +329,7 @@ export default function LibraryPage() {
     }
   }, [searchParams]);
 
-  // Подменяем заглушки реальными объектами из списков
+  // Подменяем заглушки
   useEffect(() => {
     if (!selectedIndustry || !industriesState.items.length) return;
     if (selectedIndustry.industry?.startsWith('(загруз')) {
@@ -364,7 +362,7 @@ export default function LibraryPage() {
     }
   }, [equipmentState.items, selectedEquipment]);
 
-  // ========================= HANDLERS =========================
+  // ========================= HANDЛЕРЫ =========================
   const handleIndustrySelect = (industry: Industry) => {
     if (selectedIndustry?.id === industry.id) return;
     setSelectedIndustry(industry);
@@ -401,8 +399,6 @@ export default function LibraryPage() {
   };
 
   // Load more handlers
-
-  // хелпер рядом с компонентом (до return)
   const LoadingCrumb = () => <div className="h-4 w-24 rounded bg-muted animate-pulse" />;
   const isLoadingText = (s?: string | null) => Boolean(s && s.startsWith('(загруз'));
 
@@ -438,7 +434,7 @@ export default function LibraryPage() {
     }
   };
 
-  // Вспомогательный генератор ссылки в библиотеку из строки CleanScore
+  // Вспомогательный генератор ссылки из строки CleanScore
   const toLibraryLink = (r: CleanScoreRow) => {
     const qp = new URLSearchParams();
     if (r.industry_id) qp.set('industryId', String(r.industry_id));
@@ -451,16 +447,29 @@ export default function LibraryPage() {
   // ========================= RENDER =========================
   return (
     <div className="h-screen flex flex-col">
-      {/* Tabs */}
+      {/* ===== ГЛАВНАЯ ШАПКА СВЕРХУ (над вкладками) ===== */}
+      <div className="border-b bg-background">
+        <div className="container mx-auto px-4">
+          <div className="flex items-center justify-between py-4">
+            <h1 className="text-xl md:text-2xl font-semibold leading-tight">
+              Отраслевой навигатор криобластинга от ИРБИСТЕХ
+            </h1>
+            <Image src="/logo.png" alt="ИрбисТех" width={160} height={48} priority />
+          </div>
+        </div>
+      </div>
+
+      {/* ===== ВКЛАДКИ И СОДЕРЖИМОЕ ===== */}
       <div className="border-b bg-background">
         <div className="container mx-auto px-4">
           <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="w-full">
             <TabsList className="grid w-full md:w-auto grid-cols-3 md:grid-cols-3 gap-0">
+              {/* Переименовано: Каталог / Таблица / AI-поиск */}
               <TabsTrigger value="library" className="px-6 py-2">
-                Библиотека
+                Каталог
               </TabsTrigger>
               <TabsTrigger value="cleanscore" className="px-6 py-2">
-                Лучшие CleanScore (ChatGPT)
+                Таблица
               </TabsTrigger>
               <TabsTrigger value="search" className="px-6 py-2" disabled>
                 AI-поиск
@@ -478,11 +487,11 @@ export default function LibraryPage() {
                     </BreadcrumbItem>
                     <BreadcrumbSeparator />
                     <BreadcrumbItem>
-                      <BreadcrumbPage>Library</BreadcrumbPage>
+                      <BreadcrumbPage>Каталог</BreadcrumbPage>
                     </BreadcrumbItem>
                     <BreadcrumbSeparator />
                     <BreadcrumbItem>
-                      <BreadcrumbPage>Data</BreadcrumbPage>
+                      <BreadcrumbPage>Навигатор</BreadcrumbPage>
                     </BreadcrumbItem>
                     {selectedIndustry && (
                       <>
@@ -646,9 +655,9 @@ export default function LibraryPage() {
               </div>
             </TabsContent>
 
-            {/* ===== CLEAN SCORE TAB ===== */}
+            {/* ===== CLEAN SCORE TAB (Таблица) ===== */}
             <TabsContent value="cleanscore" className="mt-0">
-              <div className="py-4 space-y-3">
+              <div className="py-4 space-y-4">
                 {/* Панель поиска */}
                 <div className="flex items-center gap-2">
                   <input
@@ -696,7 +705,7 @@ export default function LibraryPage() {
                               target="_blank"
                               rel="noopener noreferrer"
                               className="inline-flex items-center rounded-md border px-2 py-1 text-xs hover:bg-accent"
-                              title="Открыть карточку в библиотеке">
+                              title="Открыть карточку в каталоге">
                               Карточка
                             </a>
                           </td>
