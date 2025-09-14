@@ -59,6 +59,10 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const googleImagesUrl = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(q)}`;
   const googleTextUrl = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 
+  // Единый стиль «голубых» кнопок
+  const blueBtn =
+    'shrink-0 border border-blue-500 text-blue-600 bg-blue-50 hover:bg-blue-100 active:scale-[.98] transition';
+
   return (
     <div className="space-y-4">
       <Card>
@@ -69,6 +73,11 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           <div className="flex flex-wrap items-center gap-1.5">
             <ScorePill label="CS" value={cs} tone="cs" />
             <ScorePill label="ES" value={es} tone="es" />
+            {equipment?.id != null && (
+              <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium border">
+                ID: {equipment.id}
+              </span>
+            )}
           </div>
         </CardHeader>
 
@@ -148,29 +157,25 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
           <Sep />
 
-          {/* Ряд 1 — УТП и Письмо */}
-          <div className="flex flex-wrap gap-1.5">
-            <Button variant="outline" size="sm" onClick={() => setShowUtp(true)}>
+          {/* Единый ряд «голубых» действий */}
+          <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap pb-1">
+            <Button size="sm" onClick={() => setShowUtp(true)} className={blueBtn}>
               📣 УТП
             </Button>
-            <Button variant="outline" size="sm" onClick={() => setShowMail(true)}>
+            <Button size="sm" onClick={() => setShowMail(true)} className={blueBtn}>
               ✉ Письмо
             </Button>
-          </div>
-
-          {/* Ряд 2 — остальные кнопки */}
-          <div className="flex flex-wrap gap-1.5">
-            <Button variant="outline" size="sm" asChild>
+            <Button size="sm" asChild className={blueBtn}>
               <a href={googleImagesUrl} target="_blank" rel="noopener noreferrer">
                 Картинки Google
               </a>
             </Button>
-            <Button variant="outline" size="sm" asChild>
+            <Button size="sm" asChild className={blueBtn}>
               <a href={googleTextUrl} target="_blank" rel="noopener noreferrer">
                 Описание Google
               </a>
             </Button>
-            <Button variant="outline" size="sm" disabled={!equipment.company_id}>
+            <Button size="sm" className={blueBtn} disabled={!equipment.company_id}>
               Компания
             </Button>
           </div>
