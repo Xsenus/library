@@ -23,7 +23,7 @@ import {
   ListResponse,
   CleanScoreRow,
 } from '@/lib/validators';
-import { Home } from 'lucide-react';
+import { Home, ArrowUpRight } from 'lucide-react';
 
 interface ListState<T> {
   items: T[];
@@ -88,11 +88,36 @@ export default function LibraryPage() {
   const [csQuery, setCsQuery] = useState('');
   const csQueryDebounced = useDebounce(csQuery, 300);
 
-  // Debounced search queries (иерархия)
+  // Debounced search queries (иерархия)  <<< ДОБАВЛЕНО
   const debouncedIndustrySearch = useDebounce(industriesState.searchQuery, 300);
   const debouncedProdclassSearch = useDebounce(prodclassesState.searchQuery, 300);
   const debouncedWorkshopSearch = useDebounce(workshopsState.searchQuery, 300);
   const debouncedEquipmentSearch = useDebounce(equipmentState.searchQuery, 300);
+
+  // Фильтр по индустрии (вкл/выкл) и выбранная отрасль
+  const [csIndustryEnabled, setCsIndustryEnabled] = useState(false);
+  const [csIndustryId, setCsIndustryId] = useState<number | null>(null);
+
+  // Диапазон CS (0.85..1.00 шаг 0.01)
+  const [csMinScore, setCsMinScore] = useState(0.95);
+  const [csMaxScore, setCsMaxScore] = useState(1.0);
+  const scoreOptions = Array.from({ length: 16 }, (_, i) => Number((0.85 + i * 0.01).toFixed(2)));
+
+  // Ручные ширины колонок
+  const colW = {
+    card: 35,
+    industry: 100,
+    prodclass: 100,
+    workshop: 100,
+    equipment: 100,
+    cs: 35,
+    contamination: 100,
+    surface: 125,
+    problems: 125,
+    old_method: 125,
+    old_problem: 125,
+    benefit: 260,
+  } as const;
 
   // ========================= API LOADERS =========================
   const fetchIndustries = useCallback(
@@ -229,31 +254,39 @@ export default function LibraryPage() {
     }
   }, []);
 
-  // CleanScore loader
-  const fetchCleanScore = useCallback(async (page: number, query: string, append = false) => {
-    try {
-      setCsLoading(true);
-      const params = new URLSearchParams({
-        page: String(page),
-        pageSize: '30',
-        minScore: '0.95',
-        ...(query && { query }),
-      });
-      const res = await fetch(`/api/cleanscore?${params}`);
-      const data: ListResponse<CleanScoreRow> = await res.json();
-      setCsRows((prev) => (append ? [...prev, ...data.items] : data.items));
-      setCsHasNext(page < data.totalPages);
-      setCsPage(page);
-    } catch (e) {
-      console.error('Failed to fetch cleanscore:', e);
-    } finally {
-      setCsLoading(false);
-    }
-  }, []);
+  // CleanScore loader (с фильтрами)
+  const fetchCleanScore = useCallback(
+    async (page: number, query: string, append = false) => {
+      try {
+        setCsLoading(true);
+        const params = new URLSearchParams({
+          page: String(page),
+          pageSize: '30',
+          query,
+          minScore: csMinScore.toFixed(2),
+          maxScore: csMaxScore.toFixed(2),
+        });
+        if (csIndustryEnabled && csIndustryId) {
+          params.set('industryId', String(csIndustryId));
+        }
+        const res = await fetch(`/api/cleanscore?${params}`);
+        const data: ListResponse<CleanScoreRow> = await res.json();
+        setCsRows((prev) => (append ? [...prev, ...data.items] : data.items));
+        setCsHasNext(page < data.totalPages);
+        setCsPage(page);
+      } catch (e) {
+        console.error('Failed to fetch cleanscore:', e);
+      } finally {
+        setCsLoading(false);
+      }
+    },
+    [csIndustryEnabled, csIndustryId, csMinScore, csMaxScore],
+  );
 
   // ========================= EFFECTS =========================
   useEffect(() => {
     fetchIndustries(1, debouncedIndustrySearch);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchIndustries, debouncedIndustrySearch]);
 
   useEffect(() => {
@@ -261,6 +294,7 @@ export default function LibraryPage() {
       setProdclassesState((prev) => ({ ...prev, page: 1 }));
       fetchProdclasses(selectedIndustry.id, 1, debouncedProdclassSearch);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIndustry, fetchProdclasses, debouncedProdclassSearch]);
 
   useEffect(() => {
@@ -268,6 +302,7 @@ export default function LibraryPage() {
       setWorkshopsState((prev) => ({ ...prev, page: 1 }));
       fetchWorkshops(selectedProdclass.id, 1, debouncedWorkshopSearch);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProdclass, fetchWorkshops, debouncedWorkshopSearch]);
 
   useEffect(() => {
@@ -275,6 +310,7 @@ export default function LibraryPage() {
       setEquipmentState((prev) => ({ ...prev, page: 1 }));
       fetchEquipment(selectedWorkshop.id, 1, debouncedEquipmentSearch);
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWorkshop, fetchEquipment, debouncedEquipmentSearch]);
 
   useEffect(() => {
@@ -287,7 +323,15 @@ export default function LibraryPage() {
     if (tab === 'cleanscore') {
       fetchCleanScore(1, csQueryDebounced);
     }
-  }, [tab, csQueryDebounced, fetchCleanScore]);
+  }, [
+    tab,
+    csQueryDebounced,
+    csIndustryEnabled,
+    csIndustryId,
+    csMinScore,
+    csMaxScore,
+    fetchCleanScore,
+  ]);
 
   // Поддержка deep-link
   useEffect(() => {
@@ -464,7 +508,6 @@ export default function LibraryPage() {
         <div className="container mx-auto px-4">
           <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="w-full">
             <TabsList className="grid w-full md:w-auto grid-cols-3 md:grid-cols-3 gap-0">
-              {/* Переименовано: Каталог / Таблица / AI-поиск */}
               <TabsTrigger value="library" className="px-6 py-2">
                 Каталог
               </TabsTrigger>
@@ -658,23 +701,89 @@ export default function LibraryPage() {
             {/* ===== CLEAN SCORE TAB (Таблица) ===== */}
             <TabsContent value="cleanscore" className="mt-0">
               <div className="py-4 space-y-4">
-                {/* Панель поиска */}
-                <div className="flex items-center gap-2">
-                  <input
-                    className="w-full md:w-96 rounded-md border px-3 py-1.5 text-sm"
-                    placeholder="Поиск (оборудование, отрасль, цех, текст...)"
-                    value={csQuery}
-                    onChange={(e) => {
-                      setCsPage(1);
-                      setCsQuery(e.target.value);
-                    }}
-                  />
-                  <button
-                    className="rounded-md border px-3 py-1.5 text-sm"
-                    onClick={() => fetchCleanScore(1, csQueryDebounced)}
-                    disabled={csLoading}>
-                    Обновить
-                  </button>
+                {/* Панель поиска + фильтры */}
+                <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3">
+                  {/* Поиск и Обновить */}
+                  <div className="flex items-center gap-2">
+                    <input
+                      className="w-[320px] rounded-md border px-3 py-1.5 text-sm"
+                      placeholder="Поиск (оборудование, отрасль, цех, текст...)"
+                      value={csQuery}
+                      onChange={(e) => {
+                        setCsPage(1);
+                        setCsQuery(e.target.value);
+                      }}
+                    />
+                    <button
+                      className="rounded-md border px-3 py-1.5 text-sm"
+                      onClick={() => fetchCleanScore(1, csQueryDebounced)}
+                      disabled={csLoading}>
+                      Обновить
+                    </button>
+                  </div>
+
+                  {/* Фильтр отрасли (вкл/выкл) */}
+                  <div className="flex items-center gap-2">
+                    <label className="inline-flex items-center gap-2 text-sm">
+                      <input
+                        type="checkbox"
+                        className="h-4 w-4"
+                        checked={csIndustryEnabled}
+                        onChange={(e) => setCsIndustryEnabled(e.target.checked)}
+                      />
+                      Фильтр по отрасли
+                    </label>
+                    <select
+                      className="rounded-md border px-2 py-1.5 text-sm min-w-[220px]"
+                      disabled={!csIndustryEnabled}
+                      value={csIndustryId ?? ''}
+                      onChange={(e) =>
+                        setCsIndustryId(e.target.value ? Number(e.target.value) : null)
+                      }>
+                      <option value="">— Все отрасли —</option>
+                      {industriesState.items.map((i) => (
+                        <option key={i.id} value={i.id}>
+                          {i.industry}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {/* Диапазон CS */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">CS от</span>
+                    <select
+                      className="rounded-md border px-2 py-1.5 text-sm"
+                      value={csMinScore.toFixed(2)}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setCsMinScore(v);
+                        if (v > csMaxScore) setCsMaxScore(v);
+                      }}>
+                      {scoreOptions.map((v) => (
+                        <option key={`min-${v}`} value={v.toFixed(2)}>
+                          {v.toFixed(2)}
+                        </option>
+                      ))}
+                    </select>
+                    <span className="text-sm text-muted-foreground">до</span>
+                    <select
+                      className="rounded-md border px-2 py-1.5 text-sm"
+                      value={csMaxScore.toFixed(2)}
+                      onChange={(e) => {
+                        const v = Number(e.target.value);
+                        setCsMaxScore(v);
+                        if (v < csMinScore) setCsMinScore(v);
+                      }}>
+                      {scoreOptions
+                        .filter((v) => v >= csMinScore)
+                        .map((v) => (
+                          <option key={`max-${v}`} value={v.toFixed(2)}>
+                            {v.toFixed(2)}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
                 </div>
 
                 {/* Таблица */}
@@ -684,87 +793,96 @@ export default function LibraryPage() {
                       className="
                         sticky top-0 z-10 text-left border-b
                         [&>tr>th]:px-2 [&>tr>th]:py-2
-                        /* цвета ТОЛЬКО для заголовков */
-                        [&>tr>th:nth-child(1)]:bg-sky-50
-                        [&>tr>th:nth-child(2)]:bg-sky-50
-                        [&>tr>th:nth-child(3)]:bg-sky-50
-                        [&>tr>th:nth-child(4)]:bg-sky-50
-                        [&>tr>th:nth-child(5)]:bg-sky-50
-                        [&>tr>th:nth-child(6)]:bg-sky-50
-                        [&>tr>th:nth-child(7)]:bg-sky-50
-                        [&>tr>th:nth-child(8)]:bg-sky-50
-                        [&>tr>th:nth-child(9)]:bg-sky-50
-                        [&>tr>th:nth-child(10)]:bg-sky-50
-                        [&>tr>th:nth-child(11)]:bg-sky-50
-                        [&>tr>th:nth-child(12)]:bg-sky-50
+                        [&>tr>th]:bg-sky-50
                       ">
-                      <tr className="">
-                        <th style={{ minWidth: 90 }}>Карточка</th>
-                        <th>Отрасль</th>
-                        <th>Класс</th>
-                        <th>Цех</th>
-                        <th>Оборудование</th>
-                        <th>CS</th>
-                        <th>Загрязнения</th>
-                        <th>Поверхности</th>
-                        <th>Проблемы</th>
-                        <th>Традиционная очистка</th>
-                        <th>Недостатки традиц.</th>
-                        <th>Преимущества</th>
+                      <tr>
+                        {/* пустой заголовок для колонки с кнопкой */}
+                        <th style={{ width: colW.card }} />
+                        <th style={{ width: colW.industry }}>Отрасль</th>
+                        <th style={{ width: colW.prodclass }}>Класс</th>
+                        <th style={{ width: colW.workshop }}>Цех</th>
+                        <th style={{ width: colW.equipment }}>Оборудование</th>
+                        <th style={{ width: colW.cs }}>CS</th>
+                        <th style={{ width: colW.contamination }}>Загрязнения</th>
+                        <th style={{ width: colW.surface }}>Поверхности</th>
+                        <th style={{ width: colW.problems }}>Проблемы</th>
+                        <th style={{ width: colW.old_method }}>Традиционная очистка</th>
+                        <th style={{ width: colW.old_problem }}>Недостатки традиц.</th>
+                        <th style={{ width: colW.benefit }}>Преимущества</th>
                       </tr>
                     </thead>
 
                     <tbody
                       className="
                         [&>tr>td]:px-2 [&>tr>td]:py-1.5 align-top
-                        /* только горизонтальные разделители между строками */
                         [&>tr]:border-b
-                        /* подсветка ТОЛЬКО колонки 'Преимущества' в теле */
                         [&>tr>td:nth-child(12)]:bg-sky-100
                       ">
                       {csRows.map((r) => (
                         <tr key={r.equipment_id} className="align-top">
-                          <td>
+                          {/* Кнопка с иконкой-стрелкой */}
+                          <td style={{ width: colW.card }}>
                             <a
                               href={toLibraryLink(r)}
                               target="_blank"
                               rel="noopener noreferrer"
-                              className="inline-flex items-center rounded-md border px-2 py-1 text-xs hover:bg-accent"
-                              title="Открыть карточку в каталоге">
-                              Карточка
+                              className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
+                              title="Открыть карточку в каталоге"
+                              aria-label="Открыть карточку в каталоге">
+                              <ArrowUpRight className="h-4 w-4" />
                             </a>
                           </td>
-                          <td className="max-w-[220px] whitespace-normal break-words leading-4">
+                          <td
+                            className="whitespace-normal break-words leading-4"
+                            style={{ width: colW.industry }}>
                             {r.industry}
                           </td>
-                          <td className="max-w-[240px] whitespace-normal break-words leading-4">
+                          <td
+                            className="whitespace-normal break-words leading-4"
+                            style={{ width: colW.prodclass }}>
                             {r.prodclass}
                           </td>
-                          <td className="max-w-[220px] whitespace-normal break-words leading-4">
+                          <td
+                            className="whitespace-normal break-words leading-4"
+                            style={{ width: colW.workshop }}>
                             {r.workshop_name}
                           </td>
-                          <td className="max-w-[260px] whitespace-normal break-words leading-4 font-medium">
+                          <td
+                            className="whitespace-normal break-words leading-4 font-medium"
+                            style={{ width: colW.equipment }}>
                             {r.equipment_name}
                           </td>
-                          <td className="whitespace-nowrap tabular-nums">
+                          <td className="whitespace-nowrap tabular-nums" style={{ width: colW.cs }}>
                             {r.clean_score != null ? r.clean_score.toFixed(2) : '—'}
                           </td>
-                          <td className="max-w-[260px] whitespace-normal break-words leading-4">
+                          <td
+                            className="whitespace-normal break-words leading-4"
+                            style={{ width: colW.contamination }}>
                             {r.contamination}
                           </td>
-                          <td className="max-w-[260px] whitespace-normal break-words leading-4">
+                          <td
+                            className="whitespace-normal break-words leading-4"
+                            style={{ width: colW.surface }}>
                             {r.surface}
                           </td>
-                          <td className="max-w-[260px] whitespace-normal break-words leading-4">
+                          <td
+                            className="whitespace-normal break-words leading-4"
+                            style={{ width: colW.problems }}>
                             {r.problems}
                           </td>
-                          <td className="max-w-[260px] whitespace-normal break-words leading-4">
+                          <td
+                            className="whitespace-normal break-words leading-4"
+                            style={{ width: colW.old_method }}>
                             {r.old_method}
                           </td>
-                          <td className="max-w-[260px] whitespace-normal break-words leading-4">
+                          <td
+                            className="whitespace-normal break-words leading-4"
+                            style={{ width: colW.old_problem }}>
                             {r.old_problem}
                           </td>
-                          <td className="max-w-[260px] whitespace-normal break-words leading-4">
+                          <td
+                            className="whitespace-normal break-words leading-4"
+                            style={{ width: colW.benefit }}>
                             {r.benefit}
                           </td>
                         </tr>

@@ -1,4 +1,3 @@
-// app/api/cleanscore/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { cleanScoreQuerySchema, cleanScoreRowSchema } from '@/lib/validators';
@@ -16,28 +15,32 @@ export async function GET(req: NextRequest) {
       pageSize: searchParams.get('pageSize'),
       query: searchParams.get('query'),
       minScore: searchParams.get('minScore'),
+      maxScore: searchParams.get('maxScore'),
+      industryId: searchParams.get('industryId'),
     });
 
-    const { page, pageSize, query, minScore } = parsed;
+    const { page, pageSize, query, minScore, maxScore, industryId } = parsed;
     const offset = (page - 1) * pageSize;
 
-    // WHERE с поиском по нескольким текстовым полям
     const where = `
-      (e.clean_score IS NOT NULL AND e.clean_score >= $1)
+      (e.clean_score IS NOT NULL AND e.clean_score BETWEEN $1 AND $2)
+      AND ($3::int IS NULL OR i.id = $3)
       AND (
-        $2::text IS NULL OR
-        e.equipment_name ILIKE '%'||$2||'%' OR
-        i.industry ILIKE '%'||$2||'%' OR
-        p.prodclass ILIKE '%'||$2||'%' OR
-        w.workshop_name ILIKE '%'||$2||'%' OR
-        e.contamination ILIKE '%'||$2||'%' OR
-        e.surface ILIKE '%'||$2||'%' OR
-        e.problems ILIKE '%'||$2||'%' OR
-        e.old_method ILIKE '%'||$2||'%' OR
-        e.old_problem ILIKE '%'||$2||'%' OR
-        e.benefit ILIKE '%'||$2||'%'
+        $4::text IS NULL OR
+        e.equipment_name ILIKE '%'||$4||'%' OR
+        i.industry       ILIKE '%'||$4||'%' OR
+        p.prodclass      ILIKE '%'||$4||'%' OR
+        w.workshop_name  ILIKE '%'||$4||'%' OR
+        e.contamination  ILIKE '%'||$4||'%' OR
+        e.surface        ILIKE '%'||$4||'%' OR
+        e.problems       ILIKE '%'||$4||'%' OR
+        e.old_method     ILIKE '%'||$4||'%' OR
+        e.old_problem    ILIKE '%'||$4||'%' OR
+        e.benefit        ILIKE '%'||$4||'%'
       )
     `;
+
+    const baseParams = [minScore, maxScore, industryId ?? null, query ?? null];
 
     const countSql = `
       SELECT COUNT(*)::int AS count
@@ -47,7 +50,7 @@ export async function GET(req: NextRequest) {
       LEFT JOIN ib_industry i ON i.id = p.industry_id
       WHERE ${where};
     `;
-    const countRes = await db.query<{ count: number }>(countSql, [minScore, query ?? null]);
+    const countRes = await db.query<{ count: number }>(countSql, baseParams);
     const total = countRes.rows[0]?.count ?? 0;
     const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
@@ -78,9 +81,9 @@ export async function GET(req: NextRequest) {
         COALESCE(p.prodclass,'~'),
         COALESCE(w.workshop_name,'~'),
         e.equipment_name
-      LIMIT $3 OFFSET $4;
+      LIMIT $5 OFFSET $6;
     `;
-    const listRes = await db.query(listSql, [minScore, query ?? null, pageSize, offset]);
+    const listRes = await db.query(listSql, [...baseParams, pageSize, offset]);
     const items = listRes.rows.map((r) => cleanScoreRowSchema.parse(r));
 
     return NextResponse.json({ items, page, pageSize, total, totalPages });

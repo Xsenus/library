@@ -137,8 +137,16 @@ export const cleanScoreRowSchema = z.object({
 });
 export type CleanScoreRow = z.infer<typeof cleanScoreRowSchema>;
 
-// Запрос для списка CleanScore
-export const cleanScoreQuerySchema = paginationSchema.extend({
-  query: z.string().nullish(),
-  minScore: z.coerce.number().min(0).max(1).default(0.95),
-});
+export const cleanScoreQuerySchema = z
+  .object({
+    page: z.coerce.number().int().min(1).default(1),
+    pageSize: z.coerce.number().int().min(1).max(100).default(30),
+    query: z.string().nullish(),
+    minScore: z.coerce.number().min(0.85).max(1.0).default(0.95),
+    maxScore: z.coerce.number().min(0.85).max(1.0).default(1.0),
+    industryId: z.coerce.number().int().positive().optional().nullable(),
+  })
+  .refine((v) => v.maxScore >= v.minScore, {
+    message: 'maxScore must be greater than or equal to minScore',
+    path: ['maxScore'],
+  });
