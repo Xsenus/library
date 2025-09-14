@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/accordion';
 import { ExternalLink, X, Copy } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type ReactNode } from 'react';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
 import { GoogleImagesCarousel } from './google-images-carousel';
@@ -20,25 +20,84 @@ interface EquipmentCardProps {
 }
 
 const GPT_IMAGES_BASE = process.env.NEXT_PUBLIC_GPT_IMAGES_BASE ?? '/static/';
+type ImgSection = 'google-images' | 'gpt-images';
+const OPEN_KEY = 'lib:img-accordion-open';
+const IMG_SECTIONS: ImgSection[] = ['google-images', 'gpt-images'];
+
+/** Единая логика хранения/восстановления состояния аккордеона */
+function useImgAccordionState(equipmentId?: number | null) {
+  const [open, setOpen] = useState<ImgSection[] | null>(null); // null пока не гидратнули
+
+  // Гидратация при маунте и при смене записи
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    try {
+      const raw = localStorage.getItem(OPEN_KEY);
+      if (raw) {
+        const arr = JSON.parse(raw);
+        if (Array.isArray(arr)) {
+          const filtered = arr.filter((x: unknown): x is ImgSection =>
+            IMG_SECTIONS.includes(x as ImgSection),
+          );
+          setOpen(filtered);
+          return;
+        }
+      }
+      // Бэкомпат со старыми ключами
+      const legacy =
+        localStorage.getItem('lib:img-section') ??
+        (localStorage.getItem('lib:gpt-open') === '1' ? 'gpt-images' : null);
+
+      setOpen(
+        legacy === 'google-images' || legacy === 'gpt-images'
+          ? [legacy]
+          : (['google-images'] as ImgSection[]),
+      );
+    } catch {
+      setOpen(['google-images']);
+    }
+  }, [equipmentId]);
+
+  // Сохранение
+  useEffect(() => {
+    if (!open) return;
+    try {
+      localStorage.setItem(OPEN_KEY, JSON.stringify(open));
+    } catch {
+      /* ignore */
+    }
+  }, [open]);
+
+  // Синхронизация между вкладками
+  useEffect(() => {
+    function onStorage(e: StorageEvent) {
+      if (e.key !== OPEN_KEY || !e.newValue) return;
+      try {
+        const arr = JSON.parse(e.newValue);
+        if (Array.isArray(arr)) {
+          const filtered = arr.filter((x: unknown): x is ImgSection =>
+            IMG_SECTIONS.includes(x as ImgSection),
+          );
+          setOpen(filtered);
+        }
+      } catch {
+        /* ignore */
+      }
+    }
+    window.addEventListener('storage', onStorage);
+    return () => window.removeEventListener('storage', onStorage);
+  }, []);
+
+  return [open, setOpen] as const;
+}
 
 export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showUtp, setShowUtp] = useState(false);
   const [showMail, setShowMail] = useState(false);
 
-  const [accordionValue, setAccordionValue] = useState<'google-images' | 'gpt-images'>(
-    'google-images',
-  );
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    const saved =
-      localStorage.getItem('lib:img-section') ??
-      (localStorage.getItem('lib:gpt-open') === '1' ? 'gpt-images' : null);
-
-    const initial = saved === 'gpt-images' || saved === 'google-images' ? saved : 'google-images';
-
-    setAccordionValue(initial as 'google-images' | 'gpt-images');
-  }, [equipment?.id]);
+  // Храним/восстанавливаем массив открытых секций для каждой записи
+  const [openSections, setOpenSections] = useImgAccordionState(equipment?.id);
 
   const imageUrls = equipment.images_url
     ? equipment.images_url
@@ -121,45 +180,47 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
             </div>
           )}
 
-          <Accordion
-            type="single"
-            collapsible
-            value={accordionValue}
-            onValueChange={(v) => {
-              const val =
-                v && (v === 'google-images' || v === 'gpt-images')
-                  ? (v as 'google-images' | 'gpt-images')
-                  : accordionValue;
+          {/* Аккордеон с изображениями */}
+          {openSections !== null ? (
+            <Accordion
+              type="multiple"
+              value={openSections}
+              onValueChange={(v) => {
+                const arr = (Array.isArray(v) ? v : []) as ImgSection[];
+                const filtered = arr.filter((x) => x === 'google-images' || x === 'gpt-images');
+                setOpenSections(filtered);
+              }}
+              className="w-full">
+              <AccordionItem value="google-images">
+                <AccordionTrigger className="text-sm font-medium">Картинки Google</AccordionTrigger>
+                <AccordionContent>
+                  {q ? (
+                    <div className="pt-2">
+                      <GoogleImagesCarousel query={q} height={180} visible={3} />
+                      <div className="mt-2 flex items-center gap-1.5"></div>
+                    </div>
+                  ) : (
+                    <div className="text-xs text-muted-foreground">Нет названия для поиска.</div>
+                  )}
+                </AccordionContent>
+              </AccordionItem>
 
-              setAccordionValue(val);
-              try {
-                localStorage.setItem('lib:img-section', val);
-              } catch {}
-            }}
-            className="w-full">
-            <AccordionItem value="google-images">
-              <AccordionTrigger className="text-sm font-medium">Картинки Google</AccordionTrigger>
-              <AccordionContent>
-                {q ? (
+              <AccordionItem value="gpt-images">
+                <AccordionTrigger className="text-sm font-medium">Картинки GPT</AccordionTrigger>
+                <AccordionContent>
                   <div className="pt-2">
-                    <GoogleImagesCarousel query={q} height={180} visible={3} />
-                    <div className="mt-2 flex items-center gap-1.5"></div>
+                    <GptImages
+                      equipmentId={equipment.id}
+                      onSelect={(url) => setSelectedImage(url)}
+                    />
                   </div>
-                ) : (
-                  <div className="text-xs text-muted-foreground">Нет названия для поиска.</div>
-                )}
-              </AccordionContent>
-            </AccordionItem>
-
-            <AccordionItem value="gpt-images">
-              <AccordionTrigger className="text-sm font-medium">Картинки GPT</AccordionTrigger>
-              <AccordionContent>
-                <div className="pt-2">
-                  <GptImages equipmentId={equipment.id} onSelect={(url) => setSelectedImage(url)} />
-                </div>
-              </AccordionContent>
-            </AccordionItem>
-          </Accordion>
+                </AccordionContent>
+              </AccordionItem>
+            </Accordion>
+          ) : (
+            // маленький плейсхолдер на время гидратации
+            <div className="h-8 rounded bg-muted/50 animate-pulse" />
+          )}
 
           {/* Изображения из базы */}
           {imageUrls.length > 0 && (
@@ -503,7 +564,7 @@ function BigModal({
 }: {
   title: string;
   onClose: () => void;
-  children?: React.ReactNode;
+  children?: ReactNode;
   contentText?: string;
   copyText?: string;
 }) {
