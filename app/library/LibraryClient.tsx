@@ -631,9 +631,9 @@ export default function LibraryPage() {
                 </Breadcrumb>
 
                 {/* Main Content */}
-                <div className="grid grid-cols-1 lg:grid-cols-7 gap-4 h-[calc(100vh-200px)] bg-background">
+                <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-4 h-[calc(100vh-200px)] bg-background">
                   {/* Lists */}
-                  <div className="lg:col-span-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 h-full">
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[160px_160px_160px_160px] gap-1 h-full">
                     {/* Industries — всегда активен */}
                     <HierarchyList
                       title="Индустрия"
@@ -715,7 +715,7 @@ export default function LibraryPage() {
                   </div>
 
                   {/* Details */}
-                  <div className="lg:col-span-3 h-full">
+                  <div className="h-full min-w-0">
                     {equipmentDetail ? (
                       <div className="h-full overflow-auto">
                         <EquipmentCard equipment={equipmentDetail} />
