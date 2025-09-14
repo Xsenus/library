@@ -1,74 +1,142 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ChevronLeft, ChevronRight } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
-type ImgItem = {
-  link: string;
-  thumbnail?: string;
-  context?: string;
-  title?: string;
-};
+type ImgItem = { link: string; thumbnail?: string; context?: string; title?: string };
+type ResolvedItem = ImgItem & { src: string };
 
 type Props = {
   query: string;
   height?: number;
   visible?: number;
   className?: string;
+  preferOriginal?: boolean;
+  clickable?: boolean;
 };
 
-export function GoogleImagesCarousel({ query, height = 180, visible = 3, className }: Props) {
-  const [items, setItems] = useState<ImgItem[]>([]);
+function ProgressiveImg({ src, alt, onFail }: { src: string; alt: string; onFail?: () => void }) {
+  const [loaded, setLoaded] = useState(false);
+  useEffect(() => setLoaded(false), [src]);
+
+  return (
+    <div className="relative h-full w-full">
+      {!loaded && (
+        <div className="absolute inset-0 z-10 flex items-center justify-center">
+          <div className="absolute inset-0 animate-pulse bg-muted" />
+          <div className="relative z-10 h-5 w-5 rounded-full border-2 border-muted-foreground/30 border-t-muted-foreground animate-spin" />
+        </div>
+      )}
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img
+        src={src}
+        alt={alt}
+        loading="lazy"
+        decoding="async"
+        className={
+          'h-full w-full object-cover rounded-md transition duration-300 ' +
+          (loaded ? 'opacity-100 blur-0 scale-100' : 'opacity-0 blur-sm scale-[1.02]')
+        }
+        onLoad={() => setLoaded(true)}
+        onError={() => {
+          setLoaded(true);
+          onFail?.();
+        }}
+      />
+    </div>
+  );
+}
+
+function probe(src: string, timeoutMs = 4000): Promise<boolean> {
+  if (!src) return Promise.resolve(false);
+  const attempt = (policy?: 'no-referrer') =>
+    new Promise<boolean>((res) => {
+      const img = new Image();
+      if (policy) img.referrerPolicy = policy;
+      let done = false;
+      const finish = (ok: boolean) => {
+        if (!done) {
+          done = true;
+          res(ok);
+        }
+      };
+      const to = setTimeout(() => finish(false), timeoutMs);
+      img.onload = () => {
+        clearTimeout(to);
+        finish(img.naturalWidth >= 64 && img.naturalHeight >= 64);
+      };
+      img.onerror = () => {
+        clearTimeout(to);
+        finish(false);
+      };
+      img.src = src;
+    });
+  return attempt('no-referrer').then((ok) => (ok ? true : attempt()));
+}
+
+async function resolveItems(raw: ImgItem[], preferOriginal: boolean): Promise<ResolvedItem[]> {
+  const tasks = raw.map(async (it) => {
+    const primary = preferOriginal && it.link ? it.link : it.thumbnail || it.link;
+    const fallback = !preferOriginal && it.link ? it.link : it.thumbnail;
+    const candidates = [primary, fallback].filter(Boolean) as string[];
+    for (const src of candidates) {
+      if (await probe(src)) return { ...it, src };
+    }
+    return null;
+  });
+  const results = await Promise.all(tasks);
+  return results.filter(Boolean) as ResolvedItem[];
+}
+
+export function GoogleImagesCarousel({
+  query,
+  height = 180,
+  visible = 3,
+  className,
+  preferOriginal = true,
+  clickable = false,
+}: Props) {
+  const [items, setItems] = useState<ResolvedItem[]>([]);
   const [loading, setLoading] = useState(false);
   const [idx, setIdx] = useState(0);
-  const [loadedCount, setLoadedCount] = useState(0);
+
+  const reqRef = useRef(0);
 
   useEffect(() => {
     if (!query) return;
-    const ctrl = new AbortController();
-    setLoading(true);
-    setIdx(0);
-    setLoadedCount(0);
+    const id = ++reqRef.current;
 
-    fetch(`/api/images/google?q=${encodeURIComponent(query)}&num=10`, { signal: ctrl.signal })
+    // сразу показываем скелетоны и сбрасываем индекс
+    setLoading(true);
+    setItems([]);
+    setIdx(0);
+
+    const ctrl = new AbortController();
+
+    fetch(`/api/images/google?q=${encodeURIComponent(query)}&num=12`, { signal: ctrl.signal })
       .then((r) => r.json())
-      .then((j) => (Array.isArray(j.items) ? setItems(j.items) : setItems([])))
-      .catch(() => setItems([]))
-      .finally(() => setLoading(false));
+      .then((j) => (Array.isArray(j.items) ? j.items : []))
+      .then((raw: ImgItem[]) => resolveItems(raw, preferOriginal))
+      .then((resolved) => {
+        if (reqRef.current !== id) return; // устаревший ответ
+        setItems(resolved);
+      })
+      .catch(() => {
+        if (reqRef.current !== id) return;
+        setItems([]);
+      })
+      .finally(() => {
+        if (reqRef.current !== id) return;
+        setLoading(false);
+      });
 
     return () => ctrl.abort();
-  }, [query]);
-
-  useEffect(() => {
-    if (!items.length) return;
-    const first = items.slice(0, Math.min(visible, items.length));
-    let cancelled = false;
-    Promise.all(
-      first.map(
-        (it) =>
-          new Promise<void>((res) => {
-            const i = new Image();
-            i.onload = () => res();
-            i.onerror = () => res();
-            i.referrerPolicy = 'no-referrer';
-            i.src = it.thumbnail || it.link;
-          }),
-      ),
-    ).then(() => !cancelled && setLoadedCount(first.length));
-    return () => {
-      cancelled = true;
-    };
-  }, [items, visible]);
+  }, [query, preferOriginal]);
 
   const maxIdx = Math.max(0, items.length - visible);
   const clampedIdx = Math.min(idx, maxIdx);
-  const slideW = 100 / visible; // %
-
-  const canPrev = clampedIdx > 0;
-  const canNext = clampedIdx < maxIdx;
-
-  const showSkeleton = loading || loadedCount < Math.min(visible, items.length);
+  const slideW = 100 / Math.max(1, visible);
 
   if (!query) return null;
 
@@ -83,35 +151,49 @@ export function GoogleImagesCarousel({ query, height = 180, visible = 3, classNa
             gap: 8,
             padding: 8,
           }}>
-          {showSkeleton
-            ? Array.from({ length: 10 }).map((_, i) => (
-                <div
-                  key={i}
-                  style={{ height: height - 16, width: `${slideW}%` }}
-                  className="shrink-0 rounded-md bg-muted animate-pulse"
+          {(loading && items.length === 0 ? Array.from({ length: 10 }) : items).map(
+            (it: any, i: number) => {
+              if (loading && items.length === 0) {
+                return (
+                  <div
+                    key={`sk-${i}`}
+                    style={{ height: height - 16, width: `${slideW}%` }}
+                    className="shrink-0 rounded-md bg-muted animate-pulse"
+                  />
+                );
+              }
+
+              const containerProps = {
+                className:
+                  'block shrink-0 rounded-md overflow-hidden border bg-background select-none',
+                style: { width: `${slideW}%`, height: height - 16 },
+                title: it.title || 'Изображение',
+              } as const;
+
+              const content = (
+                <ProgressiveImg
+                  src={it.src}
+                  alt={it.title || 'image'}
+                  onFail={() => setItems((prev) => prev.filter((p) => p.src !== it.src))}
                 />
-              ))
-            : items.map((it, i) => (
+              );
+
+              return clickable ? (
                 <a
-                  key={i}
+                  key={it.src}
                   href={it.context || it.link}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="block shrink-0 rounded-md overflow-hidden border bg-background"
-                  style={{ width: `${slideW}%` }}
-                  title={it.title || 'Открыть источник'}>
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
-                    src={it.thumbnail || it.link}
-                    alt={it.title || 'image'}
-                    loading="lazy"
-                    referrerPolicy="no-referrer"
-                    draggable={false}
-                    style={{ height: height - 16, width: '100%' }}
-                    className="object-cover"
-                  />
+                  {...containerProps}>
+                  {content}
                 </a>
-              ))}
+              ) : (
+                <div key={it.src} role="img" aria-label={it.title || 'image'} {...containerProps}>
+                  {content}
+                </div>
+              );
+            },
+          )}
         </div>
 
         <button
@@ -119,7 +201,7 @@ export function GoogleImagesCarousel({ query, height = 180, visible = 3, classNa
           onClick={() => setIdx((v) => Math.max(0, v - 1))}
           className={cn(
             'absolute left-1 top-1/2 -translate-y-1/2 rounded-md p-1.5 bg-background/90 border shadow',
-            !canPrev && 'opacity-40 pointer-events-none',
+            clampedIdx <= 0 && 'opacity-40 pointer-events-none',
           )}
           aria-label="Предыдущие">
           <ChevronLeft className="h-4 w-4" />
@@ -130,7 +212,7 @@ export function GoogleImagesCarousel({ query, height = 180, visible = 3, classNa
           onClick={() => setIdx((v) => Math.min(maxIdx, v + 1))}
           className={cn(
             'absolute right-1 top-1/2 -translate-y-1/2 rounded-md p-1.5 bg-background/90 border shadow',
-            !canNext && 'opacity-40 pointer-events-none',
+            clampedIdx >= maxIdx && 'opacity-40 pointer-events-none',
           )}
           aria-label="Следующие">
           <ChevronRight className="h-4 w-4" />
