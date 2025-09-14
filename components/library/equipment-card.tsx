@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/accordion';
 import { ExternalLink, X, Copy } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
 import { GoogleImagesCarousel } from './google-images-carousel';
@@ -308,26 +308,22 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
         </div>
       )}
 
-      {/* Модалки */}
+      {/* УТП */}
       {showUtp && (
         <BigModal
           title="УТП"
           onClose={() => setShowUtp(false)}
-          copyText={(equipment.utp_post ?? '').trim()}>
-          <div className="max-w-none text-[13px] leading-6 whitespace-pre-wrap">
-            {equipment.utp_post ?? '—'}
-          </div>
-        </BigModal>
+          contentText={equipment.utp_post ?? '—'}
+        />
       )}
+
+      {/* Письмо */}
       {showMail && (
         <BigModal
           title="Письмо"
           onClose={() => setShowMail(false)}
-          copyText={(equipment.utp_mail ?? equipment.benefit ?? '').trim()}>
-          <div className="max-w-none text-[13px] leading-6 whitespace-pre-wrap">
-            {equipment.utp_mail ?? equipment.benefit ?? '—'}
-          </div>
-        </BigModal>
+          contentText={equipment.utp_mail ?? equipment.benefit ?? '—'}
+        />
       )}
     </div>
   );
@@ -471,21 +467,60 @@ function BadgeBlock({ label, value }: { label: string; value?: string | null }) 
   );
 }
 
+function normalizeForDisplay(raw: string): string {
+  if (!raw) return '';
+  let s = raw
+    .replace(/\r\n/g, '\n')
+    .replace(/\\r\\n/g, '\n')
+    .replace(/\\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n[ \t]+/g, '\n')
+    .replace(/\u00A0/g, ' ')
+    .replace(/ {2}\n/g, '\n')
+    .replace(/\s+([,;:.!?])/g, '$1')
+    .replace(/([,;:.!?])(?!\s|$)/g, '$1 ')
+    .replace(/[ \t]{2,}/g, ' ')
+    .replace(/\n{3,}/g, '\n\n');
+
+  s = s
+    .split('\n')
+    .map((line) => {
+      const sc = (line.match(/;/g) || []).length;
+      if (sc >= 3 && line.length > 80) return line.replace(/;\s*/g, ';\n');
+      return line;
+    })
+    .join('\n');
+
+  return s.trim();
+}
+
 function BigModal({
   title,
   onClose,
   children,
+  contentText,
   copyText,
 }: {
   title: string;
   onClose: () => void;
-  children: React.ReactNode;
+  children?: React.ReactNode;
+  contentText?: string;
   copyText?: string;
 }) {
   const [copied, setCopied] = useState(false);
 
+  const normalizedDisplay = useMemo(() => {
+    const src = contentText ?? (typeof children === 'string' ? children : '');
+    return src ? normalizeForDisplay(src) : '';
+  }, [contentText, children]);
+
+  const normalizedCopy = useMemo(() => {
+    const src = copyText ?? contentText ?? (typeof children === 'string' ? children : '');
+    return src ? normalizeForDisplay(src) : '';
+  }, [copyText, contentText, children]);
+
   async function copyToClipboard() {
-    const text = copyText?.trim();
+    const text = normalizedCopy;
     if (!text) return;
     try {
       await navigator.clipboard.writeText(text);
@@ -511,8 +546,8 @@ function BigModal({
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
         className="absolute left-1/2 top-1/2 w-[min(1100px,100vw-32px)] max-h-[calc(100vh-32px)]
-                   -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border
-                   bg-background shadow-2xl flex flex-col min-h-0">
+                      -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border
+                      bg-background shadow-2xl flex flex-col min-h-0">
         <div className="flex items-center justify-between gap-2 border-b px-4 py-3 shrink-0">
           <div className="flex items-center gap-2">
             <button
@@ -520,11 +555,11 @@ function BigModal({
               onClick={copyToClipboard}
               title="Скопировать"
               aria-label="Скопировать"
-              disabled={!copyText?.trim()}
+              disabled={!normalizedCopy}
               className={cn(
                 'rounded-md border border-blue-500 text-blue-600 bg-blue-50 p-1.5',
                 'hover:bg-blue-100 active:scale-[.98] transition',
-                !copyText?.trim() && 'opacity-50 cursor-not-allowed',
+                !normalizedCopy && 'opacity-50 cursor-not-allowed',
               )}>
               <Copy className="h-5 w-5" />
             </button>
@@ -543,8 +578,8 @@ function BigModal({
           </button>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-auto px-5 py-4 text-[13px] leading-6">
-          {children}
+        <div className="flex-1 min-h-0 overflow-auto px-5 py-4 text-[13px] leading-6 whitespace-pre-wrap">
+          {normalizedDisplay ? normalizedDisplay : typeof children !== 'string' ? children : null}
         </div>
       </div>
     </div>
