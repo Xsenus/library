@@ -18,33 +18,22 @@ export function ListItem({ title, subtitle, cs, isSelected, onClick }: ListItemP
     <button
       type="button"
       onClick={onClick}
-      aria-pressed={isSelected}
       className={cn(
-        'group relative w-full text-left rounded-md px-3 py-2 transition-colors',
-        'focus:outline-none focus-visible:ring-2 focus-visible:ring-primary/60',
-        isSelected
-          ? 'bg-primary/10 ring-2 ring-primary/40 shadow-sm'
-          : 'hover:bg-accent/70 active:bg-accent',
+        'w-full text-left px-2 py-2 rounded-md transition-colors',
+        'hover:bg-accent/60 focus:outline-none',
+        isSelected && 'bg-accent/70',
       )}>
-      {/* Левая цветная полоса-индикатор */}
-      <span
-        aria-hidden
-        className={cn(
-          'absolute left-0 top-1 bottom-1 w-1 rounded-full transition-colors',
-          isSelected ? 'bg-primary' : 'bg-transparent group-hover:bg-muted-foreground/30',
-        )}
-      />
+      <div className="font-medium leading-5 text-[12px] whitespace-normal break-words">{title}</div>
 
-      {/* Текст */}
-      <div className="font-medium leading-5 text-[11px]">{title}</div>
       {subtitle && (
-        <div className="mt-0.5 text-[11px] leading-4 text-muted-foreground">{subtitle}</div>
+        <div className="mt-0.5 text-[11px] leading-4 text-muted-foreground whitespace-normal break-words">
+          {subtitle}
+        </div>
       )}
 
-      {/* CS — показываем только если есть значение */}
       {hasCs && (
         <div className="mt-1">
-          <CsBadge score={cs!} />
+          <CsBadge score={cs as number} className="scale-90 origin-left" />
         </div>
       )}
     </button>

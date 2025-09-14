@@ -59,7 +59,7 @@ export default function LibraryPage() {
   const [prodclassesState, setProdclassesState] = useState<ListState<Prodclass>>({
     items: [],
     loading: false,
-    hasNextPage: true,
+    hasNextPage: false, // ← по умолчанию зависимые списки выключены
     page: 1,
     searchQuery: '',
   });
@@ -67,7 +67,7 @@ export default function LibraryPage() {
   const [workshopsState, setWorkshopsState] = useState<ListState<Workshop>>({
     items: [],
     loading: false,
-    hasNextPage: true,
+    hasNextPage: false,
     page: 1,
     searchQuery: '',
   });
@@ -75,7 +75,7 @@ export default function LibraryPage() {
   const [equipmentState, setEquipmentState] = useState<ListState<EquipmentListItem>>({
     items: [],
     loading: false,
-    hasNextPage: true,
+    hasNextPage: false,
     page: 1,
     searchQuery: '',
   });
@@ -88,22 +88,21 @@ export default function LibraryPage() {
   const [csQuery, setCsQuery] = useState('');
   const csQueryDebounced = useDebounce(csQuery, 300);
 
-  // Debounced search queries (иерархия)  <<< ДОБАВЛЕНО
+  // Debounced search queries (иерархия)
   const debouncedIndustrySearch = useDebounce(industriesState.searchQuery, 300);
   const debouncedProdclassSearch = useDebounce(prodclassesState.searchQuery, 300);
   const debouncedWorkshopSearch = useDebounce(workshopsState.searchQuery, 300);
   const debouncedEquipmentSearch = useDebounce(equipmentState.searchQuery, 300);
 
-  // Фильтр по индустрии (вкл/выкл) и выбранная отрасль
+  // Фильтры CleanScore
   const [csIndustryEnabled, setCsIndustryEnabled] = useState(false);
   const [csIndustryId, setCsIndustryId] = useState<number | null>(null);
 
-  // Диапазон CS (0.85..1.00 шаг 0.01)
   const [csMinScore, setCsMinScore] = useState(0.95);
   const [csMaxScore, setCsMaxScore] = useState(1.0);
   const scoreOptions = Array.from({ length: 16 }, (_, i) => Number((0.85 + i * 0.01).toFixed(2)));
 
-  // Ручные ширины колонок
+  // Ручные ширины колонок (таблица)
   const colW = {
     card: 35,
     industry: 100,
@@ -414,9 +413,27 @@ export default function LibraryPage() {
     setSelectedWorkshop(null);
     setSelectedEquipment(null);
     setEquipmentDetail(null);
-    setProdclassesState((prev) => ({ ...prev, items: [], page: 1, searchQuery: '' }));
-    setWorkshopsState((prev) => ({ ...prev, items: [], page: 1, searchQuery: '' }));
-    setEquipmentState((prev) => ({ ...prev, items: [], page: 1, searchQuery: '' }));
+    setProdclassesState((prev) => ({
+      ...prev,
+      items: [],
+      page: 1,
+      searchQuery: '',
+      hasNextPage: false,
+    }));
+    setWorkshopsState((prev) => ({
+      ...prev,
+      items: [],
+      page: 1,
+      searchQuery: '',
+      hasNextPage: false,
+    }));
+    setEquipmentState((prev) => ({
+      ...prev,
+      items: [],
+      page: 1,
+      searchQuery: '',
+      hasNextPage: false,
+    }));
   };
 
   const handleProdclassSelect = (prodclass: Prodclass) => {
@@ -425,8 +442,20 @@ export default function LibraryPage() {
     setSelectedWorkshop(null);
     setSelectedEquipment(null);
     setEquipmentDetail(null);
-    setWorkshopsState((prev) => ({ ...prev, items: [], page: 1, searchQuery: '' }));
-    setEquipmentState((prev) => ({ ...prev, items: [], page: 1, searchQuery: '' }));
+    setWorkshopsState((prev) => ({
+      ...prev,
+      items: [],
+      page: 1,
+      searchQuery: '',
+      hasNextPage: false,
+    }));
+    setEquipmentState((prev) => ({
+      ...prev,
+      items: [],
+      page: 1,
+      searchQuery: '',
+      hasNextPage: false,
+    }));
   };
 
   const handleWorkshopSelect = (workshop: Workshop) => {
@@ -434,7 +463,13 @@ export default function LibraryPage() {
     setSelectedWorkshop(workshop);
     setSelectedEquipment(null);
     setEquipmentDetail(null);
-    setEquipmentState((prev) => ({ ...prev, items: [], page: 1, searchQuery: '' }));
+    setEquipmentState((prev) => ({
+      ...prev,
+      items: [],
+      page: 1,
+      searchQuery: '',
+      hasNextPage: false,
+    }));
   };
 
   const handleEquipmentSelect = (equipment: EquipmentListItem) => {
@@ -478,7 +513,7 @@ export default function LibraryPage() {
     }
   };
 
-  // Вспомогательный генератор ссылки из строки CleanScore
+  // Ссылка из строки CleanScore
   const toLibraryLink = (r: CleanScoreRow) => {
     const qp = new URLSearchParams();
     if (r.industry_id) qp.set('industryId', String(r.industry_id));
@@ -504,7 +539,7 @@ export default function LibraryPage() {
       </div>
 
       {/* ===== ВКЛАДКИ И СОДЕРЖИМОЕ ===== */}
-      <div className="border-b bg-background">
+      <div className="bg-background">
         <div className="container mx-auto px-4">
           <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="w-full">
             <TabsList className="grid w-full md:w-auto grid-cols-3 md:grid-cols-3 gap-0">
@@ -550,7 +585,6 @@ export default function LibraryPage() {
                         </BreadcrumbItem>
                       </>
                     )}
-
                     {selectedProdclass && (
                       <>
                         <BreadcrumbSeparator />
@@ -565,7 +599,6 @@ export default function LibraryPage() {
                         </BreadcrumbItem>
                       </>
                     )}
-
                     {selectedWorkshop && (
                       <>
                         <BreadcrumbSeparator />
@@ -580,7 +613,6 @@ export default function LibraryPage() {
                         </BreadcrumbItem>
                       </>
                     )}
-
                     {selectedEquipment && (
                       <>
                         <BreadcrumbSeparator />
@@ -599,12 +631,13 @@ export default function LibraryPage() {
                 </Breadcrumb>
 
                 {/* Main Content */}
-                <div className="grid grid-cols-1 lg:grid-cols-7 gap-4 h-[calc(100vh-200px)]">
+                <div className="grid grid-cols-1 lg:grid-cols-7 gap-4 h-[calc(100vh-200px)] bg-background">
                   {/* Lists */}
                   <div className="lg:col-span-4 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 h-full">
-                    {/* Industries */}
+                    {/* Industries — всегда активен */}
                     <HierarchyList
                       title="Индустрия"
+                      enabled={true}
                       items={industriesState.items}
                       selectedId={selectedIndustry?.id || null}
                       loading={industriesState.loading}
@@ -619,9 +652,10 @@ export default function LibraryPage() {
                       getItemTitle={(item) => item.industry}
                     />
 
-                    {/* Prodclasses */}
+                    {/* Prodclasses — активен после выбора индустрии */}
                     <HierarchyList
                       title="Класс предприятия"
+                      enabled={!!selectedIndustry}
                       items={prodclassesState.items}
                       selectedId={selectedProdclass?.id || null}
                       loading={prodclassesState.loading}
@@ -640,9 +674,10 @@ export default function LibraryPage() {
                       }
                     />
 
-                    {/* Workshops */}
+                    {/* Workshops — активен после выбора класса */}
                     <HierarchyList
                       title="Цех предприятия"
+                      enabled={!!selectedProdclass}
                       items={workshopsState.items}
                       selectedId={selectedWorkshop?.id || null}
                       loading={workshopsState.loading}
@@ -659,9 +694,10 @@ export default function LibraryPage() {
                       emptyMessage={selectedProdclass ? 'Нет цехов' : 'Выберите класс предприятия'}
                     />
 
-                    {/* Equipment */}
+                    {/* Equipment — активен после выбора цеха */}
                     <HierarchyList
                       title="Оборудование из цеха"
+                      enabled={!!selectedWorkshop}
                       items={equipmentState.items}
                       selectedId={selectedEquipment?.id || null}
                       loading={equipmentState.loading}
@@ -686,7 +722,8 @@ export default function LibraryPage() {
                         <EquipmentCard equipment={equipmentDetail} />
                       </div>
                     ) : (
-                      <div className="h-full flex items-center justify-center border rounded-lg bg-muted/20">
+                      // единый фон, без бордера — никаких «реек»
+                      <div className="h-full flex items-center justify-center rounded-lg bg-background">
                         <div className="text-center text-muted-foreground">
                           <div className="text-sm">Выберите оборудование</div>
                           <div className="text-xs mt-1">для просмотра деталей</div>
@@ -722,7 +759,7 @@ export default function LibraryPage() {
                     </button>
                   </div>
 
-                  {/* Фильтр отрасли (вкл/выкл) */}
+                  {/* Фильтр отрасли */}
                   <div className="flex items-center gap-2">
                     <label className="inline-flex items-center gap-2 text-sm">
                       <input
@@ -796,7 +833,6 @@ export default function LibraryPage() {
                         [&>tr>th]:bg-sky-50
                       ">
                       <tr>
-                        {/* пустой заголовок для колонки с кнопкой */}
                         <th style={{ width: colW.card }} />
                         <th style={{ width: colW.industry }}>Отрасль</th>
                         <th style={{ width: colW.prodclass }}>Класс</th>
@@ -820,7 +856,6 @@ export default function LibraryPage() {
                       ">
                       {csRows.map((r) => (
                         <tr key={r.equipment_id} className="align-top">
-                          {/* Кнопка с иконкой-стрелкой */}
                           <td style={{ width: colW.card }}>
                             <a
                               href={toLibraryLink(r)}
