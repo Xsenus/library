@@ -2,10 +2,16 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import {
+  Accordion,
+  AccordionContent,
+  AccordionItem,
+  AccordionTrigger,
+} from '@/components/ui/accordion';
 import { ExternalLink, X, Copy } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
-import { useState } from 'react';
-import Image from 'next/image';
+import { useEffect, useState } from 'react';
+import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
 import { GoogleImagesCarousel } from './google-images-carousel';
 
@@ -13,10 +19,26 @@ interface EquipmentCardProps {
   equipment: EquipmentDetail;
 }
 
+const GPT_IMAGES_BASE = process.env.NEXT_PUBLIC_GPT_IMAGES_BASE ?? '/static/';
+
 export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showUtp, setShowUtp] = useState(false);
   const [showMail, setShowMail] = useState(false);
+
+  const [accordionValue, setAccordionValue] = useState<'google-images' | 'gpt-images'>(
+    'google-images',
+  );
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const saved =
+      localStorage.getItem('lib:img-section') ??
+      (localStorage.getItem('lib:gpt-open') === '1' ? 'gpt-images' : null);
+
+    const initial = saved === 'gpt-images' || saved === 'google-images' ? saved : 'google-images';
+
+    setAccordionValue(initial as 'google-images' | 'gpt-images');
+  }, [equipment?.id]);
 
   const imageUrls = equipment.images_url
     ? equipment.images_url
@@ -59,7 +81,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const googleImagesUrl = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(q)}`;
   const googleTextUrl = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 
-  // Единый стиль «голубых» кнопок
   const blueBtn =
     'shrink-0 border border-blue-500 text-blue-600 bg-blue-50 hover:bg-blue-100 active:scale-[.98] transition';
 
@@ -100,8 +121,45 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
             </div>
           )}
 
-          {/* Картинки из Google */}
-          {q && <GoogleImagesCarousel query={q} height={180} visible={3} />}
+          <Accordion
+            type="single"
+            collapsible
+            value={accordionValue}
+            onValueChange={(v) => {
+              const val =
+                v && (v === 'google-images' || v === 'gpt-images')
+                  ? (v as 'google-images' | 'gpt-images')
+                  : accordionValue;
+
+              setAccordionValue(val);
+              try {
+                localStorage.setItem('lib:img-section', val);
+              } catch {}
+            }}
+            className="w-full">
+            <AccordionItem value="google-images">
+              <AccordionTrigger className="text-sm font-medium">Картинки Google</AccordionTrigger>
+              <AccordionContent>
+                {q ? (
+                  <div className="pt-2">
+                    <GoogleImagesCarousel query={q} height={180} visible={3} />
+                    <div className="mt-2 flex items-center gap-1.5"></div>
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground">Нет названия для поиска.</div>
+                )}
+              </AccordionContent>
+            </AccordionItem>
+
+            <AccordionItem value="gpt-images">
+              <AccordionTrigger className="text-sm font-medium">Картинки GPT</AccordionTrigger>
+              <AccordionContent>
+                <div className="pt-2">
+                  <GptImages equipmentId={equipment.id} onSelect={(url) => setSelectedImage(url)} />
+                </div>
+              </AccordionContent>
+            </AccordionItem>
+          </Accordion>
 
           {/* Изображения из базы */}
           {imageUrls.length > 0 && (
@@ -111,14 +169,13 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                   key={idx}
                   className="relative aspect-[4/3] bg-muted rounded-md overflow-hidden hover:ring-1 hover:ring-primary/40"
                   onClick={() => setSelectedImage(url)}>
-                  <Image
+                  <NextImage
                     src={url}
                     alt={`${equipment.equipment_name} ${idx + 1}`}
                     fill
                     sizes="33vw"
                     className="object-cover"
                     unoptimized
-                    onError={(e) => ((e.target as any).style = 'display:none')}
                   />
                 </button>
               ))}
@@ -157,7 +214,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
           <Sep />
 
-          {/* Единый ряд «голубых» действий */}
+          {/* Ряд действий */}
           <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap pb-1">
             <Button size="sm" onClick={() => setShowUtp(true)} className={blueBtn}>
               📣 УТП
@@ -182,7 +239,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
           <Sep />
 
-          {/* Центр принятия решений — 4 колонки */}
+          {/* Центр принятия решений */}
           {(equipment.decision_pr ||
             equipment.decision_prs ||
             equipment.decision_operator ||
@@ -223,13 +280,13 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
         </CardContent>
       </Card>
 
-      {/* Лайтбокс изображений */}
+      {/* Лайтбокс */}
       {selectedImage && (
         <div
           className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4"
           onClick={() => setSelectedImage(null)}>
           <div className="relative w-[90vw] h-[90vh]">
-            <Image
+            <NextImage
               src={selectedImage}
               alt="Equipment detail"
               fill
@@ -251,7 +308,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
         </div>
       )}
 
-      {/* Модалка УТП */}
+      {/* Модалки */}
       {showUtp && (
         <BigModal
           title="УТП"
@@ -262,8 +319,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           </div>
         </BigModal>
       )}
-
-      {/* Модалка Письмо */}
       {showMail && (
         <BigModal
           title="Письмо"
@@ -274,6 +329,111 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           </div>
         </BigModal>
       )}
+    </div>
+  );
+}
+
+function GptImages({
+  equipmentId,
+  onSelect,
+}: {
+  equipmentId?: number | null;
+  onSelect: (url: string) => void;
+}) {
+  const id = equipmentId?.toString() ?? null;
+
+  const [exists, setExists] = useState<Record<'old' | 'cryo', boolean | null>>({
+    old: null,
+    cryo: null,
+  });
+
+  const items: Array<{ key: 'old' | 'cryo'; url: string; alt: string }> = id
+    ? [
+        { key: 'old', url: `${GPT_IMAGES_BASE}${id}_old.jpg`, alt: 'GPT image (old)' },
+        { key: 'cryo', url: `${GPT_IMAGES_BASE}${id}_cryo.jpg`, alt: 'GPT image (cryo)' },
+      ]
+    : [];
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function probeImage(url: string): Promise<boolean> {
+      try {
+        const res = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+        if (res.ok) return true;
+        if (res.status === 404) return false;
+      } catch {
+        /* ignore */
+      }
+      return new Promise<boolean>((resolve) => {
+        const img = new (window as any).Image() as HTMLImageElement;
+        img.onload = () => resolve(true);
+        img.onerror = () => resolve(false);
+        const sep = url.includes('?') ? '&' : '?';
+        img.src = `${url}${sep}cb=${Date.now()}`;
+      });
+    }
+
+    (async () => {
+      if (!id || items.length === 0) {
+        if (!cancelled) setExists({ old: false, cryo: false });
+        return;
+      }
+      const [oldOk, cryoOk] = await Promise.all([
+        probeImage(items[0].url),
+        probeImage(items[1].url),
+      ]);
+      if (!cancelled) setExists({ old: oldOk, cryo: cryoOk });
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const tileBase =
+    'relative h-[300px] w-full rounded-md overflow-hidden text-left border bg-muted/50 grid place-items-center';
+
+  if (!id) {
+    return <div className="text-xs text-muted-foreground">ID оборудования не задан.</div>;
+  }
+
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {items.map(({ key, url, alt }) => {
+        const ok = exists[key];
+        if (ok === null) {
+          return (
+            <div key={key} className={cn(tileBase, 'animate-pulse')}>
+              <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30 border-t-transparent animate-spin" />
+            </div>
+          );
+        }
+        if (ok) {
+          return (
+            <button
+              type="button"
+              key={key}
+              className="relative h-[300px] w-full rounded-md overflow-hidden bg-muted hover:ring-1 hover:ring-primary/40"
+              onClick={() => onSelect(url)}
+              title={alt}>
+              <NextImage
+                src={url}
+                alt={alt}
+                fill
+                sizes="50vw"
+                className="object-contain"
+                unoptimized
+              />
+            </button>
+          );
+        }
+        return (
+          <div key={key} className={tileBase}>
+            <div className="text-xs text-muted-foreground">Нет картинки</div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -330,7 +490,6 @@ function BigModal({
     try {
       await navigator.clipboard.writeText(text);
     } catch {
-      // Фоллбэк для окружений без Clipboard API/https
       const ta = document.createElement('textarea');
       ta.value = text;
       ta.style.position = 'fixed';
