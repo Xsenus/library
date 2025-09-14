@@ -2,7 +2,7 @@
 
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { ExternalLink, X, Copy, Clipboard } from 'lucide-react';
+import { ExternalLink, X, Copy } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
 import { useState } from 'react';
 import Image from 'next/image';
@@ -17,7 +17,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showUtp, setShowUtp] = useState(false);
   const [showMail, setShowMail] = useState(false);
-  const [copied, setCopied] = useState<'utp' | 'mail' | null>(null);
 
   const imageUrls = equipment.images_url
     ? equipment.images_url
@@ -60,15 +59,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const googleImagesUrl = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(q)}`;
   const googleTextUrl = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 
-  const copy = async (text: string | null | undefined, kind: 'utp' | 'mail') => {
-    if (!text) return;
-    try {
-      await navigator.clipboard.writeText(text);
-      setCopied(kind);
-      setTimeout(() => setCopied(null), 1200);
-    } catch {}
-  };
-
   return (
     <div className="space-y-4">
       <Card>
@@ -101,10 +91,10 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
             </div>
           )}
 
-          {/* Картинки из Google — без текста, с предзагрузкой */}
+          {/* Картинки из Google */}
           {q && <GoogleImagesCarousel query={q} height={180} visible={3} />}
 
-          {/* Изображения из базы (если есть) */}
+          {/* Изображения из базы */}
           {imageUrls.length > 0 && (
             <div className="grid grid-cols-3 gap-2">
               {imageUrls.map((url, idx) => (
@@ -128,7 +118,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
           <Sep />
 
-          {/* Проблемы оборудования — 3 колонки с фоном как на скрине */}
+          {/* Проблемы оборудования — 3 колонки */}
           <div className="space-y-1.5">
             <div className="text-sm font-semibold">Проблемы оборудования</div>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
@@ -140,7 +130,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
           <Sep />
 
-          {/* Традиционная очистка и криобластинг — 3 колонки с фоном */}
+          {/* Традиционная очистка и криобластинг — 3 колонки */}
           <div className="space-y-1.5">
             <div className="text-sm font-semibold">
               Традиционная очистка и <span className="underline">криобластинг</span>
@@ -158,7 +148,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
           <Sep />
 
-          {/* Ряд 1 — только УТП и Письмо */}
+          {/* Ряд 1 — УТП и Письмо */}
           <div className="flex flex-wrap gap-1.5">
             <Button variant="outline" size="sm" onClick={() => setShowUtp(true)}>
               📣 УТП
@@ -180,7 +170,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                 Описание Google
               </a>
             </Button>
-            {/* Компания — кнопка без ссылки */}
             <Button variant="outline" size="sm" disabled={!equipment.company_id}>
               Компания
             </Button>
@@ -259,20 +248,24 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
       {/* Модалка УТП */}
       {showUtp && (
-        <BigModal title="УТП" onClose={() => setShowUtp(false)}>
-          <div className="prose prose-sm max-w-none">
-            <p className="whitespace-pre-wrap leading-7">{equipment.utp_post ?? '—'}</p>
+        <BigModal
+          title="УТП"
+          onClose={() => setShowUtp(false)}
+          copyText={(equipment.utp_post ?? '').trim()}>
+          <div className="max-w-none text-[13px] leading-6 whitespace-pre-wrap">
+            {equipment.utp_post ?? '—'}
           </div>
         </BigModal>
       )}
 
       {/* Модалка Письмо */}
       {showMail && (
-        <BigModal title="Письмо" onClose={() => setShowMail(false)}>
-          <div className="prose prose-sm max-w-none">
-            <p className="whitespace-pre-wrap leading-7">
-              {equipment.utp_mail ?? equipment.benefit ?? '—'}
-            </p>
+        <BigModal
+          title="Письмо"
+          onClose={() => setShowMail(false)}
+          copyText={(equipment.utp_mail ?? equipment.benefit ?? '').trim()}>
+          <div className="max-w-none text-[13px] leading-6 whitespace-pre-wrap">
+            {equipment.utp_mail ?? equipment.benefit ?? '—'}
           </div>
         </BigModal>
       )}
@@ -280,7 +273,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   );
 }
 
-/** Колонка с выделением фоном (как на скрине) */
+/** Колонка с выделением фоном */
 function ColColored({
   title,
   text,
@@ -332,7 +325,7 @@ function BigModal({
     try {
       await navigator.clipboard.writeText(text);
     } catch {
-      // безопасный фоллбэк без https/без clipboard API
+      // Фоллбэк для окружений без Clipboard API/https
       const ta = document.createElement('textarea');
       ta.value = text;
       ta.style.position = 'fixed';
@@ -354,17 +347,21 @@ function BigModal({
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
         className="absolute left-1/2 top-1/2 w-[min(1100px,100vw-32px)] max-h-[calc(100vh-32px)]
-                      -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border
-                      bg-background shadow-2xl">
-        <div className="flex items-center justify-between gap-2 border-b px-4 py-3">
+                   -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border
+                   bg-background shadow-2xl flex flex-col min-h-0">
+        <div className="flex items-center justify-between gap-2 border-b px-4 py-3 shrink-0">
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={copyToClipboard}
               title="Скопировать"
               aria-label="Скопировать"
-              className="rounded-md border border-blue-500 text-blue-600 bg-blue-50 p-1.5
-                         hover:bg-blue-100 active:scale-[.98] transition">
+              disabled={!copyText?.trim()}
+              className={cn(
+                'rounded-md border border-blue-500 text-blue-600 bg-blue-50 p-1.5',
+                'hover:bg-blue-100 active:scale-[.98] transition',
+                !copyText?.trim() && 'opacity-50 cursor-not-allowed',
+              )}>
               <Copy className="h-5 w-5" />
             </button>
             <div className="text-lg font-semibold">{title}</div>
@@ -375,15 +372,16 @@ function BigModal({
 
           <button
             type="button"
-            className="inline-flex items-center rounded-md border bg-background p-1.5
-                       hover:bg-accent"
+            className="inline-flex items-center rounded-md border bg-background p-1.5 hover:bg-accent"
             onClick={onClose}
             aria-label="Закрыть">
             <X className="h-4 w-4" />
           </button>
         </div>
 
-        <div className="overflow-auto px-5 py-4">{children}</div>
+        <div className="flex-1 min-h-0 overflow-auto px-5 py-4 text-[13px] leading-6">
+          {children}
+        </div>
       </div>
     </div>
   );
