@@ -1,6 +1,6 @@
 import { z } from 'zod';
 
-// Общая пагинация
+// Pagination
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   pageSize: z.coerce.number().int().min(1).max(100).default(30),
@@ -20,7 +20,7 @@ export const prodclassSchema = z.object({
   id: z.coerce.number(),
   prodclass: z.string(),
   industry_id: z.coerce.number(),
-  best_cs: z.coerce.number().nullable().optional(), // ← NEW
+  best_cs: z.coerce.number().nullable().optional(),
 });
 export const prodclassesQuerySchema = paginationSchema.extend({
   industryId: z.coerce.number().int().min(1),
@@ -33,7 +33,7 @@ export const workshopSchema = z.object({
   prodclass_id: z.coerce.number(),
   company_id: z.coerce.number(),
   workshop_score: z.coerce.number(),
-  best_cs: z.coerce.number().nullable().optional(), // ← NEW
+  best_cs: z.coerce.number().nullable().optional(),
   created_at: z
     .union([z.string(), z.date()])
     .transform((v) => (v instanceof Date ? v.toISOString() : v)),
@@ -49,7 +49,7 @@ export const equipmentListSchema = z.object({
   workshop_id: z.coerce.number(),
   equipment_score: z.coerce.number().nullable(),
   equipment_score_real: z.coerce.number().nullable(),
-  clean_score: z.coerce.number().nullable(), // будем показывать как CS в списке/карточке
+  clean_score: z.coerce.number().nullable(),
 });
 
 // Equipment (detail)
@@ -81,7 +81,16 @@ export const equipmentDetailSchema = z.object({
   company_id: z.coerce.number(),
   utp_post: z.string().nullable().optional(),
   utp_mail: z.string().nullable().optional(),
+  decision_pr: z.string().nullable().optional(),
+  decision_prs: z.string().nullable().optional(),
+  decision_sov: z.string().nullable().optional(),
+  decision_operator: z.string().nullable().optional(),
+  decision_proc: z.string().nullable().optional(),
+  goods_examples: z.array(z.string()).nullable().optional(),
+  company_name: z.string().nullable().optional(),
+  site_description: z.string().nullable().optional(),
 });
+export type EquipmentDetail = z.infer<typeof equipmentDetailSchema>;
 
 export const equipmentQuerySchema = paginationSchema.extend({
   workshopId: z.coerce.number().int().min(1),
@@ -107,11 +116,11 @@ export type ListResponse<T> = {
   total: number;
   totalPages: number;
 };
+
 export type Industry = z.infer<typeof industrySchema>;
 export type Prodclass = z.infer<typeof prodclassSchema>;
 export type Workshop = z.infer<typeof workshopSchema>;
 export type EquipmentListItem = z.infer<typeof equipmentListSchema>;
-export type EquipmentDetail = z.infer<typeof equipmentDetailSchema>;
 
 // CleanScore (строка таблицы)
 export const cleanScoreRowSchema = z.object({

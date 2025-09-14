@@ -21,8 +21,20 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
         e.old_method, e.old_problem, e.benefit,
         e.synonyms_ru, e.synonyms_en,
         e.blaster, e.air, e.rate, e.company_id,
-        s.utp_post, s.utp_mail
+        s.utp_post, s.utp_mail,
+
+        -- Центр принятия решений
+        dc.decision_pr, dc.decision_prs, dc.decision_sov, dc.decision_operator, dc.decision_proc,
+
+        -- Примеры товаров
+        ge.goods_examples,
+
+        -- Пример компании
+        co.company_name, co.site_description
+
       FROM ib_equipment e
+
+      -- последняя успешная история
       LEFT JOIN LATERAL (
         SELECT s.utp_post, s.utp_mail
         FROM ib_successful_story s
@@ -30,6 +42,44 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
         ORDER BY s.id DESC
         LIMIT 1
       ) s ON TRUE
+
+      -- центр принятия решений (по цеху + компании)
+      LEFT JOIN LATERAL (
+        SELECT
+          d.lpr        AS decision_pr,
+          d.prs        AS decision_prs,
+          d.sov        AS decision_sov,
+          d."operator" AS decision_operator,
+          d.proc       AS decision_proc
+        FROM ib_decision_center d
+        WHERE d.workshop_id = e.workshop_id
+          AND d.company_id  = e.company_id
+        ORDER BY d.id DESC
+        LIMIT 1
+      ) dc ON TRUE
+
+      -- примеры товаров (до 6 шт.)
+      LEFT JOIN LATERAL (
+        SELECT ARRAY(
+          SELECT DISTINCT g.goods_name
+          FROM ib_equipment e2
+          JOIN ib_equipment_goods eg ON eg.equipment_id = e2.id
+          JOIN ib_goods g ON g.id = eg.goods_id
+          WHERE e2.workshop_id = e.workshop_id
+            AND e2.company_id = e.company_id
+          ORDER BY g.goods_name
+          LIMIT 6
+        ) AS goods_examples
+      ) ge ON TRUE
+
+      -- пример компании
+      LEFT JOIN LATERAL (
+        SELECT c.company_name, c.site_description
+        FROM ib_clients c
+        WHERE c.id = e.company_id
+        LIMIT 1
+      ) co ON TRUE
+
       WHERE e.id = $1
     `;
 
