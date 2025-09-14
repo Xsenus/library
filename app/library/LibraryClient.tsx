@@ -679,9 +679,26 @@ export default function LibraryPage() {
 
                 {/* Таблица */}
                 <div className="rounded-lg border overflow-auto">
-                  <table className="w-full text-xs">
-                    <thead className="bg-muted/50 sticky top-0 z-10">
-                      <tr className="[&>th]:px-2 [&>th]:py-2 text-left">
+                  <table className="w-full text-xs table-fixed">
+                    <thead
+                      className="
+                        sticky top-0 z-10 text-left border-b
+                        [&>tr>th]:px-2 [&>tr>th]:py-2
+                        /* цвета ТОЛЬКО для заголовков */
+                        [&>tr>th:nth-child(1)]:bg-sky-50
+                        [&>tr>th:nth-child(2)]:bg-sky-50
+                        [&>tr>th:nth-child(3)]:bg-sky-50
+                        [&>tr>th:nth-child(4)]:bg-sky-50
+                        [&>tr>th:nth-child(5)]:bg-sky-50
+                        [&>tr>th:nth-child(6)]:bg-sky-50
+                        [&>tr>th:nth-child(7)]:bg-sky-50
+                        [&>tr>th:nth-child(8)]:bg-sky-50
+                        [&>tr>th:nth-child(9)]:bg-sky-50
+                        [&>tr>th:nth-child(10)]:bg-sky-50
+                        [&>tr>th:nth-child(11)]:bg-sky-50
+                        [&>tr>th:nth-child(12)]:bg-sky-50
+                      ">
+                      <tr className="">
                         <th style={{ minWidth: 90 }}>Карточка</th>
                         <th>Отрасль</th>
                         <th>Класс</th>
@@ -696,9 +713,17 @@ export default function LibraryPage() {
                         <th>Преимущества</th>
                       </tr>
                     </thead>
-                    <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1.5">
+
+                    <tbody
+                      className="
+                        [&>tr>td]:px-2 [&>tr>td]:py-1.5 align-top
+                        /* только горизонтальные разделители между строками */
+                        [&>tr]:border-b
+                        /* подсветка ТОЛЬКО колонки 'Преимущества' в теле */
+                        [&>tr>td:nth-child(12)]:bg-sky-100
+                      ">
                       {csRows.map((r) => (
-                        <tr key={r.equipment_id} className="align-top hover:bg-muted/30">
+                        <tr key={r.equipment_id} className="align-top">
                           <td>
                             <a
                               href={toLibraryLink(r)}
