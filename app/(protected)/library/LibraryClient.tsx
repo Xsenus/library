@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
@@ -24,6 +24,7 @@ import {
   CleanScoreRow,
 } from '@/lib/validators';
 import { Home, ArrowUpRight } from 'lucide-react';
+import { useDailyQuota } from '@/app/hooks/use-daily-quota';
 
 interface ListState<T> {
   items: T[];
@@ -43,6 +44,22 @@ export default function LibraryPage() {
 
   // ======= auth/user flag: irbis_worker =======
   const [isWorker, setIsWorker] = useState<boolean>(false);
+
+  const {
+    quota,
+    /* loading: quotaLoading, */ refetch: refetchQuota,
+    setRemaining,
+  } = useDailyQuota({ showLoading: false });
+
+  const didInitQuota = useRef(false);
+  useEffect(() => {
+    if (!didInitQuota.current) {
+      didInitQuota.current = true;
+      refetchQuota();
+    }
+  }, [refetchQuota]);
+
+  const [limitExceeded, setLimitExceeded] = useState(false);
 
   const loadMe = useCallback(async () => {
     try {
@@ -279,15 +296,41 @@ export default function LibraryPage() {
     [],
   );
 
-  const fetchEquipmentDetail = useCallback(async (equipmentId: number) => {
-    try {
-      const response = await fetch(`/api/equipment/${equipmentId}`);
-      const data: EquipmentDetail = await response.json();
-      setEquipmentDetail(data);
-    } catch (error) {
-      console.error('Failed to fetch equipment detail:', error);
-    }
-  }, []);
+  const fetchEquipmentDetail = useCallback(
+    async (equipmentId: number) => {
+      try {
+        setLimitExceeded(false);
+        const res = await fetch(`/api/equipment/${equipmentId}`, { cache: 'no-store' });
+
+        const hdr = res.headers.get('X-Views-Remaining');
+        if (hdr != null) {
+          const n = Number(hdr);
+          if (!Number.isNaN(n)) setRemaining(n);
+        }
+
+        if (!res.ok) {
+          if (res.status === 403) {
+            setLimitExceeded(true);
+            setEquipmentDetail(null);
+            refetchQuota();
+            return;
+          }
+
+          refetchQuota();
+          const err = await res.json().catch(() => ({}));
+          throw new Error(err?.error || `HTTP ${res.status}`);
+        }
+
+        const data: EquipmentDetail = await res.json();
+        setEquipmentDetail(data);
+        setLimitExceeded(false);
+        refetchQuota();
+      } catch (error) {
+        console.error('Failed to fetch equipment detail:', error);
+      }
+    },
+    [refetchQuota, setRemaining],
+  );
 
   // CleanScore loader (с фильтрами)
   const fetchCleanScore = useCallback(
@@ -543,6 +586,11 @@ export default function LibraryPage() {
 
   const handleEquipmentSelect = (equipment: EquipmentListItem) => {
     if (selectedEquipment?.id === equipment.id) return;
+    if (quota && quota.remaining === 0) {
+      setLimitExceeded(true);
+      setEquipmentDetail(null);
+      return;
+    }
     setSelectedEquipment(equipment);
   };
 
@@ -602,9 +650,22 @@ export default function LibraryPage() {
       <div className="border-b bg-background">
         <div className="container mx-auto px-4">
           <div className="flex flex-wrap items-center justify-between gap-2 py-3 sm:py-4">
-            <h1 className="flex-1 min-w-[240px] text-xl sm:text-2xl lg:text-3xl font-semibold leading-tight">
-              Отраслевой навигатор криобластинга от ИРБИСТЕХ
-            </h1>
+            <div className="flex min-w-[240px] items-center gap-3">
+              <h1 className="text-xl sm:text-2xl lg:text-3xl font-semibold leading-tight">
+                Отраслевой навигатор криобластинга от ИРБИСТЕХ
+              </h1>
+
+              {quota && (
+                <div
+                  className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs leading-5"
+                  title="Сколько карточек можно открыть сегодня">
+                  <strong className={quota.remaining === 0 ? 'text-red-600' : 'text-red-600'}>
+                    Остаток лимита: {quota.remaining}
+                  </strong>
+                </div>
+              )}
+            </div>
+
             <div className="flex items-center gap-2 sm:gap-3">
               <Image
                 src="/logo.png"
@@ -839,7 +900,23 @@ export default function LibraryPage() {
 
                   {/* Details */}
                   <div className="h-full min-w-0">
-                    {equipmentDetail ? (
+                    {limitExceeded ? (
+                      <div className="h-full flex items-center justify-center rounded-lg bg-background">
+                        <div className="max-w-md text-center space-y-3">
+                          <div className="inline-flex items-center rounded-full border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
+                            Лимит на текущую дату исчерпан
+                          </div>
+                          <p className="text-sm text-muted-foreground">
+                            Вы использовали дневной лимит просмотра карточек. Лимит обновится
+                            завтра.
+                          </p>
+                          <p className="text-xs text-muted-foreground">
+                            Остаток на сегодня: <strong>{quota?.remaining ?? 0}</strong> из{' '}
+                            {quota?.limit ?? 10}
+                          </p>
+                        </div>
+                      </div>
+                    ) : equipmentDetail ? (
                       <div className="h-full overflow-auto">
                         <EquipmentCard equipment={equipmentDetail} />
                       </div>

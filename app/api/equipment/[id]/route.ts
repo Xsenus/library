@@ -1,3 +1,4 @@
+// app/api/equipment/[id]/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { equipmentIdSchema, equipmentDetailSchema } from '@/lib/validators';
@@ -8,6 +9,11 @@ import { getLiveUserState } from '@/lib/user-state';
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const runtime = 'nodejs';
+
+const DAILY_LIMIT = 10;
+// Если нужно считать сутки по конкретной TZ, можно заменить CURRENT_DATE на:
+// (now() at time zone 'Europe/Amsterdam')::date — и также ниже в SQL.
+const DAY_COND = 'open_at::date = CURRENT_DATE';
 
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {
@@ -29,24 +35,45 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     // 2) Валидируем id
     const { id } = equipmentIdSchema.parse({ id: params.id });
 
-    // 3) Лимит 10 уникальных карточек в день для не-irbis_worker
-    if (!session.irbis_worker) {
-      const limitSql = `
-        SELECT COUNT(DISTINCT equipment_id)::int AS c
-        FROM users_activity
-        WHERE user_id = $1 AND open_at::date = CURRENT_DATE
-      `;
-      const limitRes = await db.query(limitSql, [session.id]);
-      const c: number = limitRes.rows[0]?.c ?? 0;
-      if (c >= 10) {
-        return NextResponse.json(
-          { error: 'Дневной лимит просмотров исчерпан (10 уникальных карточек/сутки).' },
-          { status: 403 },
-        );
-      }
+    // 3) Транзакция для последовательности действий
+    await db.query('BEGIN');
+
+    // 4) Сколько карточек уже открыто сегодня?
+    const countSql = `
+      SELECT COUNT(DISTINCT equipment_id)::int AS c
+      FROM users_activity
+      WHERE user_id = $1 AND ${DAY_COND}
+    `;
+    const { rows: beforeRows } = await db.query(countSql, [session.id]);
+    const usedBefore: number = beforeRows[0]?.c ?? 0;
+
+    // 5) Сброс флага на новый день: если сегодня первый заход и irbis_worker=false → поднять в true
+    if (usedBefore === 0 && live.irbis_worker === false) {
+      await db.query(
+        `UPDATE users_irbis SET irbis_worker = TRUE WHERE id = $1 AND irbis_worker = FALSE`,
+        [session.id],
+      );
     }
 
-    // 4) Грузим карточку
+    // 6) Если лимит уже выбран — фиксируем флаг и блокируем
+    if (usedBefore >= DAILY_LIMIT) {
+      if (live.irbis_worker === true) {
+        await db.query(
+          `UPDATE users_irbis SET irbis_worker = FALSE WHERE id = $1 AND irbis_worker = TRUE`,
+          [session.id],
+        );
+      }
+      await db.query('COMMIT');
+      const blocked = NextResponse.json(
+        { error: `Дневной лимит просмотров исчерпан (${DAILY_LIMIT} уникальных карточек/сутки).` },
+        { status: 403 },
+      );
+      blocked.headers.set('X-Views-Limit', String(DAILY_LIMIT));
+      blocked.headers.set('X-Views-Remaining', '0');
+      return blocked;
+    }
+
+    // 7) Грузим карточку (404 не тратит лимит)
     const sql = `
       SELECT
         e.id::int                                  AS id,
@@ -71,13 +98,12 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
         dc.decision_pr, dc.decision_prs, dc.decision_sov, dc.decision_operator, dc.decision_proc,
 
-        -- полный список по тому же prodclass (без лимита)
         ge.goods_examples,
 
         co.company_name, co.site_description
 
       FROM ib_equipment e
-      LEFT JOIN ib_workshops w0 ON w0.id = e.workshop_id  -- нужен prodclass_id, но не дропаем строки без workshop
+      LEFT JOIN ib_workshops w0 ON w0.id = e.workshop_id
 
       LEFT JOIN LATERAL (
         SELECT s.utp_post, s.utp_mail
@@ -101,7 +127,6 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
         LIMIT 1
       ) dc ON TRUE
 
-      -- все товары по prodclass текущего оборудования
       LEFT JOIN LATERAL (
         SELECT ARRAY(
           SELECT DISTINCT g.goods_name::text
@@ -123,13 +148,13 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
 
       WHERE e.id = $1
     `;
-
     const result = await db.query(sql, [id]);
     if (result.rows.length === 0) {
+      await db.query('ROLLBACK');
       return NextResponse.json({ error: 'Equipment not found' }, { status: 404 });
     }
 
-    // 5) Записываем просмотр только если ещё не было записи этого equipment_id сегодня
+    // 8) Логируем просмотр (без изменения схемы — через NOT EXISTS)
     await db.query(
       `
       INSERT INTO users_activity (user_id, equipment_id, open_at)
@@ -138,17 +163,38 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
         SELECT 1 FROM users_activity
         WHERE user_id = $1
           AND equipment_id = $2
-          AND open_at::date = CURRENT_DATE
+          AND ${DAY_COND}
       )
       `,
       [session.id, id],
     );
 
-    // 6) Валидируем и отдаём ответ
+    // 9) Пересчёт после записи
+    const { rows: afterRows } = await db.query(countSql, [session.id]);
+    const usedAfter: number = afterRows[0]?.c ?? usedBefore; // на случай гонки
+
+    // Если только что достигли лимита — опускаем флаг (но карточку отдаём)
+    if (usedAfter >= DAILY_LIMIT && live.irbis_worker === true) {
+      await db.query(
+        `UPDATE users_irbis SET irbis_worker = FALSE WHERE id = $1 AND irbis_worker = TRUE`,
+        [session.id],
+      );
+    }
+
+    await db.query('COMMIT');
+
+    const remaining = Math.max(0, DAILY_LIMIT - usedAfter);
     const equipment = equipmentDetailSchema.parse(result.rows[0]);
-    return NextResponse.json(equipment);
+
+    const res = NextResponse.json(equipment);
+    res.headers.set('X-Views-Limit', String(DAILY_LIMIT));
+    res.headers.set('X-Views-Remaining', String(remaining));
+    return res;
   } catch (error) {
     console.error('Equipment detail API error:', error);
+    try {
+      await db.query('ROLLBACK');
+    } catch {}
     if (error instanceof z.ZodError) {
       return NextResponse.json(
         { error: 'Invalid parameters', details: error.errors },
