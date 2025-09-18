@@ -11,19 +11,21 @@ type Props<T> = {
   hasNextPage: boolean;
   searchQuery?: string;
   onSearchChange?: (q: string) => void;
+  showSearch?: boolean;
   onItemSelect: (item: T) => void;
   onLoadMore?: () => void;
   getItemId: (item: T) => number;
   getItemTitle: (item: T) => string;
   getItemCs?: (item: T) => number | null | undefined;
+  titleClassName?: string;
+  headerClassName?: string;
+  listClassName?: string;
   emptyMessage?: string;
   enabled?: boolean;
 };
 
 function csColor(score: number) {
   if (score >= 0.95) return 'text-emerald-700';
-  // if (score >= 0.94) return 'text-emerald-600';
-  // if (score >= 0.90) return 'text-amber-700';
   return 'text-muted-foreground';
 }
 
@@ -36,6 +38,7 @@ export function HierarchyList<T>(props: Props<T>) {
     hasNextPage,
     searchQuery,
     onSearchChange,
+    showSearch = true,
     onItemSelect,
     onLoadMore,
     getItemId,
@@ -43,6 +46,9 @@ export function HierarchyList<T>(props: Props<T>) {
     getItemCs,
     emptyMessage = 'Нет данных',
     enabled = true,
+    titleClassName,
+    headerClassName,
+    listClassName,
   } = props;
 
   const sentinelRef = useRef<HTMLDivElement | null>(null);
@@ -67,16 +73,21 @@ export function HierarchyList<T>(props: Props<T>) {
 
   return (
     <div className="flex h-full flex-col rounded-lg bg-background">
-      {/* компактный header */}
-      <div className="sticky top-0 z-10 bg-background px-2 py-1.5 text-[12px] font-medium border-b">
-        {title}
+      <div
+        className={cn(
+          'sticky top-0 z-10 border-b px-2 py-1.5 bg-muted',
+          'text-base md:text-[12px]',
+          headerClassName,
+        )}>
+        <span className={cn('font-semibold', titleClassName)}>{title}</span>
       </div>
-
-      {/* компактный поиск */}
-      {typeof onSearchChange === 'function' && (
-        <div className="px-2 py-1.5 border-b">
+      {showSearch && typeof onSearchChange === 'function' && (
+        <div className="px-2 py-1.5 border-b bg-background">
           <input
-            className="w-full rounded-md border px-2 py-1 text-[11px] disabled:opacity-50"
+            className={cn(
+              'w-full rounded-md border px-2 py-1 disabled:opacity-50',
+              'text-sm md:text-[11px]',
+            )}
             placeholder="Поиск…"
             value={searchQuery ?? ''}
             onChange={(e) => onSearchChange(e.target.value)}
@@ -85,10 +96,11 @@ export function HierarchyList<T>(props: Props<T>) {
         </div>
       )}
 
-      {/* список — только горизонтальные разделители */}
-      <div className="flex-1 overflow-auto divide-y">
+      <div className={cn('flex-1 overflow-auto divide-y', listClassName)}>
         {items.length === 0 && !loading ? (
-          <div className="px-2 py-2 text-[11px] text-muted-foreground">{emptyMessage}</div>
+          <div className={cn('px-2 py-2 text-muted-foreground', 'text-sm md:text-[11px]')}>
+            {emptyMessage}
+          </div>
         ) : (
           items.map((it) => {
             const id = getItemId(it);
@@ -102,13 +114,13 @@ export function HierarchyList<T>(props: Props<T>) {
                 type="button"
                 onClick={() => onItemSelect(it)}
                 className={cn(
-                  'w-full text-left px-2 py-1 text-[11px] leading-4',
+                  'w-full text-left px-2 py-1 leading-4',
+                  'text-base md:text-[11px]',
                   'hover:bg-accent/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/40',
                   selected && 'bg-accent/80 ring-1 ring-primary/30',
                 )}>
                 <div className="font-medium">
                   {getItemTitle(it)}
-                  {/* CS в конце названия: жирный и только цвет текста */}
                   {hasCs && (
                     <span
                       className={cn(
@@ -125,7 +137,11 @@ export function HierarchyList<T>(props: Props<T>) {
           })
         )}
 
-        {loading && <div className="px-2 py-1.5 text-[11px] text-muted-foreground">Загрузка…</div>}
+        {loading && (
+          <div className={cn('px-2 py-1.5 text-muted-foreground', 'text-sm md:text-[11px]')}>
+            Загрузка…
+          </div>
+        )}
 
         {enabled && <div ref={sentinelRef} />}
 
@@ -134,7 +150,10 @@ export function HierarchyList<T>(props: Props<T>) {
             <button
               type="button"
               onClick={onLoadMore!}
-              className="text-[11px] text-muted-foreground hover:text-foreground underline underline-offset-2">
+              className={cn(
+                'underline underline-offset-2 text-muted-foreground hover:text-foreground',
+                'text-sm md:text-[11px]',
+              )}>
               Показать ещё
             </button>
           </div>

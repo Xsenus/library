@@ -59,7 +59,7 @@ export default function LibraryPage() {
   const [prodclassesState, setProdclassesState] = useState<ListState<Prodclass>>({
     items: [],
     loading: false,
-    hasNextPage: false, // ← по умолчанию зависимые списки выключены
+    hasNextPage: false,
     page: 1,
     searchQuery: '',
   });
@@ -88,7 +88,8 @@ export default function LibraryPage() {
   const [csQuery, setCsQuery] = useState('');
   const csQueryDebounced = useDebounce(csQuery, 300);
 
-  // Debounced search queries (иерархия)
+  // Debounced search queries (иерархия) — больше не используются в UI колонок,
+  // но можно оставить для будущих улучшений, либо удалить при желании.
   const debouncedIndustrySearch = useDebounce(industriesState.searchQuery, 300);
   const debouncedProdclassSearch = useDebounce(prodclassesState.searchQuery, 300);
   const debouncedWorkshopSearch = useDebounce(workshopsState.searchQuery, 300);
@@ -530,7 +531,8 @@ export default function LibraryPage() {
       <div className="border-b bg-background">
         <div className="container mx-auto px-4">
           <div className="flex items-center justify-between py-4">
-            <h1 className="text-xl md:text-2xl font-semibold leading-tight">
+            {/* +2 размера на мобильных: было text-xl, стало text-3xl */}
+            <h1 className="text-3xl md:text-2xl font-semibold leading-tight">
               Отраслевой навигатор криобластинга от ИРБИСТЕХ
             </h1>
             <Image src="/logo.png" alt="ИрбисТех" width={160} height={48} priority />
@@ -542,14 +544,22 @@ export default function LibraryPage() {
       <div className="bg-background">
         <div className="container mx-auto px-4">
           <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="w-full">
-            <TabsList className="grid w-full md:w-auto grid-cols-3 md:grid-cols-3 gap-0">
-              <TabsTrigger value="library" className="px-6 py-2">
+            {/* Выравнивание табов: одинаковая высота/ширина, центрирование на мобилке */}
+            <TabsList className="flex w-full items-stretch justify-center md:justify-start gap-0">
+              <TabsTrigger
+                value="library"
+                className="h-10 flex-1 md:flex-none md:min-w-[140px] px-6">
                 Каталог
               </TabsTrigger>
-              <TabsTrigger value="cleanscore" className="px-6 py-2">
+              <TabsTrigger
+                value="cleanscore"
+                className="h-10 flex-1 md:flex-none md:min-w-[140px] px-6">
                 Таблица
               </TabsTrigger>
-              <TabsTrigger value="search" className="px-6 py-2" disabled>
+              <TabsTrigger
+                value="search"
+                className="h-10 flex-1 md:flex-none md:min-w-[140px] px-6"
+                disabled>
                 AI-поиск
               </TabsTrigger>
             </TabsList>
@@ -632,8 +642,8 @@ export default function LibraryPage() {
 
                 {/* Main Content */}
                 <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-4 h-[calc(100vh-200px)] bg-background">
-                  {/* Lists */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[160px_160px_160px_160px] gap-1 h-full">
+                  {/* Lists: увеличил шрифт на мобильных для «самих колонок» */}
+                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[160px_160px_160px_160px] gap-1 h-full text-base md:text-sm">
                     {/* Industries — всегда активен */}
                     <HierarchyList
                       title="Индустрия"
@@ -642,10 +652,11 @@ export default function LibraryPage() {
                       selectedId={selectedIndustry?.id || null}
                       loading={industriesState.loading}
                       hasNextPage={industriesState.hasNextPage}
-                      searchQuery={industriesState.searchQuery}
-                      onSearchChange={(query) =>
-                        setIndustriesState((prev) => ({ ...prev, searchQuery: query, page: 1 }))
-                      }
+                      // поиск скрыт
+                      showSearch={false}
+                      // оформление шапки/заголовка
+                      titleClassName="font-semibold"
+                      headerClassName="bg-muted"
                       onItemSelect={handleIndustrySelect}
                       onLoadMore={loadMoreIndustries}
                       getItemId={(item) => item.id}
@@ -660,10 +671,9 @@ export default function LibraryPage() {
                       selectedId={selectedProdclass?.id || null}
                       loading={prodclassesState.loading}
                       hasNextPage={prodclassesState.hasNextPage}
-                      searchQuery={prodclassesState.searchQuery}
-                      onSearchChange={(query) =>
-                        setProdclassesState((prev) => ({ ...prev, searchQuery: query, page: 1 }))
-                      }
+                      showSearch={false}
+                      titleClassName="font-semibold"
+                      headerClassName="bg-muted"
                       onItemSelect={handleProdclassSelect}
                       onLoadMore={loadMoreProdclasses}
                       getItemId={(item) => item.id}
@@ -681,10 +691,9 @@ export default function LibraryPage() {
                       selectedId={selectedWorkshop?.id || null}
                       loading={workshopsState.loading}
                       hasNextPage={workshopsState.hasNextPage}
-                      searchQuery={workshopsState.searchQuery}
-                      onSearchChange={(query) =>
-                        setWorkshopsState((prev) => ({ ...prev, searchQuery: query, page: 1 }))
-                      }
+                      showSearch={false}
+                      titleClassName="font-semibold"
+                      headerClassName="bg-muted"
                       onItemSelect={handleWorkshopSelect}
                       onLoadMore={loadMoreWorkshops}
                       getItemId={(item) => item.id}
@@ -701,10 +710,9 @@ export default function LibraryPage() {
                       selectedId={selectedEquipment?.id || null}
                       loading={equipmentState.loading}
                       hasNextPage={equipmentState.hasNextPage}
-                      searchQuery={equipmentState.searchQuery}
-                      onSearchChange={(query) =>
-                        setEquipmentState((prev) => ({ ...prev, searchQuery: query, page: 1 }))
-                      }
+                      showSearch={false}
+                      titleClassName="font-semibold"
+                      headerClassName="bg-muted"
                       onItemSelect={handleEquipmentSelect}
                       onLoadMore={loadMoreEquipment}
                       getItemId={(item) => item.id}
@@ -721,7 +729,6 @@ export default function LibraryPage() {
                         <EquipmentCard equipment={equipmentDetail} />
                       </div>
                     ) : (
-                      // единый фон, без бордера — никаких «реек»
                       <div className="h-full flex items-center justify-center rounded-lg bg-background">
                         <div className="text-center text-muted-foreground">
                           <div className="text-sm">Выберите оборудование</div>
