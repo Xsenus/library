@@ -150,7 +150,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const googleTextUrl = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 
   const blueBtn =
-    'shrink-0 border border-blue-500 text-blue-600 bg-blue-50 hover:bg-blue-100 active:scale-[.98] transition';
+    'border border-blue-500 text-blue-600 bg-blue-50 hover:bg-blue-100 active:scale-[.98] transition justify-center';
 
   /** ===== Проверка наличия GPT-картинок — до открытия секции ===== */
   useEffect(() => {
@@ -411,7 +411,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           <Sep />
 
           {/* Ряд действий */}
-          <div className="flex items-center gap-1.5 overflow-x-auto whitespace-nowrap pb-1">
+          <div className="flex flex-wrap items-center gap-1.5 pb-1">
             <Button size="sm" onClick={() => setShowUtp(true)} className={blueBtn}>
               📣 УТП
             </Button>
