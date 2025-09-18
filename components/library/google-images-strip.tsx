@@ -68,11 +68,11 @@ function probe(src: string, timeoutMs = 4000): Promise<boolean> {
       const to = setTimeout(() => finish(false), timeoutMs);
       img.onload = () => {
         clearTimeout(to);
-        res(img.naturalWidth >= 64 && img.naturalHeight >= 64);
+        finish(img.naturalWidth >= 64 && img.naturalHeight >= 64);
       };
       img.onerror = () => {
         clearTimeout(to);
-        res(false);
+        finish(false);
       };
       img.src = src;
     });

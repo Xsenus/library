@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/accordion';
 import { ExternalLink, X, Copy } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
-import { useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
 import { GoogleImagesCarousel } from './google-images-carousel';
@@ -26,7 +26,7 @@ const IMG_SECTIONS: ImgSection[] = ['google-images', 'gpt-images'];
 
 /** Единая логика хранения/восстановления состояния аккордеона */
 function useImgAccordionState(equipmentId?: number | null) {
-  const [open, setOpen] = useState<ImgSection[] | null>(null); // null пока не гидратнули
+  const [open, setOpen] = useState<ImgSection[] | null>(null); // null — пока не гидратнули
 
   // Гидратация при маунте и при смене записи
   useEffect(() => {
@@ -49,12 +49,10 @@ function useImgAccordionState(equipmentId?: number | null) {
         (localStorage.getItem('lib:gpt-open') === '1' ? 'gpt-images' : null);
 
       setOpen(
-        legacy === 'google-images' || legacy === 'gpt-images'
-          ? [legacy]
-          : (['google-images'] as ImgSection[]),
+        legacy === 'google-images' || legacy === 'gpt-images' ? [legacy] : ([] as ImgSection[]), // по умолчанию всё закрыто
       );
     } catch {
-      setOpen(['google-images']);
+      setOpen([]);
     }
   }, [equipmentId]);
 
@@ -98,6 +96,23 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
   // Храним/восстанавливаем массив открытых секций для каждой записи
   const [openSections, setOpenSections] = useImgAccordionState(equipment?.id);
+
+  /** Доступность GPT-картинок: null = проверяем, false = нет, true = есть */
+  const [gptAvailable, setGptAvailable] = useState<boolean | null>(null);
+  /** Флаг «мы уже один раз авто-раскрыли GPT» для этой карточки */
+  const [autoOpenedGPT, setAutoOpenedGPT] = useState(false);
+
+  /** НОВОЕ: хотим держать GPT открытой с первого рендера, если в памяти была открыта */
+  const wantGptFromMemoryRef = useRef(false);
+  useEffect(() => {
+    wantGptFromMemoryRef.current = !!openSections?.includes('gpt-images');
+  }, [openSections, equipment?.id]);
+
+  // Сброс на смену карточки
+  useEffect(() => {
+    setGptAvailable(null);
+    setAutoOpenedGPT(false);
+  }, [equipment?.id]);
 
   const imageUrls = equipment.images_url
     ? equipment.images_url
@@ -143,6 +158,78 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const blueBtn =
     'shrink-0 border border-blue-500 text-blue-600 bg-blue-50 hover:bg-blue-100 active:scale-[.98] transition';
 
+  /** ===== Проверка наличия GPT-картинок — до открытия секции ===== */
+  useEffect(() => {
+    let cancelled = false;
+    setGptAvailable(null);
+
+    const id = equipment?.id ? String(equipment.id) : null;
+    if (!id) {
+      setGptAvailable(false);
+      return;
+    }
+
+    const urls = [`${GPT_IMAGES_BASE}${id}_old.jpg`, `${GPT_IMAGES_BASE}${id}_cryo.jpg`];
+
+    async function probe(url: string): Promise<boolean> {
+      // 1) HEAD
+      try {
+        const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+        if (r.ok) return true;
+        if (r.status === 404) return false;
+      } catch {
+        /* ignore */
+      }
+      // 2) <img> fallback
+      return new Promise<boolean>((resolve) => {
+        const img = new Image();
+        img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
+        img.onerror = () => resolve(false);
+        const sep = url.includes('?') ? '&' : '?';
+        img.src = `${url}${sep}cb=${Date.now()}`;
+      });
+    }
+
+    (async () => {
+      const [a, b] = await Promise.all(urls.map((u) => probe(u)));
+      if (cancelled) return;
+      setGptAvailable(!!(a || b));
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [equipment?.id]);
+
+  /** Реакция на изменение доступности: один раз авто-раскрываем GPT, но не навязываем дальше */
+  useEffect(() => {
+    if (!openSections) return;
+    if (gptAvailable === true && !autoOpenedGPT) {
+      if (!openSections.includes('gpt-images')) {
+        setOpenSections((prev) => [...(prev || []), 'gpt-images']);
+      }
+      setAutoOpenedGPT(true);
+    }
+    if (gptAvailable === false || gptAvailable === null) {
+      if (openSections.includes('gpt-images')) {
+        setOpenSections((prev) => (prev || []).filter((x) => x !== 'gpt-images'));
+      }
+    }
+  }, [gptAvailable, autoOpenedGPT, openSections, setOpenSections]);
+
+  /** Значение для аккордеона:
+   * - GPT видна только когда доступна
+   * - ЛИБО когда идёт проверка и «по памяти» была открыта — сразу держим её в value,
+   *   чтобы не было повторной анимации раскрытия.
+   */
+  const accordionValue =
+    (openSections?.filter((s) => {
+      if (s !== 'gpt-images') return true;
+      if (gptAvailable === true) return true;
+      if (gptAvailable === null && wantGptFromMemoryRef.current) return true;
+      return false;
+    }) as ImgSection[]) ?? [];
+
   return (
     <div className="space-y-4">
       <Card>
@@ -184,11 +271,15 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           {openSections !== null ? (
             <Accordion
               type="multiple"
-              value={openSections}
+              value={accordionValue}
               onValueChange={(v) => {
                 const arr = (Array.isArray(v) ? v : []) as ImgSection[];
-                const filtered = arr.filter((x) => x === 'google-images' || x === 'gpt-images');
-                setOpenSections(filtered);
+                let filtered = arr.filter((x) => x === 'google-images' || x === 'gpt-images');
+                // Блокируем «gpt-images», пока доступность НЕ подтверждена true
+                if (gptAvailable !== true) {
+                  filtered = filtered.filter((x) => x !== 'gpt-images');
+                }
+                setOpenSections(filtered); // допускаем пустой массив — всё закрыто
               }}
               className="w-full">
               <AccordionItem value="google-images">
@@ -206,13 +297,39 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
               </AccordionItem>
 
               <AccordionItem value="gpt-images">
-                <AccordionTrigger className="text-sm font-medium">Картинки GPT</AccordionTrigger>
-                <AccordionContent>
+                <AccordionTrigger
+                  className={cn(
+                    'text-sm font-medium',
+                    gptAvailable !== true && 'opacity-50 pointer-events-none select-none',
+                  )}
+                  onClick={gptAvailable !== true ? (e) => e.preventDefault() : undefined}
+                  aria-disabled={gptAvailable !== true}>
+                  Картинки GPT
+                </AccordionTrigger>
+
+                {/* Отключаем видимую анимацию при проверке/авто-открытии */}
+                <AccordionContent
+                  className={cn(
+                    (gptAvailable === null || autoOpenedGPT) &&
+                      'data-[state=open]:!animate-none data-[state=closed]:!animate-none',
+                  )}>
                   <div className="pt-2">
-                    <GptImages
-                      equipmentId={equipment.id}
-                      onSelect={(url) => setSelectedImage(url)}
-                    />
+                    {gptAvailable === null && wantGptFromMemoryRef.current && (
+                      <div className="h-[300px] rounded-md border bg-muted/50 animate-pulse" />
+                    )}
+
+                    {gptAvailable === true && (
+                      <GptImages
+                        equipmentId={equipment.id}
+                        onSelect={(url) => setSelectedImage(url)}
+                      />
+                    )}
+
+                    {gptAvailable === false && (
+                      <div className="rounded-md border bg-muted/50 grid place-items-center h-[120px]">
+                        <span className="text-xs text-muted-foreground">Нет картинки</span>
+                      </div>
+                    )}
                   </div>
                 </AccordionContent>
               </AccordionItem>
@@ -414,17 +531,19 @@ function GptImages({
   useEffect(() => {
     let cancelled = false;
 
-    async function probeImage(url: string): Promise<boolean> {
+    async function probe(url: string): Promise<boolean> {
+      // 1) HEAD
       try {
-        const res = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-        if (res.ok) return true;
-        if (res.status === 404) return false;
+        const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
+        if (r.ok) return true;
+        if (r.status === 404) return false;
       } catch {
         /* ignore */
       }
+      // 2) <img> fallback
       return new Promise<boolean>((resolve) => {
-        const img = new (window as any).Image() as HTMLImageElement;
-        img.onload = () => resolve(true);
+        const img = new Image();
+        img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
         img.onerror = () => resolve(false);
         const sep = url.includes('?') ? '&' : '?';
         img.src = `${url}${sep}cb=${Date.now()}`;
@@ -436,10 +555,7 @@ function GptImages({
         if (!cancelled) setExists({ old: false, cryo: false });
         return;
       }
-      const [oldOk, cryoOk] = await Promise.all([
-        probeImage(items[0].url),
-        probeImage(items[1].url),
-      ]);
+      const [oldOk, cryoOk] = await Promise.all([probe(items[0].url), probe(items[1].url)]);
       if (!cancelled) setExists({ old: oldOk, cryo: cryoOk });
     })();
 
@@ -606,7 +722,7 @@ function BigModal({
     <div className="fixed inset-0 z-[100]">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
-        className="absolute left-1/2 top-1/2 w-[min(1100px,100vw-32px)] max-h-[calc(100vh-32px)]
+        className="absolute left-1/2 top-1/2 w-[min(1100px,100vw-32px)] maxхана-[calc(100vh-32px)]
                       -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border
                       bg-background shadow-2xl flex flex-col min-h-0">
         <div className="flex items-center justify-between gap-2 border-b px-4 py-3 shrink-0">
