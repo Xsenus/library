@@ -17,14 +17,21 @@ export async function GET(_req: NextRequest) {
     if (!session) {
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
+
     const live = await getLiveUserState(session.id);
     if (!live || !live.activated) {
       clearSession();
       return NextResponse.json({ error: 'Доступ заблокирован' }, { status: 403 });
     }
 
-    await db.query('BEGIN');
+    const isWorker = !!live.irbis_worker;
 
+    // Для сотрудников квота не отображается в UI, но API может вернуть заглушку.
+    if (isWorker) {
+      return NextResponse.json({ limit: DAILY_LIMIT, used: 0, remaining: DAILY_LIMIT });
+    }
+
+    // Обычные пользователи — считаем фактический расход квоты за сегодня
     const countSql = `
       SELECT COUNT(DISTINCT equipment_id)::int AS c
       FROM users_activity
@@ -33,22 +40,9 @@ export async function GET(_req: NextRequest) {
     const { rows } = await db.query(countSql, [session.id]);
     const used: number = rows[0]?.c ?? 0;
 
-    // Сброс на новый день
-    if (used === 0 && live.irbis_worker === false) {
-      await db.query(
-        `UPDATE users_irbis SET irbis_worker = TRUE WHERE id = $1 AND irbis_worker = FALSE`,
-        [session.id],
-      );
-    }
-
-    await db.query('COMMIT');
-
     const remaining = Math.max(0, DAILY_LIMIT - used);
     return NextResponse.json({ limit: DAILY_LIMIT, used, remaining });
-  } catch (e) {
-    try {
-      await db.query('ROLLBACK');
-    } catch {}
+  } catch {
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }

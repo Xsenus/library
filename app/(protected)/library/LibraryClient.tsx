@@ -53,11 +53,11 @@ export default function LibraryPage() {
 
   const didInitQuota = useRef(false);
   useEffect(() => {
-    if (!didInitQuota.current) {
+    if (!didInitQuota.current && !isWorker) {
       didInitQuota.current = true;
       refetchQuota();
     }
-  }, [refetchQuota]);
+  }, [isWorker, refetchQuota]);
 
   const [limitExceeded, setLimitExceeded] = useState(false);
 
@@ -303,13 +303,13 @@ export default function LibraryPage() {
         const res = await fetch(`/api/equipment/${equipmentId}`, { cache: 'no-store' });
 
         const hdr = res.headers.get('X-Views-Remaining');
-        if (hdr != null) {
+        if (!isWorker && hdr != null) {
           const n = Number(hdr);
           if (!Number.isNaN(n)) setRemaining(n);
         }
 
         if (!res.ok) {
-          if (res.status === 403) {
+          if (!isWorker && res.status === 403) {
             setLimitExceeded(true);
             setEquipmentDetail(null);
             refetchQuota();
@@ -329,7 +329,7 @@ export default function LibraryPage() {
         console.error('Failed to fetch equipment detail:', error);
       }
     },
-    [refetchQuota, setRemaining],
+    [isWorker, refetchQuota, setRemaining],
   );
 
   // CleanScore loader (с фильтрами)
@@ -482,7 +482,12 @@ export default function LibraryPage() {
 
   // ===== АВТОВЫБОР "первого элемента" ПО КАСКАДУ =====
   useEffect(() => {
-    if (autoSelectProdclass && !prodclassesState.loading && prodclassesState.items.length > 0) {
+    if (
+      isWorker &&
+      autoSelectProdclass &&
+      !prodclassesState.loading &&
+      prodclassesState.items.length > 0
+    ) {
       setAutoSelectProdclass(false);
       const first = prodclassesState.items[0];
       handleProdclassSelect(first);
@@ -490,7 +495,12 @@ export default function LibraryPage() {
   }, [autoSelectProdclass, prodclassesState.loading, prodclassesState.items]); // eslint-disable-line
 
   useEffect(() => {
-    if (autoSelectWorkshop && !workshopsState.loading && workshopsState.items.length > 0) {
+    if (
+      isWorker &&
+      autoSelectWorkshop &&
+      !workshopsState.loading &&
+      workshopsState.items.length > 0
+    ) {
       setAutoSelectWorkshop(false);
       const first = workshopsState.items[0] as Workshop;
       handleWorkshopSelect(first);
@@ -498,7 +508,12 @@ export default function LibraryPage() {
   }, [autoSelectWorkshop, workshopsState.loading, workshopsState.items]); // eslint-disable-line
 
   useEffect(() => {
-    if (autoSelectEquipment && !equipmentState.loading && equipmentState.items.length > 0) {
+    if (
+      isWorker &&
+      autoSelectEquipment &&
+      !equipmentState.loading &&
+      equipmentState.items.length > 0
+    ) {
       setAutoSelectEquipment(false);
       const first = equipmentState.items[0];
       handleEquipmentSelect(first);
@@ -514,9 +529,11 @@ export default function LibraryPage() {
     setSelectedEquipment(null);
     setEquipmentDetail(null);
 
-    setAutoSelectProdclass(true);
-    setAutoSelectWorkshop(true);
-    setAutoSelectEquipment(true);
+    if (isWorker) {
+      setAutoSelectProdclass(true);
+      setAutoSelectWorkshop(true);
+      setAutoSelectEquipment(true);
+    }
 
     setProdclassesState((prev) => ({
       ...prev,
@@ -548,8 +565,10 @@ export default function LibraryPage() {
     setSelectedEquipment(null);
     setEquipmentDetail(null);
 
-    setAutoSelectWorkshop(true);
-    setAutoSelectEquipment(true);
+    if (isWorker) {
+      setAutoSelectWorkshop(true);
+      setAutoSelectEquipment(true);
+    }
 
     setWorkshopsState((prev) => ({
       ...prev,
@@ -573,7 +592,9 @@ export default function LibraryPage() {
     setSelectedEquipment(null);
     setEquipmentDetail(null);
 
-    setAutoSelectEquipment(true);
+    if (isWorker) {
+      setAutoSelectEquipment(true);
+    }
 
     setEquipmentState((prev) => ({
       ...prev,
@@ -586,7 +607,7 @@ export default function LibraryPage() {
 
   const handleEquipmentSelect = (equipment: EquipmentListItem) => {
     if (selectedEquipment?.id === equipment.id) return;
-    if (quota && quota.remaining === 0) {
+    if (!isWorker && quota && quota.remaining === 0) {
       setLimitExceeded(true);
       setEquipmentDetail(null);
       return;
@@ -655,7 +676,7 @@ export default function LibraryPage() {
                 Отраслевой навигатор криобластинга от ИРБИСТЕХ
               </h1>
 
-              {quota && (
+              {!isWorker && quota && (
                 <div
                   className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs leading-5"
                   title="Сколько карточек можно открыть сегодня">
@@ -900,7 +921,7 @@ export default function LibraryPage() {
 
                   {/* Details */}
                   <div className="h-full min-w-0">
-                    {limitExceeded ? (
+                    {!isWorker && limitExceeded ? (
                       <div className="h-full flex items-center justify-center rounded-lg bg-background">
                         <div className="max-w-md text-center space-y-3">
                           <div className="inline-flex items-center rounded-full border border-red-300 bg-red-50 px-2.5 py-1 text-xs font-medium text-red-700">
