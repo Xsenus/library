@@ -642,84 +642,94 @@ export default function LibraryPage() {
 
                 {/* Main Content */}
                 <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-4 h-[calc(100vh-200px)] bg-background">
-                  {/* Lists: увеличил шрифт на мобильных для «самих колонок» */}
-                  <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[160px_160px_160px_160px] gap-1 h-full text-base md:text-sm">
-                    {/* Industries — всегда активен */}
-                    <HierarchyList
-                      title="Индустрия"
-                      enabled={true}
-                      items={industriesState.items}
-                      selectedId={selectedIndustry?.id || null}
-                      loading={industriesState.loading}
-                      hasNextPage={industriesState.hasNextPage}
-                      // поиск скрыт
-                      showSearch={false}
-                      // оформление шапки/заголовка
-                      titleClassName="font-semibold"
-                      headerClassName="bg-muted"
-                      onItemSelect={handleIndustrySelect}
-                      onLoadMore={loadMoreIndustries}
-                      getItemId={(item) => item.id}
-                      getItemTitle={(item) => item.industry}
-                    />
+                  {/* === ОБЩАЯ РАМКА ДЛЯ 4 КОЛОНОК === */}
+                  <div className="h-full">
+                    <div className="flex h-full flex-col rounded-xl border shadow-sm bg-card overflow-hidden">
+                      <div className="px-3 py-2 border-b bg-card text-sm font-semibold">
+                        Навигатор
+                      </div>
 
-                    {/* Prodclasses — активен после выбора индустрии */}
-                    <HierarchyList
-                      title="Класс предприятия"
-                      enabled={!!selectedIndustry}
-                      items={prodclassesState.items}
-                      selectedId={selectedProdclass?.id || null}
-                      loading={prodclassesState.loading}
-                      hasNextPage={prodclassesState.hasNextPage}
-                      showSearch={false}
-                      titleClassName="font-semibold"
-                      headerClassName="bg-muted"
-                      onItemSelect={handleProdclassSelect}
-                      onLoadMore={loadMoreProdclasses}
-                      getItemId={(item) => item.id}
-                      getItemTitle={(item) => item.prodclass}
-                      emptyMessage={
-                        selectedIndustry ? 'Нет классов предприятий' : 'Выберите индустрию'
-                      }
-                    />
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[160px_160px_160px_160px] gap-5 md:gap-3 lg:gap-1 p-2 h-full text-base md:text-sm bg-background">
+                        {/* Industries — всегда активен */}
+                        <HierarchyList
+                          title="Индустрия"
+                          enabled={true}
+                          items={industriesState.items}
+                          selectedId={selectedIndustry?.id || null}
+                          loading={industriesState.loading}
+                          hasNextPage={industriesState.hasNextPage}
+                          // поиск скрыт
+                          showSearch={false}
+                          // оформление шапки/заголовка
+                          titleClassName="font-semibold"
+                          headerClassName="bg-muted"
+                          onItemSelect={handleIndustrySelect}
+                          onLoadMore={loadMoreIndustries}
+                          getItemId={(item) => item.id}
+                          getItemTitle={(item) => item.industry}
+                        />
 
-                    {/* Workshops — активен после выбора класса */}
-                    <HierarchyList
-                      title="Цех предприятия"
-                      enabled={!!selectedProdclass}
-                      items={workshopsState.items}
-                      selectedId={selectedWorkshop?.id || null}
-                      loading={workshopsState.loading}
-                      hasNextPage={workshopsState.hasNextPage}
-                      showSearch={false}
-                      titleClassName="font-semibold"
-                      headerClassName="bg-muted"
-                      onItemSelect={handleWorkshopSelect}
-                      onLoadMore={loadMoreWorkshops}
-                      getItemId={(item) => item.id}
-                      getItemTitle={(item) => item.workshop_name}
-                      getItemCs={(item) => item.best_cs ?? null}
-                      emptyMessage={selectedProdclass ? 'Нет цехов' : 'Выберите класс предприятия'}
-                    />
+                        {/* Prodclasses — активен после выбора индустрии */}
+                        <HierarchyList
+                          title="Класс предприятия"
+                          enabled={!!selectedIndustry}
+                          items={prodclassesState.items}
+                          selectedId={selectedProdclass?.id || null}
+                          loading={prodclassesState.loading}
+                          hasNextPage={prodclassesState.hasNextPage}
+                          showSearch={false}
+                          titleClassName="font-semibold"
+                          headerClassName="bg-muted"
+                          onItemSelect={handleProdclassSelect}
+                          onLoadMore={loadMoreProdclasses}
+                          getItemId={(item) => item.id}
+                          getItemTitle={(item) => item.prodclass}
+                          emptyMessage={
+                            selectedIndustry ? 'Нет классов предприятий' : 'Выберите индустрию'
+                          }
+                        />
 
-                    {/* Equipment — активен после выбора цеха */}
-                    <HierarchyList
-                      title="Оборудование из цеха"
-                      enabled={!!selectedWorkshop}
-                      items={equipmentState.items}
-                      selectedId={selectedEquipment?.id || null}
-                      loading={equipmentState.loading}
-                      hasNextPage={equipmentState.hasNextPage}
-                      showSearch={false}
-                      titleClassName="font-semibold"
-                      headerClassName="bg-muted"
-                      onItemSelect={handleEquipmentSelect}
-                      onLoadMore={loadMoreEquipment}
-                      getItemId={(item) => item.id}
-                      getItemTitle={(item) => item.equipment_name}
-                      getItemCs={(item) => item.clean_score ?? null}
-                      emptyMessage={selectedWorkshop ? 'Нет оборудования' : 'Выберите цех'}
-                    />
+                        {/* Workshops — активен после выбора класса */}
+                        <HierarchyList
+                          title="Цех предприятия"
+                          enabled={!!selectedProdclass}
+                          items={workshopsState.items}
+                          selectedId={selectedWorkshop?.id || null}
+                          loading={workshopsState.loading}
+                          hasNextPage={workshopsState.hasNextPage}
+                          showSearch={false}
+                          titleClassName="font-semibold"
+                          headerClassName="bg-muted"
+                          onItemSelect={handleWorkshopSelect}
+                          onLoadMore={loadMoreWorkshops}
+                          getItemId={(item) => item.id}
+                          getItemTitle={(item) => item.workshop_name}
+                          getItemCs={(item) => item.best_cs ?? null}
+                          emptyMessage={
+                            selectedProdclass ? 'Нет цехов' : 'Выберите класс предприятия'
+                          }
+                        />
+
+                        {/* Equipment — активен после выбора цеха */}
+                        <HierarchyList
+                          title="Оборудование из цеха"
+                          enabled={!!selectedWorkshop}
+                          items={equipmentState.items}
+                          selectedId={selectedEquipment?.id || null}
+                          loading={equipmentState.loading}
+                          hasNextPage={equipmentState.hasNextPage}
+                          showSearch={false}
+                          titleClassName="font-semibold"
+                          headerClassName="bg-muted"
+                          onItemSelect={handleEquipmentSelect}
+                          onLoadMore={loadMoreEquipment}
+                          getItemId={(item) => item.id}
+                          getItemTitle={(item) => item.equipment_name}
+                          getItemCs={(item) => item.clean_score ?? null}
+                          emptyMessage={selectedWorkshop ? 'Нет оборудования' : 'Выберите цех'}
+                        />
+                      </div>
+                    </div>
                   </div>
 
                   {/* Details */}
