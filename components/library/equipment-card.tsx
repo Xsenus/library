@@ -245,7 +245,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   };
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 pb-[1cm]">
       <Card>
         <CardHeader className="p-3 sm:p-4 pb-2">
           <CardTitle
