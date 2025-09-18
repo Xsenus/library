@@ -47,6 +47,11 @@ export default function LibraryPage() {
   const [selectedEquipment, setSelectedEquipment] = useState<EquipmentListItem | null>(null);
   const [equipmentDetail, setEquipmentDetail] = useState<EquipmentDetail | null>(null);
 
+  // Флаги автоподстановки «первого элемента» по каскаду
+  const [autoSelectProdclass, setAutoSelectProdclass] = useState(false);
+  const [autoSelectWorkshop, setAutoSelectWorkshop] = useState(false);
+  const [autoSelectEquipment, setAutoSelectEquipment] = useState(false);
+
   // List states
   const [industriesState, setIndustriesState] = useState<ListState<Industry>>({
     items: [],
@@ -88,8 +93,7 @@ export default function LibraryPage() {
   const [csQuery, setCsQuery] = useState('');
   const csQueryDebounced = useDebounce(csQuery, 300);
 
-  // Debounced search queries (иерархия) — больше не используются в UI колонок,
-  // но можно оставить для будущих улучшений, либо удалить при желании.
+  // Debounced search queries (иерархия)
   const debouncedIndustrySearch = useDebounce(industriesState.searchQuery, 300);
   const debouncedProdclassSearch = useDebounce(prodclassesState.searchQuery, 300);
   const debouncedWorkshopSearch = useDebounce(workshopsState.searchQuery, 300);
@@ -406,6 +410,32 @@ export default function LibraryPage() {
     }
   }, [equipmentState.items, selectedEquipment]);
 
+  // ===== АВТОВЫБОР "первого элемента" ПО КАСКАДУ =====
+  useEffect(() => {
+    if (autoSelectProdclass && !prodclassesState.loading && prodclassesState.items.length > 0) {
+      setAutoSelectProdclass(false);
+      // выберем первый класс
+      const first = prodclassesState.items[0];
+      handleProdclassSelect(first);
+    }
+  }, [autoSelectProdclass, prodclassesState.loading, prodclassesState.items]); // eslint-disable-line
+
+  useEffect(() => {
+    if (autoSelectWorkshop && !workshopsState.loading && workshopsState.items.length > 0) {
+      setAutoSelectWorkshop(false);
+      const first = workshopsState.items[0] as Workshop;
+      handleWorkshopSelect(first);
+    }
+  }, [autoSelectWorkshop, workshopsState.loading, workshopsState.items]); // eslint-disable-line
+
+  useEffect(() => {
+    if (autoSelectEquipment && !equipmentState.loading && equipmentState.items.length > 0) {
+      setAutoSelectEquipment(false);
+      const first = equipmentState.items[0];
+      handleEquipmentSelect(first);
+    }
+  }, [autoSelectEquipment, equipmentState.loading, equipmentState.items]); // eslint-disable-line
+
   // ========================= HANDЛЕРЫ =========================
   const handleIndustrySelect = (industry: Industry) => {
     if (selectedIndustry?.id === industry.id) return;
@@ -414,6 +444,12 @@ export default function LibraryPage() {
     setSelectedWorkshop(null);
     setSelectedEquipment(null);
     setEquipmentDetail(null);
+
+    // при выборе индустрии — запланировать каскадную автоподстановку
+    setAutoSelectProdclass(true);
+    setAutoSelectWorkshop(true);
+    setAutoSelectEquipment(true);
+
     setProdclassesState((prev) => ({
       ...prev,
       items: [],
@@ -443,6 +479,11 @@ export default function LibraryPage() {
     setSelectedWorkshop(null);
     setSelectedEquipment(null);
     setEquipmentDetail(null);
+
+    // при выборе класса — автоподстановка цеха и оборудования
+    setAutoSelectWorkshop(true);
+    setAutoSelectEquipment(true);
+
     setWorkshopsState((prev) => ({
       ...prev,
       items: [],
@@ -464,6 +505,10 @@ export default function LibraryPage() {
     setSelectedWorkshop(workshop);
     setSelectedEquipment(null);
     setEquipmentDetail(null);
+
+    // при выборе цеха — автоподстановка оборудования
+    setAutoSelectEquipment(true);
+
     setEquipmentState((prev) => ({
       ...prev,
       items: [],
