@@ -2,7 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { equipmentIdSchema, equipmentDetailSchema } from '@/lib/validators';
 import { z } from 'zod';
-import { getSession } from '@/lib/auth';
+import { clearSession, getSession } from '@/lib/auth';
+import { getLiveUserState } from '@/lib/user-state';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -16,6 +17,12 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
     if (!session.activated) {
+      return NextResponse.json({ error: 'Доступ заблокирован' }, { status: 403 });
+    }
+
+    const live = await getLiveUserState(session.id);
+    if (!live || !live.activated) {
+      clearSession();
       return NextResponse.json({ error: 'Доступ заблокирован' }, { status: 403 });
     }
 
