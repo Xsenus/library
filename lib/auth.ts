@@ -31,7 +31,7 @@ export async function createSession(user: SessionUser, remember: boolean) {
     value: token,
     httpOnly: true,
     sameSite: 'lax' as const,
-    secure: process.env.NODE_ENV === 'production',
+    secure: process.env.NODE_ENV === 'production' && process.env.USE_HTTPS === 'true',
     path: '/',
   };
 
