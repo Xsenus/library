@@ -59,7 +59,7 @@ function useImgAccordionState(equipmentId?: number | null) {
         (localStorage.getItem('lib:gpt-open') === '1' ? 'gpt-images' : null);
 
       setOpen(
-        legacy === 'google-images' || legacy === 'gpt-images' ? [legacy] : ([] as ImgSection[]), // по умолчанию всё закрыто
+        legacy === 'google-images' || legacy === 'gpt-images' ? [legacy] : ([] as ImgSection[]),
       );
     } catch {
       setOpen([]);
@@ -99,6 +99,41 @@ function useImgAccordionState(equipmentId?: number | null) {
   return [open, setOpen] as const;
 }
 
+/** Бейдж подтверждения ES с поддержкой клика для админа */
+const EsBadge = ({
+  researched,
+  isAdmin,
+  onToggle,
+  saving,
+}: {
+  researched: boolean;
+  isAdmin: boolean;
+  onToggle: () => void;
+  saving: boolean;
+}) => {
+  const baseCls =
+    'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium border';
+
+  const toneCls = researched
+    ? 'bg-blue-600 text-white border-blue-600'
+    : 'bg-muted text-muted-foreground border-muted-foreground/30';
+
+  const title = researched ? 'Подтверждено ИРБИСТЕХ' : 'Еще не подтверждено';
+  const asButton = isAdmin && !saving ? 'cursor-pointer hover:opacity-90' : 'cursor-default';
+
+  return (
+    <button
+      type="button"
+      disabled={!isAdmin || saving}
+      onClick={isAdmin ? onToggle : undefined}
+      className={cn(baseCls, toneCls, asButton)}
+      title={title}
+      aria-pressed={researched}>
+      {saving ? 'Сохранение…' : researched ? 'Подтверждено ИРБИСТЕХ' : 'Еще не подтверждено'}
+    </button>
+  );
+};
+
 export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showUtp, setShowUtp] = useState(false);
@@ -134,10 +169,65 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   // CS — «Эффективность очистки (GPT)»
   const cs = equipment.clean_score ?? null;
 
-  // ES — числовое значение и флаг «исследовано» (берём строго из модели)
+  // ES — числовое значение и флаг «подтверждено»
   const es: number | null = equipment.equipment_score ?? null;
-  const esReal: number | null =
+  const esRealRaw: number | null =
     typeof equipment.equipment_score_real === 'number' ? equipment.equipment_score_real : 0;
+
+  // локальный флаг подтверждения (0 -> false, 1 -> true)
+  const [esConfirmed, setEsConfirmed] = useState<boolean>(esRealRaw !== 0);
+  useEffect(() => setEsConfirmed(esRealRaw !== 0), [esRealRaw, equipment?.id]);
+
+  // Проверка админа
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const r = await fetch('/api/auth/me', { cache: 'no-store', credentials: 'same-origin' });
+        if (!r.ok) return;
+        const data = await r.json();
+        if (!cancelled) setIsAdmin(!!data?.user?.is_admin);
+      } catch {}
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  // Оптимистичный тоггл + подстраховка ответом
+  const [savingEs, setSavingEs] = useState(false);
+  const toggleEsConfirm = async () => {
+    if (!equipment?.id || savingEs) return;
+    const want = !esConfirmed;
+
+    // 1) оптимистично меняем локально
+    setEsConfirmed(want);
+    setSavingEs(true);
+
+    try {
+      const r = await fetch(`/api/equipment/${equipment.id}/es-confirm`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        cache: 'no-store',
+        body: JSON.stringify({ confirmed: want }),
+      });
+      if (!r.ok) {
+        const err = await r.json().catch(() => ({}));
+        throw new Error(err?.error || `HTTP ${r.status}`);
+      }
+      const data = await r.json();
+      // 2) сервер возвращает 0/1 — приводим к boolean
+      const confirmedServer = !!Number(data?.equipment_score_real);
+      setEsConfirmed(confirmedServer);
+    } catch (e) {
+      console.error('Failed to toggle ES confirm:', e);
+      // 3) откат оптимистичного апдейта
+      setEsConfirmed((prev) => !prev);
+    } finally {
+      setSavingEs(false);
+    }
+  };
 
   const fmt = (v: number | null) => (v == null ? 'N/A' : v.toFixed(2));
   const Sep = () => <div className="h-px bg-border my-2" />;
@@ -218,27 +308,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       return false;
     }) as ImgSection[]) ?? [];
 
-  const EsBadge = () => {
-    if (typeof esReal !== 'number') return null;
-
-    const researched = esReal !== 0;
-
-    const baseCls =
-      'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium border';
-
-    const toneCls = researched
-      ? 'bg-blue-600 text-white border-blue-600'
-      : 'bg-muted text-muted-foreground border-muted-foreground/30';
-
-    const title = researched ? `Исследовано ИРБИСТЕХ` : 'Еще не исследовано';
-
-    return (
-      <span className={cn(baseCls, toneCls)} title={title}>
-        {researched ? <>Исследовано ИРБИСТЕХ</> : <>Еще не исследовано</>}
-      </span>
-    );
-  };
-
   return (
     <div className="space-y-4 pb-[1cm]">
       <Card>
@@ -258,7 +327,12 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
               Эффективность очистки (GPT): {fmt(cs)}
             </span>
 
-            <EsBadge />
+            <EsBadge
+              researched={esConfirmed}
+              isAdmin={isAdmin}
+              onToggle={toggleEsConfirm}
+              saving={savingEs}
+            />
 
             {/* ID */}
             {equipment?.id != null && (
@@ -587,7 +661,8 @@ function GptImages({
     return () => {
       cancelled = true;
     };
-  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
 
   const tileBase =
     'relative h-[300px] w-full rounded-md overflow-hidden text-left border bg-muted/50 grid place-items-center';
@@ -747,7 +822,7 @@ function BigModal({
     <div className="fixed inset-0 z-[100]">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
-        className="absolute left-1/2 top-1/2 w-[min(1100px,100vw-32px)] max-h-[calc(100vh-32px)]
+        className="absolute left-1/2 top-1/2 w-[min(1100px,100vw-32px)] max-h[calc(100vh-32px)]
                       -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border
                       bg-background shadow-2xl flex flex-col min-h-0">
         <div className="flex items-center justify-between gap-2 border-b px-4 py-3 shrink-0">
