@@ -24,6 +24,16 @@ type ImgSection = 'google-images' | 'gpt-images';
 const OPEN_KEY = 'lib:img-accordion-open';
 const IMG_SECTIONS: ImgSection[] = ['google-images', 'gpt-images'];
 
+/** Градация цвета под шкалу 0.80–1.00 (серый → зелёный) */
+function scoreToneClass(score?: number | null) {
+  if (score == null || Number.isNaN(score)) return 'text-muted-foreground';
+  if (score < 0.8) return 'text-muted-foreground';
+  if (score < 0.86) return 'text-zinc-500';
+  if (score < 0.9) return 'text-emerald-500';
+  if (score < 0.95) return 'text-emerald-600';
+  return 'text-emerald-700';
+}
+
 /** Единая логика хранения/восстановления состояния аккордеона */
 function useImgAccordionState(equipmentId?: number | null) {
   const [open, setOpen] = useState<ImgSection[] | null>(null); // null — пока не гидратнули
@@ -102,7 +112,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   /** Флаг «мы уже один раз авто-раскрыли GPT» для этой карточки */
   const [autoOpenedGPT, setAutoOpenedGPT] = useState(false);
 
-  /** НОВОЕ: хотим держать GPT открытой с первого рендера, если в памяти была открыта */
+  /** Держим GPT открытой с первого рендера, если в памяти была открыта */
   const wantGptFromMemoryRef = useRef(false);
   useEffect(() => {
     wantGptFromMemoryRef.current = !!openSections?.includes('gpt-images');
@@ -121,35 +131,19 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
         .filter(Boolean)
     : [];
 
+  // CS — «Эффективность очистки (GPT)»
   const cs = equipment.clean_score ?? null;
-  const es = equipment.equipment_score ?? null;
+
+  // ES — числовое значение и флаг «исследовано» (берём строго из модели)
+  const es: number | null = equipment.equipment_score ?? null;
+  const esReal: number | null =
+    typeof equipment.equipment_score_real === 'number' ? equipment.equipment_score_real : es;
 
   const fmt = (v: number | null) => (v == null ? 'N/A' : v.toFixed(2));
   const Sep = () => <div className="h-px bg-border my-2" />;
 
-  const ScorePill = ({
-    label,
-    value,
-    tone,
-  }: {
-    label: 'CS' | 'ES';
-    value: number | null;
-    tone: 'cs' | 'es';
-  }) => {
-    const base =
-      'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium tabular-nums';
-    const cls =
-      tone === 'es'
-        ? 'bg-zinc-600 text-white'
-        : value != null && value >= 0.95
-        ? 'bg-emerald-50 text-emerald-700 border border-emerald-200 dark:bg-emerald-900/20 dark:text-emerald-300 dark:border-emerald-900/40'
-        : 'bg-muted text-muted-foreground';
-    return (
-      <span className={cn(base, cls)} title={`${label}: ${fmt(value)}`}>
-        {label}: {fmt(value)}
-      </span>
-    );
-  };
+  // Заголовок окрашиваем по CS (новая шкала 0.80–1.00)
+  const titleToneCls = scoreToneClass(cs);
 
   const q = equipment.equipment_name?.trim() ?? '';
   const googleImagesUrl = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(q)}`;
@@ -172,7 +166,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     const urls = [`${GPT_IMAGES_BASE}${id}_old.jpg`, `${GPT_IMAGES_BASE}${id}_cryo.jpg`];
 
     async function probe(url: string): Promise<boolean> {
-      // 1) HEAD
       try {
         const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
         if (r.ok) return true;
@@ -180,7 +173,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       } catch {
         /* ignore */
       }
-      // 2) <img> fallback
       return new Promise<boolean>((resolve) => {
         const img = new Image();
         img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
@@ -201,7 +193,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     };
   }, [equipment?.id]);
 
-  /** Реакция на изменение доступности: один раз авто-раскрываем GPT, но не навязываем дальше */
+  /** Реакция на изменение доступности GPT */
   useEffect(() => {
     if (!openSections) return;
     if (gptAvailable === true && !autoOpenedGPT) {
@@ -217,11 +209,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     }
   }, [gptAvailable, autoOpenedGPT, openSections, setOpenSections]);
 
-  /** Значение для аккордеона:
-   * - GPT видна только когда доступна
-   * - ЛИБО когда идёт проверка и «по памяти» была открыта — сразу держим её в value,
-   *   чтобы не было повторной анимации раскрытия.
-   */
+  /** Значение для аккордеона */
   const accordionValue =
     (openSections?.filter((s) => {
       if (s !== 'gpt-images') return true;
@@ -230,16 +218,54 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       return false;
     }) as ImgSection[]) ?? [];
 
+  /** ES бейдж — вернуть исходный дизайн, но с корректировками:
+   * - esReal === 0 → светло-серый, «Еще не исследовано»
+   * - esReal !== 0 → СИНИЙ, «Исследовано ИРБИСТЕХ»
+   * Внутри сохраняем «ES: …» как в изначальном дизайне.
+   */
+  const EsBadge = () => {
+    if (typeof esReal !== 'number') return null;
+    const researched = esReal !== 0;
+    return (
+      <span
+        className={cn(
+          'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium border',
+          researched
+            ? 'bg-blue-600 text-white border-blue-600'
+            : 'bg-muted text-muted-foreground border-muted-foreground/30',
+        )}
+        title={researched ? `ES: ${fmt(es)} • Исследовано ИРБИСТЕХ` : 'ES: — • Еще не исследовано'}>
+        {researched ? (
+          <>ES: {fmt(es)}&nbsp;•&nbsp;Исследовано ИРБИСТЕХ</>
+        ) : (
+          <>ES: —&nbsp;•&nbsp;Еще не исследовано</>
+        )}
+      </span>
+    );
+  };
+
   return (
     <div className="space-y-4">
       <Card>
         <CardHeader className="p-3 sm:p-4 pb-2">
-          <CardTitle className="text-base font-semibold leading-6">
+          <CardTitle
+            className={cn('text-base font-semibold leading-6 transition-colors', titleToneCls)}>
             {equipment.equipment_name}
           </CardTitle>
+
           <div className="flex flex-wrap items-center gap-1.5">
-            <ScorePill label="CS" value={cs} tone="cs" />
-            <ScorePill label="ES" value={es} tone="es" />
+            <span
+              className={cn(
+                'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium border',
+                scoreToneClass(cs),
+              )}
+              title={`Эффективность очистки (GPT): ${fmt(cs)}`}>
+              Эффективность очистки (GPT): {fmt(cs)}
+            </span>
+
+            <EsBadge />
+
+            {/* ID */}
             {equipment?.id != null && (
               <span className="inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium border">
                 ID: {equipment.id}
@@ -275,11 +301,10 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
               onValueChange={(v) => {
                 const arr = (Array.isArray(v) ? v : []) as ImgSection[];
                 let filtered = arr.filter((x) => x === 'google-images' || x === 'gpt-images');
-                // Блокируем «gpt-images», пока доступность НЕ подтверждена true
                 if (gptAvailable !== true) {
                   filtered = filtered.filter((x) => x !== 'gpt-images');
                 }
-                setOpenSections(filtered); // допускаем пустой массив — всё закрыто
+                setOpenSections(filtered);
               }}
               className="w-full">
               <AccordionItem value="google-images">
@@ -307,7 +332,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                   Картинки GPT
                 </AccordionTrigger>
 
-                {/* Отключаем видимую анимацию при проверке/авто-открытии */}
                 <AccordionContent
                   className={cn(
                     (gptAvailable === null || autoOpenedGPT) &&
@@ -335,7 +359,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
               </AccordionItem>
             </Accordion>
           ) : (
-            // маленький плейсхолдер на время гидратации
             <div className="h-8 rounded bg-muted/50 animate-pulse" />
           )}
 
@@ -532,7 +555,6 @@ function GptImages({
     let cancelled = false;
 
     async function probe(url: string): Promise<boolean> {
-      // 1) HEAD
       try {
         const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
         if (r.ok) return true;
@@ -540,7 +562,6 @@ function GptImages({
       } catch {
         /* ignore */
       }
-      // 2) <img> fallback
       return new Promise<boolean>((resolve) => {
         const img = new Image();
         img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
@@ -722,7 +743,7 @@ function BigModal({
     <div className="fixed inset-0 z-[100]">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
-        className="absolute left-1/2 top-1/2 w-[min(1100px,100vw-32px)] maxхана-[calc(100vh-32px)]
+        className="absolute left-1/2 top-1/2 w-[min(1100px,100vw-32px)] max-h-[calc(100vh-32px)]
                       -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border
                       bg-background shadow-2xl flex flex-col min-h-0">
         <div className="flex items-center justify-between gap-2 border-b px-4 py-3 shrink-0">

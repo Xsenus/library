@@ -24,9 +24,14 @@ type Props<T> = {
   enabled?: boolean;
 };
 
+/** Новая шкала цвета для CS: 0.80–1.00 (серый → зелёный) */
 function csColor(score: number) {
-  if (score >= 0.95) return 'text-emerald-700';
-  return 'text-muted-foreground';
+  if (!Number.isFinite(score)) return 'text-muted-foreground';
+  if (score < 0.8) return 'text-muted-foreground';
+  if (score < 0.86) return 'text-zinc-500';
+  if (score < 0.9) return 'text-emerald-500';
+  if (score < 0.95) return 'text-emerald-600';
+  return 'text-emerald-700';
 }
 
 export function HierarchyList<T>(props: Props<T>) {
@@ -106,7 +111,7 @@ export function HierarchyList<T>(props: Props<T>) {
             const id = getItemId(it);
             const selected = selectedId === id;
             const csVal = getItemCs?.(it);
-            const hasCs = Number.isFinite(csVal as number);
+            const showCs = typeof csVal === 'number';
 
             return (
               <button
@@ -121,12 +126,9 @@ export function HierarchyList<T>(props: Props<T>) {
                 )}>
                 <div className="font-medium">
                   {getItemTitle(it)}
-                  {hasCs && (
+                  {showCs && (
                     <span
-                      className={cn(
-                        'ml-1 font-extrabold tabular-nums',
-                        csColor((csVal as number) ?? 0),
-                      )}
+                      className={cn('ml-1 font-extrabold tabular-nums', csColor(csVal as number))}
                       title="Clean Score">
                       {(csVal as number).toFixed(2)}
                     </span>
