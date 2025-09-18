@@ -38,6 +38,35 @@ export default function LibraryPage() {
   const searchParams = useSearchParams();
   const initialTab = (searchParams.get('tab') ?? 'library') as 'library' | 'cleanscore';
 
+  // Табы
+  const [tab, setTab] = useState<'library' | 'cleanscore'>(initialTab);
+
+  // ======= auth/user flag: irbis_worker =======
+  const [isWorker, setIsWorker] = useState<boolean>(false);
+
+  const loadMe = useCallback(async () => {
+    try {
+      const res = await fetch('/api/auth/me', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = await res.json();
+      setIsWorker(!!data?.user?.irbis_worker);
+    } catch {
+      // no-op
+    }
+  }, []);
+
+  useEffect(() => {
+    // первичная загрузка (на случай если сразу на таблицу пришли по deeplink)
+    loadMe();
+  }, [loadMe]);
+
+  useEffect(() => {
+    // каждый раз при переходе на вкладку таблицы — обновляем флаг
+    if (tab === 'cleanscore') {
+      loadMe();
+    }
+  }, [tab, loadMe]);
+
   // Logout state/handler
   const [loggingOut, setLoggingOut] = useState(false);
   const handleLogout = useCallback(async () => {
@@ -51,9 +80,6 @@ export default function LibraryPage() {
       setLoggingOut(false);
     }
   }, [router]);
-
-  // Табы
-  const [tab, setTab] = useState<'library' | 'cleanscore'>(initialTab);
 
   // Selection state (иерархия)
   const [selectedIndustry, setSelectedIndustry] = useState<Industry | null>(null);
@@ -122,20 +148,10 @@ export default function LibraryPage() {
   const [csMaxScore, setCsMaxScore] = useState(1.0);
   const scoreOptions = Array.from({ length: 16 }, (_, i) => Number((0.85 + i * 0.01).toFixed(2)));
 
-  // Ручные ширины колонок (таблица)
+  // ====== ширины: фиксируем только 1-ю колонку и CS ======
   const colW = {
-    card: 35,
-    industry: 100,
-    prodclass: 100,
-    workshop: 100,
-    equipment: 100,
-    cs: 35,
-    contamination: 100,
-    surface: 125,
-    problems: 125,
-    old_method: 125,
-    old_problem: 125,
-    benefit: 260,
+    card: 35, // первая колонка с кнопкой
+    cs: 35, // CS — фикс ширина
   } as const;
 
   // ========================= API LOADERS =========================
@@ -425,7 +441,6 @@ export default function LibraryPage() {
   useEffect(() => {
     if (autoSelectProdclass && !prodclassesState.loading && prodclassesState.items.length > 0) {
       setAutoSelectProdclass(false);
-      // выберем первый класс
       const first = prodclassesState.items[0];
       handleProdclassSelect(first);
     }
@@ -456,7 +471,6 @@ export default function LibraryPage() {
     setSelectedEquipment(null);
     setEquipmentDetail(null);
 
-    // при выборе индустрии — запланировать каскадную автоподстановку
     setAutoSelectProdclass(true);
     setAutoSelectWorkshop(true);
     setAutoSelectEquipment(true);
@@ -491,7 +505,6 @@ export default function LibraryPage() {
     setSelectedEquipment(null);
     setEquipmentDetail(null);
 
-    // при выборе класса — автоподстановка цеха и оборудования
     setAutoSelectWorkshop(true);
     setAutoSelectEquipment(true);
 
@@ -517,7 +530,6 @@ export default function LibraryPage() {
     setSelectedEquipment(null);
     setEquipmentDetail(null);
 
-    // при выборе цеха — автоподстановка оборудования
     setAutoSelectEquipment(true);
 
     setEquipmentState((prev) => ({
@@ -578,8 +590,10 @@ export default function LibraryPage() {
     if (r.workshop_id) qp.set('workshopId', String(r.workshop_id));
     if (r.equipment_id) qp.set('equipmentId', String(r.equipment_id));
     return `/library?${qp.toString()}`;
-    // либо router.push(...) если нужно внутри SPA
   };
+
+  // вычислим количество видимых колонок для colSpan
+  const visibleColCount = isWorker ? 12 : 6; // 1(card)+4(normal)+CS [+6 текстовых если worker]
 
   // ========================= RENDER =========================
   return (
@@ -588,12 +602,9 @@ export default function LibraryPage() {
       <div className="border-b bg-background">
         <div className="container mx-auto px-4">
           <div className="flex flex-wrap items-center justify-between gap-2 py-3 sm:py-4">
-            {/* Заголовок занимает всю ширину на мобилках и ужимается красивее */}
             <h1 className="flex-1 min-w-[240px] text-xl sm:text-2xl lg:text-3xl font-semibold leading-tight">
               Отраслевой навигатор криобластинга от ИРБИСТЕХ
             </h1>
-
-            {/* Лого + выход: на мобилках компактнее и не давит заголовок */}
             <div className="flex items-center gap-2 sm:gap-3">
               <Image
                 src="/logo.png"
@@ -754,9 +765,7 @@ export default function LibraryPage() {
                           selectedId={selectedIndustry?.id || null}
                           loading={industriesState.loading}
                           hasNextPage={industriesState.hasNextPage}
-                          // поиск скрыт
                           showSearch={false}
-                          // оформление шапки/заголовка
                           titleClassName="font-semibold"
                           headerClassName="bg-muted"
                           onItemSelect={handleIndustrySelect}
@@ -937,7 +946,7 @@ export default function LibraryPage() {
 
                 {/* Таблица */}
                 <div className="rounded-lg border overflow-auto">
-                  <table className="w-full text-xs table-fixed">
+                  <table className={`w-full text-xs ${isWorker ? 'table-fixed' : 'table-auto'}`}>
                     <thead
                       className="
                         sticky top-0 z-10 text-left border-b
@@ -946,17 +955,25 @@ export default function LibraryPage() {
                       ">
                       <tr>
                         <th style={{ width: colW.card }} />
-                        <th style={{ width: colW.industry }}>Отрасль</th>
-                        <th style={{ width: colW.prodclass }}>Класс</th>
-                        <th style={{ width: colW.workshop }}>Цех</th>
-                        <th style={{ width: colW.equipment }}>Оборудование</th>
+                        {/* «Нормальные» авто-ширины для этих четырёх */}
+                        <th className="text-left">Отрасль</th>
+                        <th className="text-left">Класс</th>
+                        <th className="text-left">Цех</th>
+                        <th className="text-left">Оборудование</th>
+                        {/* CS — фикс */}
                         <th style={{ width: colW.cs }}>CS</th>
-                        <th style={{ width: colW.contamination }}>Загрязнения</th>
-                        <th style={{ width: colW.surface }}>Поверхности</th>
-                        <th style={{ width: colW.problems }}>Проблемы</th>
-                        <th style={{ width: colW.old_method }}>Традиционная очистка</th>
-                        <th style={{ width: colW.old_problem }}>Недостатки традиц.</th>
-                        <th style={{ width: colW.benefit }}>Преимущества</th>
+
+                        {/* 6 текстовых колонок — только для работников */}
+                        {isWorker && (
+                          <>
+                            <th className="text-left">Загрязнения</th>
+                            <th className="text-left">Поверхности</th>
+                            <th className="text-left">Проблемы</th>
+                            <th className="text-left">Традиционная очистка</th>
+                            <th className="text-left">Недостатки традиц.</th>
+                            <th className="text-left">Преимущества</th>
+                          </>
+                        )}
                       </tr>
                     </thead>
 
@@ -964,7 +981,6 @@ export default function LibraryPage() {
                       className="
                         [&>tr>td]:px-2 [&>tr>td]:py-1.5 align-top
                         [&>tr]:border-b
-                        [&>tr>td:nth-child(12)]:bg-sky-100
                       ">
                       {csRows.map((r) => (
                         <tr key={r.equipment_id} className="align-top">
@@ -979,65 +995,52 @@ export default function LibraryPage() {
                               <ArrowUpRight className="h-4 w-4" />
                             </a>
                           </td>
-                          <td
-                            className="whitespace-normal break-words leading-4"
-                            style={{ width: colW.industry }}>
-                            {r.industry}
-                          </td>
-                          <td
-                            className="whitespace-normal break-words leading-4"
-                            style={{ width: colW.prodclass }}>
-                            {r.prodclass}
-                          </td>
-                          <td
-                            className="whitespace-normal break-words leading-4"
-                            style={{ width: colW.workshop }}>
+
+                          {/* авто-ширина */}
+                          <td className="whitespace-normal break-words leading-4">{r.industry}</td>
+                          <td className="whitespace-normal break-words leading-4">{r.prodclass}</td>
+                          <td className="whitespace-normal break-words leading-4">
                             {r.workshop_name}
                           </td>
-                          <td
-                            className="whitespace-normal break-words leading-4 font-medium"
-                            style={{ width: colW.equipment }}>
+                          <td className="whitespace-normal break-words leading-4 font-medium">
                             {r.equipment_name}
                           </td>
+
+                          {/* CS — фикс */}
                           <td className="whitespace-nowrap tabular-nums" style={{ width: colW.cs }}>
                             {r.clean_score != null ? r.clean_score.toFixed(2) : '—'}
                           </td>
-                          <td
-                            className="whitespace-normal break-words leading-4"
-                            style={{ width: colW.contamination }}>
-                            {r.contamination}
-                          </td>
-                          <td
-                            className="whitespace-normal break-words leading-4"
-                            style={{ width: colW.surface }}>
-                            {r.surface}
-                          </td>
-                          <td
-                            className="whitespace-normal break-words leading-4"
-                            style={{ width: colW.problems }}>
-                            {r.problems}
-                          </td>
-                          <td
-                            className="whitespace-normal break-words leading-4"
-                            style={{ width: colW.old_method }}>
-                            {r.old_method}
-                          </td>
-                          <td
-                            className="whitespace-normal break-words leading-4"
-                            style={{ width: colW.old_problem }}>
-                            {r.old_problem}
-                          </td>
-                          <td
-                            className="whitespace-normal break-words leading-4"
-                            style={{ width: colW.benefit }}>
-                            {r.benefit}
-                          </td>
+
+                          {/* 6 текстовых — только для работников */}
+                          {isWorker && (
+                            <>
+                              <td className="whitespace-normal break-words leading-4">
+                                {r.contamination}
+                              </td>
+                              <td className="whitespace-normal break-words leading-4">
+                                {r.surface}
+                              </td>
+                              <td className="whitespace-normal break-words leading-4">
+                                {r.problems}
+                              </td>
+                              <td className="whitespace-normal break-words leading-4">
+                                {r.old_method}
+                              </td>
+                              <td className="whitespace-normal break-words leading-4">
+                                {r.old_problem}
+                              </td>
+                              <td className="whitespace-normal break-words leading-4">
+                                {r.benefit}
+                              </td>
+                            </>
+                          )}
                         </tr>
                       ))}
+
                       {csRows.length === 0 && !csLoading && (
                         <tr>
                           <td
-                            colSpan={12}
+                            colSpan={visibleColCount}
                             className="text-center py-6 text-sm text-muted-foreground">
                             Нет данных
                           </td>
