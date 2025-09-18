@@ -664,6 +664,8 @@ export default function LibraryPage() {
   // вычислим количество видимых колонок для colSpan
   const visibleColCount = isWorker ? 12 : 6; // 1(card)+4(normal)+CS [+6 текстовых если worker]
 
+  const SHOW_BREADCRUMBS = false;
+
   // ========================= RENDER =========================
   return (
     <div className="h-screen flex flex-col">
@@ -757,77 +759,79 @@ export default function LibraryPage() {
             <TabsContent value="library" className="mt-0">
               <div className="py-4 space-y-4">
                 {/* Breadcrumbs */}
-                <Breadcrumb>
-                  <BreadcrumbList>
-                    <BreadcrumbItem>
-                      <Home className="h-4 w-4" />
-                    </BreadcrumbItem>
-                    <BreadcrumbSeparator />
-                    <BreadcrumbItem>
-                      <BreadcrumbPage>Каталог</BreadcrumbPage>
-                    </BreadcrumbItem>
-                    <BreadcrumbSeparator />
-                    <BreadcrumbItem>
-                      <BreadcrumbPage>Навигатор</BreadcrumbPage>
-                    </BreadcrumbItem>
-                    {selectedIndustry && (
-                      <>
-                        <BreadcrumbSeparator />
-                        <BreadcrumbItem>
-                          {isLoadingText(selectedIndustry.industry) ? (
-                            <LoadingCrumb />
-                          ) : (
-                            <BreadcrumbPage className="max-w-[200px] truncate">
-                              {selectedIndustry.industry}
-                            </BreadcrumbPage>
-                          )}
-                        </BreadcrumbItem>
-                      </>
-                    )}
-                    {selectedProdclass && (
-                      <>
-                        <BreadcrumbSeparator />
-                        <BreadcrumbItem>
-                          {isLoadingText(selectedProdclass.prodclass) ? (
-                            <LoadingCrumb />
-                          ) : (
-                            <BreadcrumbPage className="max-w-[200px] truncate">
-                              {selectedProdclass.prodclass}
-                            </BreadcrumbPage>
-                          )}
-                        </BreadcrumbItem>
-                      </>
-                    )}
-                    {selectedWorkshop && (
-                      <>
-                        <BreadcrumbSeparator />
-                        <BreadcrumbItem>
-                          {isLoadingText(selectedWorkshop.workshop_name) ? (
-                            <LoadingCrumb />
-                          ) : (
-                            <BreadcrumbPage className="max-w-[200px] truncate">
-                              {selectedWorkshop.workshop_name}
-                            </BreadcrumbPage>
-                          )}
-                        </BreadcrumbItem>
-                      </>
-                    )}
-                    {selectedEquipment && (
-                      <>
-                        <BreadcrumbSeparator />
-                        <BreadcrumbItem>
-                          {isLoadingText(selectedEquipment.equipment_name) ? (
-                            <LoadingCrumb />
-                          ) : (
-                            <BreadcrumbPage className="max-w-[200px] truncate">
-                              {selectedEquipment.equipment_name}
-                            </BreadcrumbPage>
-                          )}
-                        </BreadcrumbItem>
-                      </>
-                    )}
-                  </BreadcrumbList>
-                </Breadcrumb>
+                {SHOW_BREADCRUMBS && (
+                  <Breadcrumb>
+                    <BreadcrumbList>
+                      <BreadcrumbItem>
+                        <Home className="h-4 w-4" />
+                      </BreadcrumbItem>
+                      <BreadcrumbSeparator />
+                      <BreadcrumbItem>
+                        <BreadcrumbPage>Каталог</BreadcrumbPage>
+                      </BreadcrumbItem>
+                      <BreadcrumbSeparator />
+                      <BreadcrumbItem>
+                        <BreadcrumbPage>Навигатор</BreadcrumbPage>
+                      </BreadcrumbItem>
+                      {selectedIndustry && (
+                        <>
+                          <BreadcrumbSeparator />
+                          <BreadcrumbItem>
+                            {isLoadingText(selectedIndustry.industry) ? (
+                              <LoadingCrumb />
+                            ) : (
+                              <BreadcrumbPage className="max-w-[200px] truncate">
+                                {selectedIndustry.industry}
+                              </BreadcrumbPage>
+                            )}
+                          </BreadcrumbItem>
+                        </>
+                      )}
+                      {selectedProdclass && (
+                        <>
+                          <BreadcrumbSeparator />
+                          <BreadcrumbItem>
+                            {isLoadingText(selectedProdclass.prodclass) ? (
+                              <LoadingCrumb />
+                            ) : (
+                              <BreadcrumbPage className="max-w-[200px] truncate">
+                                {selectedProdclass.prodclass}
+                              </BreadcrumbPage>
+                            )}
+                          </BreadcrumbItem>
+                        </>
+                      )}
+                      {selectedWorkshop && (
+                        <>
+                          <BreadcrumbSeparator />
+                          <BreadcrumbItem>
+                            {isLoadingText(selectedWorkshop.workshop_name) ? (
+                              <LoadingCrumb />
+                            ) : (
+                              <BreadcrumbPage className="max-w-[200px] truncate">
+                                {selectedWorkshop.workshop_name}
+                              </BreadcrumbPage>
+                            )}
+                          </BreadcrumbItem>
+                        </>
+                      )}
+                      {selectedEquipment && (
+                        <>
+                          <BreadcrumbSeparator />
+                          <BreadcrumbItem>
+                            {isLoadingText(selectedEquipment.equipment_name) ? (
+                              <LoadingCrumb />
+                            ) : (
+                              <BreadcrumbPage className="max-w-[200px] truncate">
+                                {selectedEquipment.equipment_name}
+                              </BreadcrumbPage>
+                            )}
+                          </BreadcrumbItem>
+                        </>
+                      )}
+                    </BreadcrumbList>
+                  </Breadcrumb>
+                )}
 
                 {/* Main Content */}
                 <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-4 h-[calc(100vh-200px)] bg-background">
