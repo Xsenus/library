@@ -80,14 +80,16 @@ export function HierarchyList<T>(props: Props<T>) {
     <div className="flex h-full flex-col rounded-lg bg-background">
       <div
         className={cn(
-          'sticky top-0 z-10 border-b px-2 py-1.5 bg-muted',
+          'sticky top-0 z-10 bg-muted px-2 py-1.5',
+          'border-b-[3px] border-black/60',
           'text-base md:text-[12px]',
           headerClassName,
         )}>
         <span className={cn('font-semibold', titleClassName)}>{title}</span>
       </div>
+
       {showSearch && typeof onSearchChange === 'function' && (
-        <div className="px-2 py-1.5 border-b bg-background">
+        <div className="px-2 py-1.5 bg-background border-b-[3px] border-black/60">
           <input
             className={cn(
               'w-full rounded-md border px-2 py-1 disabled:opacity-50',
@@ -101,7 +103,8 @@ export function HierarchyList<T>(props: Props<T>) {
         </div>
       )}
 
-      <div className={cn('flex-1 overflow-auto divide-y', listClassName)}>
+      {/* Список с толстыми и тёмными разделителями */}
+      <div className={cn('flex-1 overflow-auto divide-y-[3px] divide-black/60', listClassName)}>
         {items.length === 0 && !loading ? (
           <div className={cn('px-2 py-2 text-muted-foreground', 'text-sm md:text-[11px]')}>
             {emptyMessage}
@@ -119,16 +122,19 @@ export function HierarchyList<T>(props: Props<T>) {
                 type="button"
                 onClick={() => onItemSelect(it)}
                 className={cn(
-                  'w-full text-left px-2 py-1 leading-4',
-                  'text-base md:text-[11px]',
-                  'hover:bg-accent/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/40',
-                  selected && 'bg-accent/80 ring-1 ring-primary/30',
+                  'w-full text-left px-2 py-1 leading-4 transition-colors',
+                  'text-base md:text-[11px] font-medium',
+                  'focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/40',
+                  selected ? 'bg-blue-600 text-white hover:bg-blue-700' : 'hover:bg-accent/60',
                 )}>
                 <div className="font-medium">
                   {getItemTitle(it)}
                   {showCs && (
                     <span
-                      className={cn('ml-1 font-extrabold tabular-nums', csColor(csVal as number))}
+                      className={cn(
+                        'ml-1 font-extrabold tabular-nums',
+                        selected ? 'text-white' : csColor(csVal as number),
+                      )}
                       title="Clean Score">
                       {(csVal as number).toFixed(2)}
                     </span>
