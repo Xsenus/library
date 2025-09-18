@@ -105,6 +105,23 @@ export default function LibraryPage() {
   const [selectedEquipment, setSelectedEquipment] = useState<EquipmentListItem | null>(null);
   const [equipmentDetail, setEquipmentDetail] = useState<EquipmentDetail | null>(null);
 
+  const handleEsConfirmChange = useCallback((id: number, confirmed: boolean) => {
+    const val = confirmed ? 1 : 0;
+    // 1) обновить элемент в списке
+    setEquipmentState((prev) => ({
+      ...prev,
+      items: prev.items.map((it) => (it.id === id ? { ...it, equipment_score_real: val } : it)),
+    }));
+    // 2) обновить выбранный элемент (для локального состояния)
+    setSelectedEquipment((prev) =>
+      prev && prev.id === id ? { ...prev, equipment_score_real: val } : prev,
+    );
+    // 3) обновить деталь карточки
+    setEquipmentDetail((prev) =>
+      prev && prev.id === id ? { ...prev, equipment_score_real: val } : prev,
+    );
+  }, []);
+
   // Флаги автоподстановки «первого элемента» по каскаду
   const [autoSelectProdclass, setAutoSelectProdclass] = useState(false);
   const [autoSelectWorkshop, setAutoSelectWorkshop] = useState(false);
@@ -917,6 +934,7 @@ export default function LibraryPage() {
                           getItemId={(item) => item.id}
                           getItemTitle={(item) => item.equipment_name}
                           getItemCs={(item) => item.clean_score ?? null}
+                          getItemConfirmed={(item) => Number(item.equipment_score_real) !== 0}
                           emptyMessage={selectedWorkshop ? 'Нет оборудования' : 'Выберите цех'}
                         />
                       </div>
@@ -943,7 +961,10 @@ export default function LibraryPage() {
                       </div>
                     ) : equipmentDetail ? (
                       <div className="h-full overflow-auto">
-                        <EquipmentCard equipment={equipmentDetail} />
+                        <EquipmentCard
+                          equipment={equipmentDetail}
+                          onEsConfirmChange={handleEsConfirmChange}
+                        />
                       </div>
                     ) : (
                       <div className="h-full flex items-center justify-center rounded-lg bg-background">

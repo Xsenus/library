@@ -17,6 +17,7 @@ type Props<T> = {
   getItemId: (item: T) => number;
   getItemTitle: (item: T) => string;
   getItemCs?: (item: T) => number | null | undefined;
+  getItemConfirmed?: (item: T) => boolean | null | undefined;
   titleClassName?: string;
   headerClassName?: string;
   listClassName?: string;
@@ -49,6 +50,7 @@ export function HierarchyList<T>(props: Props<T>) {
     getItemId,
     getItemTitle,
     getItemCs,
+    getItemConfirmed,
     emptyMessage = 'Нет данных',
     enabled = true,
     titleClassName,
@@ -115,6 +117,7 @@ export function HierarchyList<T>(props: Props<T>) {
             const selected = selectedId === id;
             const csVal = getItemCs?.(it);
             const showCs = typeof csVal === 'number';
+            const isConfirmed = !!getItemConfirmed?.(it);
 
             return (
               <button
@@ -136,7 +139,9 @@ export function HierarchyList<T>(props: Props<T>) {
                         selected ? 'text-pink-400' : csColor(csVal as number),
                       )}
                       title="Clean Score">
-                      {(csVal as number).toFixed(2)}
+                      {isConfirmed
+                        ? `[${(csVal as number).toFixed(2)}]`
+                        : (csVal as number).toFixed(2)}
                     </span>
                   )}
                 </div>

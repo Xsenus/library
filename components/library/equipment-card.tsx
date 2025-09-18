@@ -17,6 +17,7 @@ import { GoogleImagesCarousel } from './google-images-carousel';
 
 interface EquipmentCardProps {
   equipment: EquipmentDetail;
+  onEsConfirmChange?: (equipmentId: number, confirmed: boolean) => void;
 }
 
 const GPT_IMAGES_BASE = process.env.NEXT_PUBLIC_GPT_IMAGES_BASE ?? '/static/';
@@ -195,6 +196,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     };
   }, []);
 
+  const { onEsConfirmChange } = arguments[0] as EquipmentCardProps;
   // Оптимистичный тоггл + подстраховка ответом
   const [savingEs, setSavingEs] = useState(false);
   const toggleEsConfirm = async () => {
@@ -220,6 +222,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       // 2) сервер возвращает 0/1 — приводим к boolean
       const confirmedServer = !!Number(data?.equipment_score_real);
       setEsConfirmed(confirmedServer);
+      onEsConfirmChange?.(equipment.id, confirmedServer);
     } catch (e) {
       console.error('Failed to toggle ES confirm:', e);
       // 3) откат оптимистичного апдейта
