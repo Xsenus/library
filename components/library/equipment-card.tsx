@@ -308,6 +308,158 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       return false;
     }) as ImgSection[]) ?? [];
 
+  const [showText, setShowText] = useState(false);
+
+  const TextModalBody = () => {
+    const has = (s?: string | null) => typeof s === 'string' && s.trim().length > 0;
+
+    const Block = ({ title, value }: { title: string; value?: string | null }) =>
+      has(value) ? (
+        <div className="">
+          <div className="font-bold">{title}</div>
+          <div className="whitespace-pre-wrap break-words">{(value as string).trim()}</div>
+        </div>
+      ) : null;
+
+    const ListBlock = ({ title, items }: { title: string; items?: string[] | null }) => {
+      const arr = (items ?? []).map((x) => (x ?? '').trim()).filter(Boolean);
+      if (arr.length === 0) return null;
+      return (
+        <div className="">
+          <div className="font-bold">{title}</div>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {arr.map((g, i) => (
+              <li key={`${g}-${i}`} className="break-words">
+                {g}
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    };
+
+    return (
+      <div className="text-[13px] leading-6">
+        {has(equipment.equipment_name) && (
+          <div className="font-bold">{equipment.equipment_name!.trim()}</div>
+        )}
+
+        <Block title="Описание устройства" value={equipment.description} />
+
+        {/* Проблемы оборудования */}
+        <Block title="Загрязнения" value={equipment.contamination} />
+        <Block title="Поверхности" value={equipment.surface} />
+        <Block title="Проблемы от загрязнений" value={equipment.problems} />
+
+        {/* Традиционная очистка и криобластинг */}
+        <Block title="Традиционная очистка" value={equipment.old_method} />
+        <Block title="Недостатки от традиционной очистки" value={equipment.old_problem} />
+        <Block title="Преимущества от криобластинга" value={equipment.benefit} />
+
+        {(has(equipment.decision_pr) ||
+          has(equipment.decision_prs) ||
+          has(equipment.decision_operator) ||
+          has(equipment.decision_proc)) && (
+          <div className="space-y-1">
+            <div className="font-bold">Центр принятия решений</div>
+            <Block title="ЛПР" value={equipment.decision_pr} />
+            <Block title="Прескриптор" value={equipment.decision_prs} />
+            <Block title="Эксплуатация" value={equipment.decision_operator} />
+            <Block title="Закупка" value={equipment.decision_proc} />
+          </div>
+        )}
+
+        <ListBlock title="Примеры товаров" items={equipment.goods_examples} />
+
+        {(has(equipment.company_name) || has(equipment.site_description)) && (
+          <div className="space-y-1">
+            <div className="font-bold">Пример компании</div>
+            {has(equipment.company_name) && (
+              <div className="break-words">{equipment.company_name!.trim()}</div>
+            )}
+            {has(equipment.site_description) && (
+              <div className="whitespace-pre-wrap break-words">
+                {equipment.site_description!.trim()}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  /** Текст для копирования (plain text), совпадает по структуре с визуалом */
+  const buildCopyText = (): string => {
+    const lines: string[] = [];
+
+    const add = (label: string, value?: string | null) => {
+      if (!value) return;
+      const l = label.trim();
+      const v = value.trim();
+      if (!v) return;
+      lines.push(l);
+      lines.push(v);
+    };
+
+    const addList = (label: string, arr?: string[] | null) => {
+      if (!arr || arr.length === 0) return;
+      lines.push(label.trim());
+      for (const it of arr) {
+        const s = String(it ?? '').trim();
+        if (s) lines.push(`- ${s}`);
+      }
+    };
+
+    // Заголовок
+    if (equipment.equipment_name?.trim()) {
+      lines.push(equipment.equipment_name.trim());
+    }
+
+    // Блоки "в строку", без пустых разделителей
+    add('Описание устройства', equipment.description);
+
+    add('Загрязнения', equipment.contamination);
+    add('Поверхности', equipment.surface);
+    add('Проблемы от загрязнений', equipment.problems);
+
+    add('Традиционная очистка', equipment.old_method);
+    add('Недостатки от традиционной очистки', equipment.old_problem);
+    add('Преимущества от криобластинга', equipment.benefit);
+
+    if (
+      equipment.decision_pr ||
+      equipment.decision_prs ||
+      equipment.decision_operator ||
+      equipment.decision_proc
+    ) {
+      // Заголовок секции
+      lines.push('Центр принятия решений');
+      add('ЛПР', equipment.decision_pr);
+      add('Прескриптор', equipment.decision_prs);
+      add('Эксплуатация', equipment.decision_operator);
+      add('Закупка', equipment.decision_proc);
+    }
+
+    addList('Примеры товаров', equipment.goods_examples || undefined);
+
+    if (equipment.company_name || equipment.site_description) {
+      lines.push('Пример компании');
+      if (equipment.company_name?.trim()) lines.push(equipment.company_name.trim());
+      if (equipment.site_description?.trim()) lines.push(equipment.site_description.trim());
+    }
+
+    // Финальная чистка: убираем пустые строки, множественные пробелы и тримим
+    return lines
+      .map((l) =>
+        l
+          .replace(/\u00A0/g, ' ')
+          .replace(/[ \t]+/g, ' ')
+          .trim(),
+      ) // одинарные пробелы
+      .filter((l) => l.length > 0) // без пустых строк
+      .join('\n'); // один \n между строками
+  };
+
   return (
     <div className="space-y-4 pb-[1cm]">
       <Card>
@@ -504,6 +656,9 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
             </Button>
             <Button size="sm" className={blueBtn} disabled={!equipment.company_id}>
               Компания
+            </Button>{' '}
+            <Button size="sm" onClick={() => setShowText(true)} className={blueBtn}>
+              ТЕКСТ
             </Button>
           </div>
 
@@ -603,6 +758,13 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           onClose={() => setShowMail(false)}
           contentText={equipment.utp_mail ?? equipment.benefit ?? '—'}
         />
+      )}
+
+      {/* ТЕКСТ  */}
+      {showText && (
+        <BigModal title="Текст" onClose={() => setShowText(false)} copyText={buildCopyText()}>
+          <TextModalBody />
+        </BigModal>
       )}
     </div>
   );
@@ -792,6 +954,7 @@ function BigModal({
   }, [contentText, children]);
 
   const normalizedCopy = useMemo(() => {
+    if (copyText != null) return copyText.trim();
     const src = copyText ?? contentText ?? (typeof children === 'string' ? children : '');
     return src ? normalizeForDisplay(src) : '';
   }, [copyText, contentText, children]);
@@ -822,7 +985,7 @@ function BigModal({
     <div className="fixed inset-0 z-[100]">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div
-        className="absolute left-1/2 top-1/2 w-[min(1100px,100vw-32px)] max-h[calc(100vh-32px)]
+        className="absolute left-1/2 top-1/2 w-[min(1100px,100vw-32px)] max-h-[calc(100vh-32px)]
                       -translate-x-1/2 -translate-y-1/2 overflow-hidden rounded-2xl border
                       bg-background shadow-2xl flex flex-col min-h-0">
         <div className="flex items-center justify-between gap-2 border-b px-4 py-3 shrink-0">
@@ -855,7 +1018,7 @@ function BigModal({
           </button>
         </div>
 
-        <div className="flex-1 min-h-0 overflow-auto px-5 py-4 text-[13px] leading-6 whitespace-pre-wrap">
+        <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4 text-[13px] leading-6 whitespace-pre-wrap break-words">
           {normalizedDisplay ? normalizedDisplay : typeof children !== 'string' ? children : null}
         </div>
       </div>
