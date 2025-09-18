@@ -137,7 +137,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   // ES — числовое значение и флаг «исследовано» (берём строго из модели)
   const es: number | null = equipment.equipment_score ?? null;
   const esReal: number | null =
-    typeof equipment.equipment_score_real === 'number' ? equipment.equipment_score_real : es;
+    typeof equipment.equipment_score_real === 'number' ? equipment.equipment_score_real : 0;
 
   const fmt = (v: number | null) => (v == null ? 'N/A' : v.toFixed(2));
   const Sep = () => <div className="h-px bg-border my-2" />;
@@ -218,28 +218,23 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       return false;
     }) as ImgSection[]) ?? [];
 
-  /** ES бейдж — вернуть исходный дизайн, но с корректировками:
-   * - esReal === 0 → светло-серый, «Еще не исследовано»
-   * - esReal !== 0 → СИНИЙ, «Исследовано ИРБИСТЕХ»
-   * Внутри сохраняем «ES: …» как в изначальном дизайне.
-   */
   const EsBadge = () => {
     if (typeof esReal !== 'number') return null;
+
     const researched = esReal !== 0;
+
+    const baseCls =
+      'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium border';
+
+    const toneCls = researched
+      ? 'bg-blue-600 text-white border-blue-600'
+      : 'bg-muted text-muted-foreground border-muted-foreground/30';
+
+    const title = researched ? `Исследовано ИРБИСТЕХ` : 'Еще не исследовано';
+
     return (
-      <span
-        className={cn(
-          'inline-flex items-center rounded-full px-2 py-0.5 text-[11px] leading-4 font-medium border',
-          researched
-            ? 'bg-blue-600 text-white border-blue-600'
-            : 'bg-muted text-muted-foreground border-muted-foreground/30',
-        )}
-        title={researched ? `ES: ${fmt(es)} • Исследовано ИРБИСТЕХ` : 'ES: — • Еще не исследовано'}>
-        {researched ? (
-          <>ES: {fmt(es)}&nbsp;•&nbsp;Исследовано ИРБИСТЕХ</>
-        ) : (
-          <>ES: —&nbsp;•&nbsp;Еще не исследовано</>
-        )}
+      <span className={cn(baseCls, toneCls)} title={title}>
+        {researched ? <>Исследовано ИРБИСТЕХ</> : <>Еще не исследовано</>}
       </span>
     );
   };
