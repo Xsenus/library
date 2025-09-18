@@ -80,7 +80,7 @@ export function HierarchyList<T>(props: Props<T>) {
     <div className="flex h-full flex-col rounded-lg bg-background">
       <div
         className={cn(
-          'sticky top-0 z-10 bg-muted px-2 py-1.5',
+          'sticky top-0 z-10 bg-[#efefef] px-2 py-1.5',
           'border-b-[3px] border-black/60',
           'text-base md:text-[12px]',
           headerClassName,
@@ -89,7 +89,7 @@ export function HierarchyList<T>(props: Props<T>) {
       </div>
 
       {showSearch && typeof onSearchChange === 'function' && (
-        <div className="px-2 py-1.5 bg-background border-b-[3px] border-black/60">
+        <div className="px-2 py-1.5 bg-[#efefef] border-b-[3px] border-black/60">
           <input
             className={cn(
               'w-full rounded-md border px-2 py-1 disabled:opacity-50',
@@ -125,7 +125,7 @@ export function HierarchyList<T>(props: Props<T>) {
                   'w-full text-left px-2 py-1 leading-4 transition-colors',
                   'text-base md:text-[11px] font-medium',
                   'focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/40',
-                  selected ? 'bg-blue-600 text-white hover:bg-blue-700' : 'hover:bg-accent/60',
+                  selected ? 'bg-[#6f7074] text-white hover:bg-[#5f6165]' : 'hover:bg-[#f4f4f5]',
                 )}>
                 <div className="font-medium">
                   {getItemTitle(it)}
@@ -133,7 +133,7 @@ export function HierarchyList<T>(props: Props<T>) {
                     <span
                       className={cn(
                         'ml-1 font-extrabold tabular-nums',
-                        selected ? 'text-white' : csColor(csVal as number),
+                        selected ? 'text-pink-400' : csColor(csVal as number),
                       )}
                       title="Clean Score">
                       {(csVal as number).toFixed(2)}
