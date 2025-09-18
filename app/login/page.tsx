@@ -1,20 +1,29 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { Suspense, useEffect, useState } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 
 export default function LoginPage() {
+  return (
+    <Suspense fallback={null}>
+      <LoginInner />
+    </Suspense>
+  );
+}
+
+function LoginInner() {
   const sp = useSearchParams();
   const router = useRouter();
-  const next = sp.get('next') || '/library';
+
+  const rawNext = sp.get('next');
+  const next = rawNext && rawNext.startsWith('/') ? rawNext : '/library';
 
   const [login, setLogin] = useState('');
   const [password, setPassword] = useState('');
-  const [rememberLogin, setRememberLogin] = useState(true); // «Оставаться в системе 7 дней» + сохранить логин
+  const [rememberLogin, setRememberLogin] = useState(true);
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
 
-  // Если уже авторизован — сразу на next (/library)
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -49,7 +58,6 @@ export default function LoginPage() {
       const resp = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        // важно: чтобы Set-Cookie точно применился
         cache: 'no-store',
         credentials: 'same-origin',
         body: JSON.stringify({ login, password, remember: rememberLogin }),
@@ -57,17 +65,15 @@ export default function LoginPage() {
 
       const data = await resp.json().catch(() => ({}));
       if (!resp.ok) {
-        setErr(data?.error || 'Ошибка входа');
+        setErr((data as any)?.error || 'Ошибка входа');
         setLoading(false);
         return;
       }
 
-      // только логин сохраняем локально
       if (rememberLogin) localStorage.setItem('cin:lastLogin', login);
       else localStorage.removeItem('cin:lastLogin');
 
-      // ⬇️ ключевой момент: делаем полную навигацию, чтобы middleware прочитал cookie
-      window.location.replace(next); // вместо router.replace(next)
+      window.location.replace(next);
     } catch {
       setErr('Сеть недоступна');
       setLoading(false);
@@ -124,6 +130,7 @@ export default function LoginPage() {
         {err && <div className="text-sm text-red-600">{err}</div>}
 
         <button
+          type="submit"
           className="w-full rounded-md bg-black text-white py-2 disabled:opacity-50"
           disabled={!canSubmit}>
           {loading ? 'Вход…' : 'Войти'}
