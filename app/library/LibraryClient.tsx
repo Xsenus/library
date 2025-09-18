@@ -544,25 +544,46 @@ export default function LibraryPage() {
       <div className="bg-background">
         <div className="container mx-auto px-4">
           <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="w-full">
-            {/* Выравнивание табов: одинаковая высота/ширина, центрирование на мобилке */}
-            <TabsList className="flex w-full items-stretch justify-center md:justify-start gap-0">
-              <TabsTrigger
-                value="library"
-                className="h-10 flex-1 md:flex-none md:min-w-[140px] px-6">
-                Каталог
-              </TabsTrigger>
-              <TabsTrigger
-                value="cleanscore"
-                className="h-10 flex-1 md:flex-none md:min-w-[140px] px-6">
-                Таблица
-              </TabsTrigger>
-              <TabsTrigger
-                value="search"
-                className="h-10 flex-1 md:flex-none md:min-w-[140px] px-6"
-                disabled>
-                AI-поиск
-              </TabsTrigger>
-            </TabsList>
+            <div className="grid w-full grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+              <TabsList className="contents">
+                <TabsTrigger
+                  value="library"
+                  className="
+                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    border border-transparent
+                    data-[state=active]:bg-background data-[state=active]:border-border
+                    data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
+                    shadow-none transition
+                  ">
+                  Каталог
+                </TabsTrigger>
+
+                <TabsTrigger
+                  value="cleanscore"
+                  className="
+                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    border border-transparent
+                    data-[state=active]:bg-background data-[state=active]:border-border
+                    data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
+                    shadow-none transition
+                  ">
+                  Таблица
+                </TabsTrigger>
+
+                <TabsTrigger
+                  value="search"
+                  disabled
+                  className="
+                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    border border-transparent
+                    data-[state=active]:bg-background data-[state=active]:border-border
+                    data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
+                    shadow-none transition
+                  ">
+                  AI-поиск
+                </TabsTrigger>
+              </TabsList>
+            </div>
 
             {/* ===== LIBRARY TAB ===== */}
             <TabsContent value="library" className="mt-0">
