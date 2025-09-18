@@ -55,38 +55,56 @@ export const equipmentListSchema = z.object({
 // Equipment (detail)
 export const equipmentDetailSchema = z.object({
   id: z.coerce.number(),
-  equipment_name: z.string(),
-  workshop_id: z.coerce.number(),
-  equipment_score: z.coerce.number().nullable(),
-  equipment_score_real: z.coerce.number().nullable(),
-  clean_score: z.coerce.number().nullable(),
+  equipment_name: z.string().nullable(), // может быть NULL
+  workshop_id: z.coerce.number().nullable(), // в редких случаях тоже может отсутствовать
+
+  // Оценки
+  equipment_score: z.number().nullable(),
+  equipment_score_real: z.number().nullable(), // 0 = ещё не исследовано
+  clean_score: z.number().nullable(),
+
+  // Ссылки/описание
   clean_url_1: z.string().nullable(),
   clean_url_2: z.string().nullable(),
   clean_url_3: z.string().nullable(),
-  description: z.string(),
+  description: z.string().nullable(),
   description_url: z.string().nullable(),
   images_url: z.string().nullable(),
   images_promt: z.string().nullable(),
-  contamination: z.string(),
-  surface: z.string(),
-  problems: z.string(),
-  old_method: z.string(),
-  old_problem: z.string(),
-  benefit: z.string(),
-  synonyms_ru: z.string(),
-  synonyms_en: z.string(),
+
+  // Контентные поля
+  contamination: z.string().nullable(),
+  surface: z.string().nullable(),
+  problems: z.string().nullable(),
+  old_method: z.string().nullable(),
+  old_problem: z.string().nullable(),
+  benefit: z.string().nullable(),
+
+  // Синонимы
+  synonyms_ru: z.string().nullable(),
+  synonyms_en: z.string().nullable(),
+
+  // Техпараметры/прочее
   blaster: z.string().nullable(),
   air: z.string().nullable(),
-  rate: z.coerce.number().nullable(),
-  company_id: z.coerce.number(),
+  rate: z.number().nullable(),
+  company_id: z.number().nullable(),
+
+  // Истории/шаблоны
   utp_post: z.string().nullable().optional(),
   utp_mail: z.string().nullable().optional(),
+
+  // Центр принятия решений
   decision_pr: z.string().nullable().optional(),
   decision_prs: z.string().nullable().optional(),
   decision_sov: z.string().nullable().optional(),
   decision_operator: z.string().nullable().optional(),
   decision_proc: z.string().nullable().optional(),
+
+  // Примеры товаров — строго массив строк или null
   goods_examples: z.array(z.string()).nullable().optional(),
+
+  // Пример компании
   company_name: z.string().nullable().optional(),
   site_description: z.string().nullable().optional(),
 });

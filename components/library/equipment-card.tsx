@@ -457,10 +457,19 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           )}
 
           {/* Примеры товаров */}
-          {equipment.goods_examples?.length ? (
+          {Array.isArray(equipment.goods_examples) && equipment.goods_examples.length > 0 ? (
             <div className="space-y-1.5">
               <div className="text-sm font-semibold">Примеры товаров</div>
-              <p className="text-xs text-muted-foreground">{equipment.goods_examples.join(', ')}</p>
+              <div className="flex flex-wrap gap-1.5">
+                {equipment.goods_examples.map((g, i) => (
+                  <span
+                    key={`${g}-${i}`}
+                    className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] leading-4 text-muted-foreground bg-background"
+                    title={g}>
+                    {g}
+                  </span>
+                ))}
+              </div>
             </div>
           ) : null}
 
