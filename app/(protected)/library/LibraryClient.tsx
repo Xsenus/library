@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { useSearchParams } from 'next/navigation';
+import { useSearchParams, useRouter } from 'next/navigation';
 import Image from 'next/image';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -34,8 +34,23 @@ interface ListState<T> {
 }
 
 export default function LibraryPage() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const initialTab = (searchParams.get('tab') ?? 'library') as 'library' | 'cleanscore';
+
+  // Logout state/handler
+  const [loggingOut, setLoggingOut] = useState(false);
+  const handleLogout = useCallback(async () => {
+    try {
+      setLoggingOut(true);
+      await fetch('/api/auth/logout', { method: 'POST' });
+      router.push('/login');
+    } catch {
+      // no-op
+    } finally {
+      setLoggingOut(false);
+    }
+  }, [router]);
 
   // Табы
   const [tab, setTab] = useState<'library' | 'cleanscore'>(initialTab);
@@ -290,7 +305,6 @@ export default function LibraryPage() {
   // ========================= EFFECTS =========================
   useEffect(() => {
     fetchIndustries(1, debouncedIndustrySearch);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fetchIndustries, debouncedIndustrySearch]);
 
   useEffect(() => {
@@ -298,7 +312,6 @@ export default function LibraryPage() {
       setProdclassesState((prev) => ({ ...prev, page: 1 }));
       fetchProdclasses(selectedIndustry.id, 1, debouncedProdclassSearch);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedIndustry, fetchProdclasses, debouncedProdclassSearch]);
 
   useEffect(() => {
@@ -306,7 +319,6 @@ export default function LibraryPage() {
       setWorkshopsState((prev) => ({ ...prev, page: 1 }));
       fetchWorkshops(selectedProdclass.id, 1, debouncedWorkshopSearch);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProdclass, fetchWorkshops, debouncedWorkshopSearch]);
 
   useEffect(() => {
@@ -314,7 +326,6 @@ export default function LibraryPage() {
       setEquipmentState((prev) => ({ ...prev, page: 1 }));
       fetchEquipment(selectedWorkshop.id, 1, debouncedEquipmentSearch);
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedWorkshop, fetchEquipment, debouncedEquipmentSearch]);
 
   useEffect(() => {
@@ -567,6 +578,7 @@ export default function LibraryPage() {
     if (r.workshop_id) qp.set('workshopId', String(r.workshop_id));
     if (r.equipment_id) qp.set('equipmentId', String(r.equipment_id));
     return `/library?${qp.toString()}`;
+    // либо router.push(...) если нужно внутри SPA
   };
 
   // ========================= RENDER =========================
@@ -575,12 +587,30 @@ export default function LibraryPage() {
       {/* ===== ГЛАВНАЯ ШАПКА СВЕРХУ (над вкладками) ===== */}
       <div className="border-b bg-background">
         <div className="container mx-auto px-4">
-          <div className="flex items-center justify-between py-4">
-            {/* +2 размера на мобильных: было text-xl, стало text-3xl */}
-            <h1 className="text-3xl md:text-2xl font-semibold leading-tight">
+          <div className="flex flex-wrap items-center justify-between gap-2 py-3 sm:py-4">
+            {/* Заголовок занимает всю ширину на мобилках и ужимается красивее */}
+            <h1 className="flex-1 min-w-[240px] text-xl sm:text-2xl lg:text-3xl font-semibold leading-tight">
               Отраслевой навигатор криобластинга от ИРБИСТЕХ
             </h1>
-            <Image src="/logo.png" alt="ИрбисТех" width={160} height={48} priority />
+
+            {/* Лого + выход: на мобилках компактнее и не давит заголовок */}
+            <div className="flex items-center gap-2 sm:gap-3">
+              <Image
+                src="/logo.png"
+                alt="ИрбисТех"
+                width={160}
+                height={48}
+                priority
+                className="h-8 w-auto sm:h-10 lg:h-12"
+              />
+              <button
+                onClick={handleLogout}
+                disabled={loggingOut}
+                className="whitespace-nowrap rounded-md border px-3 py-1 text-sm hover:bg-accent disabled:opacity-50"
+                title="Завершить сессию">
+                {loggingOut ? 'Выходим…' : 'Выйти'}
+              </button>
+            </div>
           </div>
         </div>
       </div>

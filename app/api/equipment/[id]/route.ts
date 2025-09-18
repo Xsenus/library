@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { equipmentIdSchema, equipmentDetailSchema } from '@/lib/validators';
 import { z } from 'zod';
+import { getSession } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -9,8 +10,36 @@ export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest, { params }: { params: { id: string } }) {
   try {
+    // 1) Проверяем сессию и права
+    const session = await getSession();
+    if (!session) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    }
+    if (!session.activated) {
+      return NextResponse.json({ error: 'Доступ заблокирован' }, { status: 403 });
+    }
+
+    // 2) Валидируем id
     const { id } = equipmentIdSchema.parse({ id: params.id });
 
+    // 3) Лимит 10 уникальных карточек в день для не-irbis_worker
+    if (!session.irbis_worker) {
+      const limitSql = `
+        SELECT COUNT(DISTINCT equipment_id)::int AS c
+        FROM users_activity
+        WHERE user_id = $1 AND open_at::date = CURRENT_DATE
+      `;
+      const limitRes = await db.query(limitSql, [session.id]);
+      const c: number = limitRes.rows[0]?.c ?? 0;
+      if (c >= 10) {
+        return NextResponse.json(
+          { error: 'Дневной лимит просмотров исчерпан (10 уникальных карточек/сутки).' },
+          { status: 403 },
+        );
+      }
+    }
+
+    // 4) Грузим карточку
     const sql = `
       SELECT
         e.id::int                                  AS id,
@@ -93,6 +122,22 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       return NextResponse.json({ error: 'Equipment not found' }, { status: 404 });
     }
 
+    // 5) Записываем просмотр только если ещё не было записи этого equipment_id сегодня
+    await db.query(
+      `
+      INSERT INTO users_activity (user_id, equipment_id, open_at)
+      SELECT $1, $2, NOW()
+      WHERE NOT EXISTS (
+        SELECT 1 FROM users_activity
+        WHERE user_id = $1
+          AND equipment_id = $2
+          AND open_at::date = CURRENT_DATE
+      )
+      `,
+      [session.id, id],
+    );
+
+    // 6) Валидируем и отдаём ответ
     const equipment = equipmentDetailSchema.parse(result.rows[0]);
     return NextResponse.json(equipment);
   } catch (error) {
