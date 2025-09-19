@@ -376,12 +376,17 @@ export default function LibraryPage() {
           query,
           minScore: csMinScore.toFixed(2),
           maxScore: csMaxScore.toFixed(2),
+          ts: String(Date.now()),
         });
         if (csIndustryEnabled && csIndustryId) {
           params.set('industryId', String(csIndustryId));
         }
-        const res = await fetch(`/api/cleanscore?${params}`);
+
+        const res = await fetch(`/api/cleanscore?${params}`, {
+          cache: 'no-store',
+        });
         const data: ListResponse<CleanScoreRowEx> = await res.json();
+
         setCsRows((prev) =>
           append ? [...prev, ...data.items] : (data.items as CleanScoreRowEx[]),
         );
@@ -717,13 +722,10 @@ export default function LibraryPage() {
       const current = !!Number(row.equipment_score_real || 0);
       const want = !current;
 
-      // оптимистично меняем локально
-      setCsRows((prev) =>
-        prev.map((r) =>
-          r.equipment_id === id ? ({ ...r, equipment_score_real: want ? 1 : 0 } as any) : r,
-        ),
-      );
       setRowSaving((prev) => ({ ...prev, [id]: true }));
+
+      // Оптимистично обновляем везде (карточка, списки, таблица)
+      handleEsConfirmChange(id, want);
 
       try {
         const r = await fetch(`/api/equipment/${id}/es-confirm`, {
@@ -738,21 +740,12 @@ export default function LibraryPage() {
         }
         const data = await r.json();
         const confirmedServer = !!Number(data?.equipment_score_real);
-        setCsRows((prev) =>
-          prev.map((x) =>
-            x.equipment_id === id
-              ? ({ ...x, equipment_score_real: confirmedServer ? 1 : 0 } as any)
-              : x,
-          ),
-        );
+        // На всякий: синхронизируемся с сервером, если вдруг отличилось
+        handleEsConfirmChange(id, confirmedServer);
       } catch (e) {
         console.error('Failed to toggle ES confirm (table):', e);
-        // откат оптимистичного апдейта
-        setCsRows((prev) =>
-          prev.map((x) =>
-            x.equipment_id === id ? ({ ...x, equipment_score_real: current ? 1 : 0 } as any) : x,
-          ),
-        );
+        // Откат оптимизма
+        handleEsConfirmChange(id, current);
       } finally {
         setRowSaving((prev) => {
           const copy = { ...prev };
@@ -761,7 +754,7 @@ export default function LibraryPage() {
         });
       }
     },
-    [isAdmin],
+    [isAdmin, handleEsConfirmChange],
   );
 
   // ========================= RENDER =========================

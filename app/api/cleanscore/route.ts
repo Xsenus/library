@@ -59,6 +59,7 @@ export async function GET(req: NextRequest) {
         e.id                AS equipment_id,
         e.equipment_name,
         e.clean_score,
+        e.equipment_score_real,
         i.id                AS industry_id,
         i.industry,
         p.id                AS prodclass_id,

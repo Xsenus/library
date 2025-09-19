@@ -145,6 +145,7 @@ export const cleanScoreRowSchema = z.object({
   equipment_id: z.coerce.number(),
   equipment_name: z.string(),
   clean_score: z.coerce.number().nullable(),
+  equipment_score_real: z.coerce.number().nullable().optional(),
 
   industry_id: z.coerce.number().nullable().optional(),
   industry: z.string().nullable().optional(),
