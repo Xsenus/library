@@ -1,3 +1,4 @@
+// components/library/HierarchyList.tsx
 'use client';
 
 import { useEffect, useMemo, useRef } from 'react';
@@ -94,7 +95,7 @@ export function HierarchyList<T>(props: Props<T>) {
         <div className="px-2 py-1.5 bg-[#efefef] border-b-[3px] border-black/60">
           <input
             className={cn(
-              'w-full rounded-md border px-2 py-1 disabled:opacity-50',
+              'w-full rounded-md border px-2 py-0.5 disabled:opacity-50',
               'text-sm md:text-[11px]',
             )}
             placeholder="Поиск…"
@@ -125,7 +126,7 @@ export function HierarchyList<T>(props: Props<T>) {
                 type="button"
                 onClick={() => onItemSelect(it)}
                 className={cn(
-                  'w-full text-left px-2 py-1 leading-4 transition-colors',
+                  'w-full text-left px-2 py-0.5 leading-4 transition-colors',
                   'text-base md:text-[11px] font-medium',
                   'focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/40',
                   selected ? 'bg-[#6f7074] text-white hover:bg-[#5f6165]' : 'hover:bg-[#f4f4f5]',

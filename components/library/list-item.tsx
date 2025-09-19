@@ -1,3 +1,4 @@
+// components/library/ListItem.tsx
 'use client';
 
 import { cn } from '@/lib/utils';
@@ -10,7 +11,6 @@ export interface ListItemProps {
   onClick?: () => void;
 }
 
-/** Новая шкала цвета для CS: 0.80–1.00 (серый → зелёный) */
 function csColor(score: number) {
   if (!Number.isFinite(score)) return 'text-muted-foreground';
   if (score < 0.8) return 'text-muted-foreground';
@@ -28,7 +28,7 @@ export function ListItem({ title, subtitle, cs, isSelected, onClick }: ListItemP
       type="button"
       onClick={onClick}
       className={cn(
-        'w-full text-left px-2 py-1 rounded-md transition-colors',
+        'w-full text-left px-2 py-0.5 rounded-md transition-colors',
         'hover:bg-accent/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-primary/40',
         isSelected && 'bg-accent/70',
       )}>
