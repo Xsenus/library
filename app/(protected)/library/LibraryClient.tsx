@@ -429,11 +429,12 @@ export default function LibraryPage() {
   }, [selectedEquipment, fetchEquipmentDetail]);
 
   useEffect(() => {
-    if (tab === 'cleanscore') {
+    if (tab === 'cleanscore' && isWorker) {
       fetchCleanScore(1, csQueryDebounced);
     }
   }, [
     tab,
+    isWorker,
     csQueryDebounced,
     csIndustryEnabled,
     csIndustryId,
@@ -554,6 +555,12 @@ export default function LibraryPage() {
       handleEquipmentSelect(first);
     }
   }, [autoSelectEquipment, equipmentState.loading, equipmentState.items]); // eslint-disable-line
+
+  useEffect(() => {
+    if (!isWorker && tab === 'cleanscore') {
+      setTab('library');
+    }
+  }, [isWorker, tab]);
 
   // ========================= HANDЛЕРЫ =========================
   const handleIndustrySelect = (industry: Industry) => {
@@ -804,7 +811,13 @@ export default function LibraryPage() {
       {/* ===== ВКЛАДКИ И СОДЕРЖИМОЕ ===== */}
       <div className="bg-background">
         <div className="container mx-auto px-4">
-          <Tabs value={tab} onValueChange={(v) => setTab(v as any)} className="w-full">
+          <Tabs
+            value={tab}
+            onValueChange={(v) => {
+              if (v === 'cleanscore' && !isWorker) return;
+              setTab(v as any);
+            }}
+            className="w-full">
             <div className="grid w-full grid-cols-3 gap-1 rounded-lg bg-muted p-1">
               <TabsList className="contents">
                 <TabsTrigger
@@ -821,11 +834,14 @@ export default function LibraryPage() {
 
                 <TabsTrigger
                   value="cleanscore"
+                  disabled={!isWorker}
+                  title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
                     h-10 w-full justify-center rounded-md px-4 text-sm
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
+                    disabled:opacity-50 disabled:cursor-not-allowed
                     shadow-none transition
                   ">
                   Таблица
@@ -998,259 +1014,261 @@ export default function LibraryPage() {
             </TabsContent>
 
             {/* ===== CLEAN SCORE TAB (Таблица) ===== */}
-            <TabsContent value="cleanscore" className="mt-0">
-              <div className="py-4 space-y-4">
-                {/* Панель поиска + фильтры */}
-                <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3">
-                  {/* Поиск и Обновить */}
-                  <div className="flex items-center gap-2">
-                    <input
-                      className="w-[320px] rounded-md border px-3 py-1.5 text-sm"
-                      placeholder="Поиск (оборудование, отрасль, цех, текст...)"
-                      value={csQuery}
-                      onChange={(e) => {
-                        setCsPage(1);
-                        setCsQuery(e.target.value);
-                      }}
-                    />
-                    <button
-                      className="rounded-md border px-3 py-1.5 text-sm"
-                      onClick={() => fetchCleanScore(1, csQueryDebounced)}
-                      disabled={csLoading}>
-                      Обновить
-                    </button>
-                  </div>
-
-                  {/* Фильтр отрасли */}
-                  <div className="flex items-center gap-2">
-                    <label className="inline-flex items-center gap-2 text-sm">
+            {isWorker && (
+              <TabsContent value="cleanscore" className="mt-0">
+                <div className="py-4 space-y-4">
+                  {/* Панель поиска + фильтры */}
+                  <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3">
+                    {/* Поиск и Обновить */}
+                    <div className="flex items-center gap-2">
                       <input
-                        type="checkbox"
-                        className="h-4 w-4"
-                        checked={csIndustryEnabled}
-                        onChange={(e) => setCsIndustryEnabled(e.target.checked)}
+                        className="w-[320px] rounded-md border px-3 py-1.5 text-sm"
+                        placeholder="Поиск (оборудование, отрасль, цех, текст...)"
+                        value={csQuery}
+                        onChange={(e) => {
+                          setCsPage(1);
+                          setCsQuery(e.target.value);
+                        }}
                       />
-                      Фильтр по отрасли
-                    </label>
-                    <select
-                      className="rounded-md border px-2 py-1.5 text-sm min-w-[220px]"
-                      disabled={!csIndustryEnabled}
-                      value={csIndustryId ?? ''}
-                      onChange={(e) =>
-                        setCsIndustryId(e.target.value ? Number(e.target.value) : null)
-                      }>
-                      <option value="">— Все отрасли —</option>
-                      {industriesState.items.map((i) => (
-                        <option key={i.id} value={i.id}>
-                          {i.industry}
-                        </option>
-                      ))}
-                    </select>
-                  </div>
+                      <button
+                        className="rounded-md border px-3 py-1.5 text-sm"
+                        onClick={() => fetchCleanScore(1, csQueryDebounced)}
+                        disabled={!isWorker || csLoading}>
+                        Обновить
+                      </button>
+                    </div>
 
-                  {/* Диапазон CS */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-sm text-muted-foreground">CS от</span>
-                    <select
-                      className="rounded-md border px-2 py-1.5 text-sm"
-                      value={csMinScore.toFixed(2)}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        setCsMinScore(v);
-                        if (v > csMaxScore) setCsMaxScore(v);
-                      }}>
-                      {scoreOptions.map((v) => (
-                        <option key={`min-${v}`} value={v.toFixed(2)}>
-                          {v.toFixed(2)}
-                        </option>
-                      ))}
-                    </select>
-                    <span className="text-sm text-muted-foreground">до</span>
-                    <select
-                      className="rounded-md border px-2 py-1.5 text-sm"
-                      value={csMaxScore.toFixed(2)}
-                      onChange={(e) => {
-                        const v = Number(e.target.value);
-                        setCsMaxScore(v);
-                        if (v < csMinScore) setCsMinScore(v);
-                      }}>
-                      {scoreOptions
-                        .filter((v) => v >= csMinScore)
-                        .map((v) => (
-                          <option key={`max-${v}`} value={v.toFixed(2)}>
+                    {/* Фильтр отрасли */}
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4"
+                          checked={csIndustryEnabled}
+                          onChange={(e) => setCsIndustryEnabled(e.target.checked)}
+                        />
+                        Фильтр по отрасли
+                      </label>
+                      <select
+                        className="rounded-md border px-2 py-1.5 text-sm min-w-[220px]"
+                        disabled={!csIndustryEnabled}
+                        value={csIndustryId ?? ''}
+                        onChange={(e) =>
+                          setCsIndustryId(e.target.value ? Number(e.target.value) : null)
+                        }>
+                        <option value="">— Все отрасли —</option>
+                        {industriesState.items.map((i) => (
+                          <option key={i.id} value={i.id}>
+                            {i.industry}
+                          </option>
+                        ))}
+                      </select>
+                    </div>
+
+                    {/* Диапазон CS */}
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm text-muted-foreground">CS от</span>
+                      <select
+                        className="rounded-md border px-2 py-1.5 text-sm"
+                        value={csMinScore.toFixed(2)}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setCsMinScore(v);
+                          if (v > csMaxScore) setCsMaxScore(v);
+                        }}>
+                        {scoreOptions.map((v) => (
+                          <option key={`min-${v}`} value={v.toFixed(2)}>
                             {v.toFixed(2)}
                           </option>
                         ))}
-                    </select>
+                      </select>
+                      <span className="text-sm text-muted-foreground">до</span>
+                      <select
+                        className="rounded-md border px-2 py-1.5 text-sm"
+                        value={csMaxScore.toFixed(2)}
+                        onChange={(e) => {
+                          const v = Number(e.target.value);
+                          setCsMaxScore(v);
+                          if (v < csMinScore) setCsMinScore(v);
+                        }}>
+                        {scoreOptions
+                          .filter((v) => v >= csMinScore)
+                          .map((v) => (
+                            <option key={`max-${v}`} value={v.toFixed(2)}>
+                              {v.toFixed(2)}
+                            </option>
+                          ))}
+                      </select>
+                    </div>
                   </div>
-                </div>
 
-                {/* Таблица */}
-                <div className="rounded-lg border overflow-auto">
-                  <table className={`w-full text-xs ${isWorker ? 'table-fixed' : 'table-auto'}`}>
-                    <thead
-                      className="
+                  {/* Таблица */}
+                  <div className="rounded-lg border overflow-auto">
+                    <table className={`w-full text-xs ${isWorker ? 'table-fixed' : 'table-auto'}`}>
+                      <thead
+                        className="
                         sticky top-0 z-10 text-left border-b
                         [&>tr>th]:px-2 [&>tr>th]:py-2
                         [&>tr>th]:bg-sky-50
                       ">
-                      <tr>
-                        <th style={{ width: colW.card }} className="text-center" />
+                        <tr>
+                          <th style={{ width: colW.card }} className="text-center" />
 
-                        {/* новый узкий столбец «Чек» */}
-                        <th
-                          style={{ width: colW.check }}
-                          className="w-[1%] text-center whitespace-nowrap">
-                          Чек
-                        </th>
-                        {/* «Нормальные» авто-ширины для этих четырёх */}
-                        <th className="text-left">Отрасль</th>
-                        <th className="text-left">Класс</th>
-                        <th className="text-left">Цех</th>
-                        <th className="text-left">Оборудование</th>
-                        {/* CS — фикс */}
-                        <th style={{ width: colW.cs }}>CS</th>
+                          {/* новый узкий столбец «Чек» */}
+                          <th
+                            style={{ width: colW.check }}
+                            className="w-[1%] text-center whitespace-nowrap">
+                            Чек
+                          </th>
+                          {/* «Нормальные» авто-ширины для этих четырёх */}
+                          <th className="text-left">Отрасль</th>
+                          <th className="text-left">Класс</th>
+                          <th className="text-left">Цех</th>
+                          <th className="text-left">Оборудование</th>
+                          {/* CS — фикс */}
+                          <th style={{ width: colW.cs }}>CS</th>
 
-                        {/* 6 текстовых колонок — только для работников */}
-                        {isWorker && (
-                          <>
-                            <th className="text-left">Загрязнения</th>
-                            <th className="text-left">Поверхности</th>
-                            <th className="text-left">Проблемы</th>
-                            <th className="text-left">Традиционная очистка</th>
-                            <th className="text-left">Недостатки традиц.</th>
-                            <th className="text-left">Преимущества</th>
-                          </>
-                        )}
-                      </tr>
-                    </thead>
+                          {/* 6 текстовых колонок — только для работников */}
+                          {isWorker && (
+                            <>
+                              <th className="text-left">Загрязнения</th>
+                              <th className="text-left">Поверхности</th>
+                              <th className="text-left">Проблемы</th>
+                              <th className="text-left">Традиционная очистка</th>
+                              <th className="text-left">Недостатки традиц.</th>
+                              <th className="text-left">Преимущества</th>
+                            </>
+                          )}
+                        </tr>
+                      </thead>
 
-                    <tbody
-                      className="
+                      <tbody
+                        className="
                         [&>tr>td]:px-2 [&>tr>td]:py-1.5 align-top
                         [&>tr]:border-b
                       ">
-                      {csRows.map((r) => {
-                        const confirmed = !!Number(r.equipment_score_real || 0);
-                        return (
-                          <tr
-                            key={r.equipment_id}
-                            className={cn(
-                              'align-top',
-                              confirmed && 'bg-blue-50 dark:bg-blue-900/10',
-                            )}>
-                            {/* card-ссылка */}
-                            <td style={{ width: colW.card }}>
-                              <a
-                                href={toLibraryLink(r)}
-                                target="_blank"
-                                rel="noopener noreferrer"
-                                className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
-                                title="Открыть карточку в каталоге"
-                                aria-label="Открыть карточку в каталоге">
-                                <ArrowUpRight className="h-4 w-4" />
-                              </a>
-                            </td>
+                        {csRows.map((r) => {
+                          const confirmed = !!Number(r.equipment_score_real || 0);
+                          return (
+                            <tr
+                              key={r.equipment_id}
+                              className={cn(
+                                'align-top',
+                                confirmed && 'bg-blue-50 dark:bg-blue-900/10',
+                              )}>
+                              {/* card-ссылка */}
+                              <td style={{ width: colW.card }}>
+                                <a
+                                  href={toLibraryLink(r)}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
+                                  title="Открыть карточку в каталоге"
+                                  aria-label="Открыть карточку в каталоге">
+                                  <ArrowUpRight className="h-4 w-4" />
+                                </a>
+                              </td>
 
-                            {/* чекбокс подтверждения */}
-                            <td style={{ width: colW.check }} className="w-[1%] text-center">
-                              <label
-                                className={cn(
-                                  'group inline-flex items-center justify-center rounded-md p-0.5 transition',
-                                  isAdmin
-                                    ? 'cursor-pointer hover:ring-2 hover:ring-blue-400 focus-within:ring-2 focus-within:ring-blue-400'
-                                    : 'opacity-50 cursor-not-allowed',
-                                )}
-                                title={
-                                  isAdmin
-                                    ? 'Переключить подтверждение'
-                                    : 'Недоступно: только для администратора'
-                                }>
-                                <input
-                                  type="checkbox"
-                                  className="h-4 w-4"
-                                  checked={!!Number(r.equipment_score_real || 0)}
-                                  onChange={() => toggleRowConfirm(r)}
-                                  disabled={!isAdmin || !!rowSaving[r.equipment_id]}
-                                  aria-label="Подтверждено ИРБИСТЕХ"
-                                />
-                              </label>
-                            </td>
+                              {/* чекбокс подтверждения */}
+                              <td style={{ width: colW.check }} className="w-[1%] text-center">
+                                <label
+                                  className={cn(
+                                    'group inline-flex items-center justify-center rounded-md p-0.5 transition',
+                                    isAdmin
+                                      ? 'cursor-pointer hover:ring-2 hover:ring-blue-400 focus-within:ring-2 focus-within:ring-blue-400'
+                                      : 'opacity-50 cursor-not-allowed',
+                                  )}
+                                  title={
+                                    isAdmin
+                                      ? 'Переключить подтверждение'
+                                      : 'Недоступно: только для администратора'
+                                  }>
+                                  <input
+                                    type="checkbox"
+                                    className="h-4 w-4"
+                                    checked={!!Number(r.equipment_score_real || 0)}
+                                    onChange={() => toggleRowConfirm(r)}
+                                    disabled={!isAdmin || !!rowSaving[r.equipment_id]}
+                                    aria-label="Подтверждено ИРБИСТЕХ"
+                                  />
+                                </label>
+                              </td>
 
-                            {/* авто-ширины */}
-                            <td className="whitespace-normal break-words leading-4">
-                              {r.industry}
-                            </td>
-                            <td className="whitespace-normal break-words leading-4">
-                              {r.prodclass}
-                            </td>
-                            <td className="whitespace-normal break-words leading-4">
-                              {r.workshop_name}
-                            </td>
-                            <td className="whitespace-normal break-words leading-4 font-medium">
-                              {r.equipment_name}
-                            </td>
+                              {/* авто-ширины */}
+                              <td className="whitespace-normal break-words leading-4">
+                                {r.industry}
+                              </td>
+                              <td className="whitespace-normal break-words leading-4">
+                                {r.prodclass}
+                              </td>
+                              <td className="whitespace-normal break-words leading-4">
+                                {r.workshop_name}
+                              </td>
+                              <td className="whitespace-normal break-words leading-4 font-medium">
+                                {r.equipment_name}
+                              </td>
 
-                            {/* CS — фикс */}
+                              {/* CS — фикс */}
+                              <td
+                                className="whitespace-nowrap tabular-nums"
+                                style={{ width: colW.cs }}>
+                                {r.clean_score != null ? r.clean_score.toFixed(2) : '—'}
+                              </td>
+
+                              {/* 6 текстовых — только для работников */}
+                              {isWorker && (
+                                <>
+                                  <td className="whitespace-normal break-words leading-4">
+                                    {r.contamination}
+                                  </td>
+                                  <td className="whitespace-normal break-words leading-4">
+                                    {r.surface}
+                                  </td>
+                                  <td className="whitespace-normal break-words leading-4">
+                                    {r.problems}
+                                  </td>
+                                  <td className="whitespace-normal break-words leading-4">
+                                    {r.old_method}
+                                  </td>
+                                  <td className="whitespace-normal break-words leading-4">
+                                    {r.old_problem}
+                                  </td>
+                                  <td className="whitespace-normal break-words leading-4">
+                                    {r.benefit}
+                                  </td>
+                                </>
+                              )}
+                            </tr>
+                          );
+                        })}
+
+                        {csRows.length === 0 && !csLoading && (
+                          <tr>
                             <td
-                              className="whitespace-nowrap tabular-nums"
-                              style={{ width: colW.cs }}>
-                              {r.clean_score != null ? r.clean_score.toFixed(2) : '—'}
+                              colSpan={visibleColCount}
+                              className="text-center py-6 text-sm text-muted-foreground">
+                              Нет данных
                             </td>
-
-                            {/* 6 текстовых — только для работников */}
-                            {isWorker && (
-                              <>
-                                <td className="whitespace-normal break-words leading-4">
-                                  {r.contamination}
-                                </td>
-                                <td className="whitespace-normal break-words leading-4">
-                                  {r.surface}
-                                </td>
-                                <td className="whitespace-normal break-words leading-4">
-                                  {r.problems}
-                                </td>
-                                <td className="whitespace-normal break-words leading-4">
-                                  {r.old_method}
-                                </td>
-                                <td className="whitespace-normal break-words leading-4">
-                                  {r.old_problem}
-                                </td>
-                                <td className="whitespace-normal break-words leading-4">
-                                  {r.benefit}
-                                </td>
-                              </>
-                            )}
                           </tr>
-                        );
-                      })}
+                        )}
+                      </tbody>
+                    </table>
+                  </div>
 
-                      {csRows.length === 0 && !csLoading && (
-                        <tr>
-                          <td
-                            colSpan={visibleColCount}
-                            className="text-center py-6 text-sm text-muted-foreground">
-                            Нет данных
-                          </td>
-                        </tr>
-                      )}
-                    </tbody>
-                  </table>
+                  {/* Пагинация */}
+                  <div className="flex justify-center">
+                    {csHasNext && (
+                      <button
+                        className="rounded-md border px-3 py-1.5 text-sm"
+                        onClick={() => fetchCleanScore(csPage + 1, csQueryDebounced, true)}
+                        disabled={csLoading}>
+                        Загрузить ещё
+                      </button>
+                    )}
+                  </div>
                 </div>
-
-                {/* Пагинация */}
-                <div className="flex justify-center">
-                  {csHasNext && (
-                    <button
-                      className="rounded-md border px-3 py-1.5 text-sm"
-                      onClick={() => fetchCleanScore(csPage + 1, csQueryDebounced, true)}
-                      disabled={csLoading}>
-                      Загрузить ещё
-                    </button>
-                  )}
-                </div>
-              </div>
-            </TabsContent>
+              </TabsContent>
+            )}
           </Tabs>
         </div>
       </div>
