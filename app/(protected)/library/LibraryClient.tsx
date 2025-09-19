@@ -25,6 +25,7 @@ import {
 } from '@/lib/validators';
 import { Home, ArrowUpRight } from 'lucide-react';
 import { useDailyQuota } from '@/app/hooks/use-daily-quota';
+import { cn } from '@/lib/utils';
 
 interface ListState<T> {
   items: T[];
@@ -34,6 +35,11 @@ interface ListState<T> {
   searchQuery: string;
 }
 
+// расширяем тип строки таблицы мягко — поле с чекбоксом приходит как 0/1
+type CleanScoreRowEx = CleanScoreRow & {
+  equipment_score_real?: number | null;
+};
+
 export default function LibraryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -42,8 +48,9 @@ export default function LibraryPage() {
   // Табы
   const [tab, setTab] = useState<'library' | 'cleanscore'>(initialTab);
 
-  // ======= auth/user flag: irbis_worker =======
+  // ======= auth/user flags =======
   const [isWorker, setIsWorker] = useState<boolean>(false);
+  const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
   const {
     quota,
@@ -67,6 +74,7 @@ export default function LibraryPage() {
       if (!res.ok) return;
       const data = await res.json();
       setIsWorker(!!data?.user?.irbis_worker);
+      setIsAdmin(!!data?.user?.is_admin);
     } catch {
       // no-op
     }
@@ -120,6 +128,10 @@ export default function LibraryPage() {
     setEquipmentDetail((prev) =>
       prev && prev.id === id ? { ...prev, equipment_score_real: val } : prev,
     );
+    // 4) обновить ту же запись в таблице (если загружена)
+    setCsRows((prev) =>
+      prev.map((r) => (r.equipment_id === id ? ({ ...r, equipment_score_real: val } as any) : r)),
+    );
   }, []);
 
   // Флаги автоподстановки «первого элемента» по каскаду
@@ -161,12 +173,15 @@ export default function LibraryPage() {
   });
 
   // CleanScore state (таблица)
-  const [csRows, setCsRows] = useState<CleanScoreRow[]>([]);
+  const [csRows, setCsRows] = useState<CleanScoreRowEx[]>([]);
   const [csPage, setCsPage] = useState(1);
   const [csHasNext, setCsHasNext] = useState(true);
   const [csLoading, setCsLoading] = useState(false);
   const [csQuery, setCsQuery] = useState('');
   const csQueryDebounced = useDebounce(csQuery, 300);
+
+  // карта «сохраняем ли строку сейчас»
+  const [rowSaving, setRowSaving] = useState<Record<number, boolean>>({});
 
   // Debounced search queries (иерархия)
   const debouncedIndustrySearch = useDebounce(industriesState.searchQuery, 300);
@@ -182,9 +197,10 @@ export default function LibraryPage() {
   const [csMaxScore, setCsMaxScore] = useState(1.0);
   const scoreOptions = Array.from({ length: 16 }, (_, i) => Number((0.85 + i * 0.01).toFixed(2)));
 
-  // ====== ширины: фиксируем только 1-ю колонку и CS ======
+  // ====== ширины: фиксируем первую, «Чек» и CS ======
   const colW = {
     card: 35, // первая колонка с кнопкой
+    check: 35, // «Чек» — узкий столбец с чекбоксом
     cs: 35, // CS — фикс ширина
   } as const;
 
@@ -365,8 +381,10 @@ export default function LibraryPage() {
           params.set('industryId', String(csIndustryId));
         }
         const res = await fetch(`/api/cleanscore?${params}`);
-        const data: ListResponse<CleanScoreRow> = await res.json();
-        setCsRows((prev) => (append ? [...prev, ...data.items] : data.items));
+        const data: ListResponse<CleanScoreRowEx> = await res.json();
+        setCsRows((prev) =>
+          append ? [...prev, ...data.items] : (data.items as CleanScoreRowEx[]),
+        );
         setCsHasNext(page < data.totalPages);
         setCsPage(page);
       } catch (e) {
@@ -679,9 +697,65 @@ export default function LibraryPage() {
   };
 
   // вычислим количество видимых колонок для colSpan
-  const visibleColCount = isWorker ? 12 : 6; // 1(card)+4(normal)+CS [+6 текстовых если worker]
+  // было: const visibleColCount = isWorker ? 12 : 6;  // +1 за "Чек"
+  const visibleColCount = (isWorker ? 12 : 6) + 1;
 
   const SHOW_BREADCRUMBS = false;
+
+  // ========================= HANDЛЕР ЧЕКБОКСА В ТАБЛИЦЕ =========================
+  const toggleRowConfirm = useCallback(
+    async (row: CleanScoreRowEx) => {
+      if (!isAdmin || !row?.equipment_id) return;
+      const id = row.equipment_id;
+      const current = !!Number(row.equipment_score_real || 0);
+      const want = !current;
+
+      // оптимистично меняем локально
+      setCsRows((prev) =>
+        prev.map((r) =>
+          r.equipment_id === id ? ({ ...r, equipment_score_real: want ? 1 : 0 } as any) : r,
+        ),
+      );
+      setRowSaving((prev) => ({ ...prev, [id]: true }));
+
+      try {
+        const r = await fetch(`/api/equipment/${id}/es-confirm`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({ confirmed: want }),
+        });
+        if (!r.ok) {
+          const err = await r.json().catch(() => ({}));
+          throw new Error(err?.error || `HTTP ${r.status}`);
+        }
+        const data = await r.json();
+        const confirmedServer = !!Number(data?.equipment_score_real);
+        setCsRows((prev) =>
+          prev.map((x) =>
+            x.equipment_id === id
+              ? ({ ...x, equipment_score_real: confirmedServer ? 1 : 0 } as any)
+              : x,
+          ),
+        );
+      } catch (e) {
+        console.error('Failed to toggle ES confirm (table):', e);
+        // откат оптимистичного апдейта
+        setCsRows((prev) =>
+          prev.map((x) =>
+            x.equipment_id === id ? ({ ...x, equipment_score_real: current ? 1 : 0 } as any) : x,
+          ),
+        );
+      } finally {
+        setRowSaving((prev) => {
+          const copy = { ...prev };
+          delete copy[id];
+          return copy;
+        });
+      }
+    },
+    [isAdmin],
+  );
 
   // ========================= RENDER =========================
   return (
@@ -776,7 +850,7 @@ export default function LibraryPage() {
             <TabsContent value="library" className="mt-0">
               <div className="py-4 space-y-4">
                 {/* Breadcrumbs */}
-                {SHOW_BREADCRUMBS && (
+                {false && (
                   <Breadcrumb>
                     <BreadcrumbList>
                       <BreadcrumbItem>
@@ -790,62 +864,6 @@ export default function LibraryPage() {
                       <BreadcrumbItem>
                         <BreadcrumbPage>Навигатор</BreadcrumbPage>
                       </BreadcrumbItem>
-                      {selectedIndustry && (
-                        <>
-                          <BreadcrumbSeparator />
-                          <BreadcrumbItem>
-                            {isLoadingText(selectedIndustry.industry) ? (
-                              <LoadingCrumb />
-                            ) : (
-                              <BreadcrumbPage className="max-w-[200px] truncate">
-                                {selectedIndustry.industry}
-                              </BreadcrumbPage>
-                            )}
-                          </BreadcrumbItem>
-                        </>
-                      )}
-                      {selectedProdclass && (
-                        <>
-                          <BreadcrumbSeparator />
-                          <BreadcrumbItem>
-                            {isLoadingText(selectedProdclass.prodclass) ? (
-                              <LoadingCrumb />
-                            ) : (
-                              <BreadcrumbPage className="max-w-[200px] truncate">
-                                {selectedProdclass.prodclass}
-                              </BreadcrumbPage>
-                            )}
-                          </BreadcrumbItem>
-                        </>
-                      )}
-                      {selectedWorkshop && (
-                        <>
-                          <BreadcrumbSeparator />
-                          <BreadcrumbItem>
-                            {isLoadingText(selectedWorkshop.workshop_name) ? (
-                              <LoadingCrumb />
-                            ) : (
-                              <BreadcrumbPage className="max-w-[200px] truncate">
-                                {selectedWorkshop.workshop_name}
-                              </BreadcrumbPage>
-                            )}
-                          </BreadcrumbItem>
-                        </>
-                      )}
-                      {selectedEquipment && (
-                        <>
-                          <BreadcrumbSeparator />
-                          <BreadcrumbItem>
-                            {isLoadingText(selectedEquipment.equipment_name) ? (
-                              <LoadingCrumb />
-                            ) : (
-                              <BreadcrumbPage className="max-w-[200px] truncate">
-                                {selectedEquipment.equipment_name}
-                              </BreadcrumbPage>
-                            )}
-                          </BreadcrumbItem>
-                        </>
-                      )}
                     </BreadcrumbList>
                   </Breadcrumb>
                 )}
@@ -1077,7 +1095,14 @@ export default function LibraryPage() {
                         [&>tr>th]:bg-sky-50
                       ">
                       <tr>
-                        <th style={{ width: colW.card }} />
+                        <th style={{ width: colW.card }} className="text-center" />
+
+                        {/* новый узкий столбец «Чек» */}
+                        <th
+                          style={{ width: colW.check }}
+                          className="w-[1%] text-center whitespace-nowrap">
+                          Чек
+                        </th>
                         {/* «Нормальные» авто-ширины для этих четырёх */}
                         <th className="text-left">Отрасль</th>
                         <th className="text-left">Класс</th>
@@ -1105,60 +1130,100 @@ export default function LibraryPage() {
                         [&>tr>td]:px-2 [&>tr>td]:py-1.5 align-top
                         [&>tr]:border-b
                       ">
-                      {csRows.map((r) => (
-                        <tr key={r.equipment_id} className="align-top">
-                          <td style={{ width: colW.card }}>
-                            <a
-                              href={toLibraryLink(r)}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
-                              title="Открыть карточку в каталоге"
-                              aria-label="Открыть карточку в каталоге">
-                              <ArrowUpRight className="h-4 w-4" />
-                            </a>
-                          </td>
+                      {csRows.map((r) => {
+                        const confirmed = !!Number(r.equipment_score_real || 0);
+                        return (
+                          <tr
+                            key={r.equipment_id}
+                            className={cn(
+                              'align-top',
+                              confirmed && 'bg-blue-50 dark:bg-blue-900/10',
+                            )}>
+                            {/* card-ссылка */}
+                            <td style={{ width: colW.card }}>
+                              <a
+                                href={toLibraryLink(r)}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
+                                title="Открыть карточку в каталоге"
+                                aria-label="Открыть карточку в каталоге">
+                                <ArrowUpRight className="h-4 w-4" />
+                              </a>
+                            </td>
 
-                          {/* авто-ширина */}
-                          <td className="whitespace-normal break-words leading-4">{r.industry}</td>
-                          <td className="whitespace-normal break-words leading-4">{r.prodclass}</td>
-                          <td className="whitespace-normal break-words leading-4">
-                            {r.workshop_name}
-                          </td>
-                          <td className="whitespace-normal break-words leading-4 font-medium">
-                            {r.equipment_name}
-                          </td>
+                            {/* чекбокс подтверждения */}
+                            <td style={{ width: colW.check }} className="w-[1%] text-center">
+                              <label
+                                className={cn(
+                                  'group inline-flex items-center justify-center rounded-md p-0.5 transition',
+                                  isAdmin
+                                    ? 'cursor-pointer hover:ring-2 hover:ring-blue-400 focus-within:ring-2 focus-within:ring-blue-400'
+                                    : 'opacity-50 cursor-not-allowed',
+                                )}
+                                title={
+                                  isAdmin
+                                    ? 'Переключить подтверждение'
+                                    : 'Недоступно: только для администратора'
+                                }>
+                                <input
+                                  type="checkbox"
+                                  className="h-4 w-4"
+                                  checked={!!Number(r.equipment_score_real || 0)}
+                                  onChange={() => toggleRowConfirm(r)}
+                                  disabled={!isAdmin || !!rowSaving[r.equipment_id]}
+                                  aria-label="Подтверждено ИРБИСТЕХ"
+                                />
+                              </label>
+                            </td>
 
-                          {/* CS — фикс */}
-                          <td className="whitespace-nowrap tabular-nums" style={{ width: colW.cs }}>
-                            {r.clean_score != null ? r.clean_score.toFixed(2) : '—'}
-                          </td>
+                            {/* авто-ширины */}
+                            <td className="whitespace-normal break-words leading-4">
+                              {r.industry}
+                            </td>
+                            <td className="whitespace-normal break-words leading-4">
+                              {r.prodclass}
+                            </td>
+                            <td className="whitespace-normal break-words leading-4">
+                              {r.workshop_name}
+                            </td>
+                            <td className="whitespace-normal break-words leading-4 font-medium">
+                              {r.equipment_name}
+                            </td>
 
-                          {/* 6 текстовых — только для работников */}
-                          {isWorker && (
-                            <>
-                              <td className="whitespace-normal break-words leading-4">
-                                {r.contamination}
-                              </td>
-                              <td className="whitespace-normal break-words leading-4">
-                                {r.surface}
-                              </td>
-                              <td className="whitespace-normal break-words leading-4">
-                                {r.problems}
-                              </td>
-                              <td className="whitespace-normal break-words leading-4">
-                                {r.old_method}
-                              </td>
-                              <td className="whitespace-normal break-words leading-4">
-                                {r.old_problem}
-                              </td>
-                              <td className="whitespace-normal break-words leading-4">
-                                {r.benefit}
-                              </td>
-                            </>
-                          )}
-                        </tr>
-                      ))}
+                            {/* CS — фикс */}
+                            <td
+                              className="whitespace-nowrap tabular-nums"
+                              style={{ width: colW.cs }}>
+                              {r.clean_score != null ? r.clean_score.toFixed(2) : '—'}
+                            </td>
+
+                            {/* 6 текстовых — только для работников */}
+                            {isWorker && (
+                              <>
+                                <td className="whitespace-normal break-words leading-4">
+                                  {r.contamination}
+                                </td>
+                                <td className="whitespace-normal break-words leading-4">
+                                  {r.surface}
+                                </td>
+                                <td className="whitespace-normal break-words leading-4">
+                                  {r.problems}
+                                </td>
+                                <td className="whitespace-normal break-words leading-4">
+                                  {r.old_method}
+                                </td>
+                                <td className="whitespace-normal break-words leading-4">
+                                  {r.old_problem}
+                                </td>
+                                <td className="whitespace-normal break-words leading-4">
+                                  {r.benefit}
+                                </td>
+                              </>
+                            )}
+                          </tr>
+                        );
+                      })}
 
                       {csRows.length === 0 && !csLoading && (
                         <tr>
