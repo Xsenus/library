@@ -25,7 +25,7 @@ import {
   CleanScoreRow,
 } from '@/lib/validators';
 import { Home, ArrowUpRight } from 'lucide-react';
-import { useDailyQuota } from '@/app/hooks/use-daily-quota';
+import { useDailyQuota } from '@/hooks/use-daily-quota';
 import { cn } from '@/lib/utils';
 import OkvedTab from '@/components/library/okved-tab';
 import {
@@ -64,7 +64,7 @@ export default function LibraryPage() {
   const [isWorker, setIsWorker] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
-  const { quota, refetch: refetchQuota, setRemaining } = useDailyQuota({ showLoading: false });
+  const { quota, refetch: refetchQuota } = useDailyQuota({ showLoading: false });
 
   const didInitQuota = useRef(false);
   useEffect(() => {
@@ -357,12 +357,6 @@ export default function LibraryPage() {
         setLimitExceeded(false);
         const res = await fetch(`/api/equipment/${equipmentId}`, { cache: 'no-store' });
 
-        const hdr = res.headers.get('X-Views-Remaining');
-        if (!isWorker && hdr != null) {
-          const n = Number(hdr);
-          if (!Number.isNaN(n)) setRemaining(n);
-        }
-
         if (!res.ok) {
           if (!isWorker && res.status === 403) {
             setLimitExceeded(true);
@@ -384,7 +378,7 @@ export default function LibraryPage() {
         console.error('Failed to fetch equipment detail:', error);
       }
     },
-    [isWorker, refetchQuota, setRemaining],
+    [isWorker, refetchQuota],
   );
 
   const loadOkvedOptions = useCallback(async () => {
@@ -697,7 +691,7 @@ export default function LibraryPage() {
 
   const handleEquipmentSelect = (equipment: EquipmentListItem) => {
     if (selectedEquipment?.id === equipment.id) return;
-    if (!isWorker && quota && quota.remaining === 0) {
+    if (!isWorker && quota && !quota.unlimited && (quota.remaining ?? 0) === 0) {
       setLimitExceeded(true);
       setEquipmentDetail(null);
       return;
@@ -807,7 +801,7 @@ export default function LibraryPage() {
                 Отраслевой навигатор криобластинга от ИРБИСТЕХ
               </h1>
 
-              {!isWorker && quota && (
+              {!isWorker && quota && !quota.unlimited && (
                 <div
                   className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs leading-5"
                   title="Сколько карточек можно открыть сегодня">
