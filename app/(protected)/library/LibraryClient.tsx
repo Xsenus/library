@@ -103,7 +103,8 @@ export default function LibraryPage() {
       | 'cleanscore'
       | 'okved'
       | 'aisearch';
-    setTab(tSafe === 'cleanscore' && !isWorker ? 'library' : tSafe);
+
+    setTab(!isWorker && (tSafe === 'cleanscore' || tSafe === 'okved') ? 'library' : tSafe);
   }, [searchParams, isWorker]);
 
   // Logout
@@ -604,7 +605,7 @@ export default function LibraryPage() {
   }, [autoSelectEquipment, equipmentState.loading, equipmentState.items]); // eslint-disable-line
 
   useEffect(() => {
-    if (!isWorker && tab === 'cleanscore') {
+    if (!isWorker && (tab === 'cleanscore' || tab === 'okved')) {
       setTab('library');
     }
   }, [isWorker, tab]);
@@ -842,7 +843,7 @@ export default function LibraryPage() {
           <Tabs
             value={tab}
             onValueChange={(v) => {
-              if (v === 'cleanscore' && !isWorker) return;
+              if ((v === 'cleanscore' || v === 'okved') && !isWorker) return;
               setTab(v as any);
               const qp = new URLSearchParams(searchParams);
               qp.set('tab', v);
@@ -880,11 +881,14 @@ export default function LibraryPage() {
 
                 <TabsTrigger
                   value="okved"
+                  disabled={!isWorker}
+                  title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
                     h-10 w-full justify-center rounded-md px-4 text-sm
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
+                    disabled:opacity-50 disabled:cursor-not-allowed
                     shadow-none transition
                   ">
                   ОКВЭД
@@ -1366,11 +1370,13 @@ export default function LibraryPage() {
               </TabsContent>
             )}
 
-            <TabsContent value="okved" className="mt-0">
-              <div className="py-4">
-                <OkvedTab />
-              </div>
-            </TabsContent>
+            {isWorker && (
+              <TabsContent value="okved" className="mt-0">
+                <div className="py-4">
+                  <OkvedTab />
+                </div>
+              </TabsContent>
+            )}
 
             <TabsContent value="aisearch" className="mt-0">
               <AiSearchTab />
