@@ -179,7 +179,7 @@ export const cleanScoreQuerySchema = z
     path: ['maxScore'],
   });
 
-  // OKVED (main list)
+// OKVED (main list)
 export const okvedMainSchema = z.object({
   id: z.coerce.number(),
   okved_code: z.string(),
@@ -200,6 +200,6 @@ export type OkvedCompany = z.infer<typeof okvedCompanySchema>;
 
 // Query for okved companies
 export const okvedCompaniesQuerySchema = paginationSchema.extend({
-  okved: z.string().min(1),
+  okved: z.string().optional().default(''),
 });
 export type OkvedCompaniesQuery = z.infer<typeof okvedCompaniesQuerySchema>;
