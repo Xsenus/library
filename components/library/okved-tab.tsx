@@ -10,10 +10,10 @@ import { ArrowUpRight, X } from 'lucide-react';
 
 type OkvedMain = ReturnType<typeof okvedMainSchema.parse>;
 
-const MIN_SIDEBAR = 240;
-const MAX_SIDEBAR = 720;
-const MIN_RIGHT = 420; // минимальная ширина правой таблицы
-const DEFAULT_SIDEBAR = 320;
+const MIN_SIDEBAR = 480;
+const MAX_SIDEBAR = 1200;
+const MIN_RIGHT = 420;
+const DEFAULT_SIDEBAR = 640;
 const LS_KEY = 'okved:sidebarWidth';
 
 export default function OkvedTab() {
