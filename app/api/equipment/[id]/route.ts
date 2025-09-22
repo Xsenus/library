@@ -37,7 +37,7 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     // 2) Валидируем id
     const { id } = equipmentIdSchema.parse({ id: params.id });
 
-    // 3) Если сотрудник — просто отдаем карточку без каких-либо квот и логики ограничений
+    // 3) Если сотрудник — отдаём карточку БЕЗ квот, но теперь тоже логируем просмотр
     if (isWorker) {
       const sql = `
         SELECT
@@ -117,15 +117,36 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       if (result.rows.length === 0) {
         return NextResponse.json({ error: 'Equipment not found' }, { status: 404 });
       }
+
       const equipment = equipmentDetailSchema.parse(result.rows[0]);
+
+      // логируем посещение даже для сотрудников/администраторов (уникально за сутки)
+      try {
+        await db.query(
+          `
+          INSERT INTO users_activity (user_id, equipment_id, open_at)
+          SELECT $1, $2, NOW()
+          WHERE NOT EXISTS (
+            SELECT 1 FROM users_activity
+            WHERE user_id = $1
+              AND equipment_id = $2
+              AND ${DAY_COND}
+          )
+          `,
+          [session.id, id],
+        );
+      } catch (e) {
+        // Телеметрия не должна ломать основной ответ
+        console.warn('users_activity log (worker) failed:', e);
+      }
+
       // Без заголовков квоты для сотрудников
       return NextResponse.json(equipment);
     }
 
-    // 4) Не-сотрудник — полная логика квот/лимитов как раньше (без обновления irbis_worker)
+    // 4) Не-сотрудник — полная логика квот/лимитов
     await db.query('BEGIN');
 
-    // Сколько карточек уже открыто сегодня?
     const countSql = `
       SELECT COUNT(DISTINCT equipment_id)::int AS c
       FROM users_activity
@@ -134,7 +155,6 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
     const { rows: beforeRows } = await db.query(countSql, [session.id]);
     const usedBefore: number = beforeRows[0]?.c ?? 0;
 
-    // Если лимит уже выбран — блокируем
     if (usedBefore >= DAILY_LIMIT) {
       await db.query('ROLLBACK');
       const blocked = NextResponse.json(
@@ -146,7 +166,6 @@ export async function GET(request: NextRequest, { params }: { params: { id: stri
       return blocked;
     }
 
-    // Грузим карточку (404 не тратит лимит)
     const sql = `
       SELECT
         e.id::int                                  AS id,
