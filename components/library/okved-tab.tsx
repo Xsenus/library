@@ -8,21 +8,16 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ArrowUpRight, X } from 'lucide-react';
 
-// Типы
 type OkvedMain = ReturnType<typeof okvedMainSchema.parse>;
 type SortKey = 'revenue_desc' | 'revenue_asc';
-
-// Совпадает с Industry из валидаторов (id, industry)
 type IndustryItem = { id: number; industry: string };
 
-// Константы
 const MIN_SIDEBAR = 480;
 const MAX_SIDEBAR = 1200;
 const MIN_RIGHT = 420;
 const DEFAULT_SIDEBAR = 640;
 const LS_KEY = 'okved:sidebarWidth';
 
-// Общий ответ со списком
 type ListResponse<T> = {
   items: T[];
   page: number;
@@ -33,7 +28,6 @@ export default function OkvedTab() {
   const sp = useSearchParams();
   const router = useRouter();
 
-  // --- initial from URL
   const initialOkved = (sp.get('okved') ?? '').trim();
   const initialIndustryIdRaw = sp.get('industryId') ?? 'all';
   const initialQ = sp.get('q') ?? '';
@@ -41,7 +35,6 @@ export default function OkvedTab() {
   const initialExtra = (sp.get('extra') ?? '0') === '1';
   const initialPage = Number(sp.get('page')) || 1;
 
-  // --- local state
   const [okveds, setOkveds] = useState<OkvedMain[]>([]);
   const [okved, setOkved] = useState<string>(initialOkved);
   const [companies, setCompanies] = useState<OkvedCompany[]>([]);
@@ -50,26 +43,22 @@ export default function OkvedTab() {
   const [loading, setLoading] = useState(false);
   const pageSize = 50;
 
-  // индустрии
   const [industryList, setIndustryList] = useState<IndustryItem[]>([]);
   const [industriesLoading, setIndustriesLoading] = useState<boolean>(true);
 
-  // включаем «Отрасли» только если в URL пришёл числовой id, а не 'all'
   const initialIndustryIsNumber =
     initialIndustryIdRaw !== 'all' && /^\d+$/.test(initialIndustryIdRaw);
   const [csOkvedEnabled, setCsOkvedEnabled] = useState<boolean>(initialIndustryIsNumber);
 
   const [industryId, setIndustryId] = useState<string>(
     initialIndustryIsNumber ? initialIndustryIdRaw : 'all',
-  ); // 'all' | id
+  );
 
   const [includeExtra, setIncludeExtra] = useState<boolean>(initialExtra);
 
-  // поиск/сортировка
   const [searchName, setSearchName] = useState<string>(initialQ);
   const [sortKey, setSortKey] = useState<SortKey>(initialSort);
 
-  // --- resizer
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     if (typeof window === 'undefined') return DEFAULT_SIDEBAR;
     const v = Number(localStorage.getItem(LS_KEY));
@@ -91,11 +80,9 @@ export default function OkvedTab() {
     return () => window.removeEventListener('resize', ensureBounds);
   }, []);
 
-  // ====== loaders (with abort & race guards) ======
   const okvedReqId = useRef(0);
   const companiesReqId = useRef(0);
 
-  // okved list
   useEffect(() => {
     const ac = new AbortController();
     const myId = ++okvedReqId.current;
@@ -116,7 +103,6 @@ export default function OkvedTab() {
     return () => ac.abort();
   }, []);
 
-  // industries list — загружаем ВСЕ страницы
   useEffect(() => {
     const ac = new AbortController();
 
@@ -130,8 +116,8 @@ export default function OkvedTab() {
         do {
           const params = new URLSearchParams({
             page: String(page),
-            pageSize: '50', // небольшими порциями, чтобы UI не замирал
-            ts: String(Date.now()), // на всякий
+            pageSize: '50',
+            ts: String(Date.now()),
           });
           const res = await fetch(`/api/industries?${params}`, {
             cache: 'no-store',
@@ -150,7 +136,6 @@ export default function OkvedTab() {
           totalPages = tp;
         } while (page <= totalPages && !ac.signal.aborted);
 
-        // Убираем дубликаты (на всякий), сортируем по названию
         const unique = dedupeById(collected).sort((a, b) =>
           a.industry.localeCompare(b.industry, 'ru'),
         );
@@ -172,7 +157,6 @@ export default function OkvedTab() {
     return () => ac.abort();
   }, []);
 
-  // companies load
   const loadCompanies = useCallback(() => {
     const ac = new AbortController();
     const myId = ++companiesReqId.current;
@@ -195,7 +179,7 @@ export default function OkvedTab() {
         const r = await fetch(url.toString(), { cache: 'no-store', signal: ac.signal });
         if (!r.ok) throw new Error(`HTTP ${r.status}`);
         const data = await r.json();
-        if (myId !== companiesReqId.current) return; // защита от гонок
+        if (myId !== companiesReqId.current) return;
         setCompanies(Array.isArray(data.items) ? data.items : []);
         setTotal(Number.isFinite(data.total) ? data.total : 0);
       } catch (e: any) {
@@ -209,7 +193,6 @@ export default function OkvedTab() {
       }
     })();
 
-    // sync URL (после старта запроса)
     const qs = new URLSearchParams(Array.from(sp.entries()));
     qs.set('tab', 'okved');
     if (okved) qs.set('okved', okved);
@@ -238,11 +221,15 @@ export default function OkvedTab() {
     };
   }, [loadCompanies]);
 
-  // вычисления
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total]);
   const isAll = okved === '';
 
-  // --- resizer handlers
+  // 🔎 активный ОКВЭД для описания
+  const activeOkved = useMemo(
+    () => (okved ? okveds.find((o) => o.okved_code === okved) ?? null : null),
+    [okved, okveds],
+  );
+
   useEffect(() => {
     function onMove(e: MouseEvent | TouchEvent) {
       if (!draggingRef.current) return;
@@ -296,7 +283,6 @@ export default function OkvedTab() {
     return Math.round(x / 1_000_000).toLocaleString('ru-RU');
   }
 
-  // Esc -> сброс активного ОКВЭД
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape' && !isAll) {
@@ -311,12 +297,10 @@ export default function OkvedTab() {
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
 
-  // сброс страницы при изменении фильтров
   useEffect(() => {
     setPage(1);
   }, [okved, searchName, includeExtra, sortKey, csOkvedEnabled, industryId]);
 
-  // ========================= RENDER =========================
   return (
     <div ref={layoutRef} className="flex flex-col lg:flex-row gap-1">
       {/* Левая панель */}
@@ -344,14 +328,22 @@ export default function OkvedTab() {
           </CardHeader>
 
           <CardContent className="space-y-3">
-            {/* Отрасли (человеческие) */}
+            {/* Отрасли */}
             <div className="flex items-center gap-2">
               <label className="inline-flex items-center gap-2 text-sm">
                 <input
                   type="checkbox"
                   className="h-4 w-4"
                   checked={csOkvedEnabled}
-                  onChange={(e) => setCsOkvedEnabled(e.target.checked)}
+                  onChange={(e) => {
+                    const checked = e.target.checked;
+                    setCsOkvedEnabled(checked);
+                    if (!checked) {
+                      // ✅ Сброс на «Все отрасли» при снятии чекбокса
+                      setIndustryId('all');
+                      setPage(1);
+                    }
+                  }}
                 />
                 Отрасли
               </label>
@@ -359,7 +351,10 @@ export default function OkvedTab() {
               <select
                 disabled={!csOkvedEnabled}
                 value={industryId}
-                onChange={(e) => setIndustryId(e.target.value)}
+                onChange={(e) => {
+                  setIndustryId(e.target.value);
+                  setPage(1);
+                }}
                 className="h-9 w-[280px] max-w-[280px] truncate border rounded-md px-2 text-sm"
                 title={
                   industryId !== 'all'
@@ -392,7 +387,7 @@ export default function OkvedTab() {
               Искать в дополнительных ОКВЭД
             </label>
 
-            {/* Поиск по коду/названию в списке слева (визуальный фильтр) */}
+            {/* Поиск в списке слева */}
             <Input
               placeholder="Поиск по коду/названию…"
               onChange={(e) => {
@@ -492,9 +487,18 @@ export default function OkvedTab() {
       <div className="min-w-0 flex-1">
         <Card>
           <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <CardTitle>
-              {isAll ? 'Все компании' : `Компании по ОКВЭД ${okved}`}
-              {total ? ` · ${total.toLocaleString('ru-RU')}` : ''}
+            {/* Заголовок + описание выбранного ОКВЭД */}
+            <CardTitle className="flex flex-col">
+              <span>
+                {isAll ? 'Все компании' : `Компании по ОКВЭД ${okved}`}
+                {total ? ` · ${total.toLocaleString('ru-RU')}` : ''}
+              </span>
+              {activeOkved && (
+                <span className="text-sm text-muted-foreground">
+                  <span className="font-medium">{activeOkved.okved_code}</span> —{' '}
+                  {activeOkved.okved_main}
+                </span>
+              )}
             </CardTitle>
 
             {/* Поиск по названию справа */}
