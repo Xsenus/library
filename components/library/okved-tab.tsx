@@ -224,7 +224,6 @@ export default function OkvedTab() {
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total]);
   const isAll = okved === '';
 
-  // 🔎 активный ОКВЭД для описания
   const activeOkved = useMemo(
     () => (okved ? okveds.find((o) => o.okved_code === okved) ?? null : null),
     [okved, okveds],
@@ -302,44 +301,43 @@ export default function OkvedTab() {
   }, [okved, searchName, includeExtra, sortKey, csOkvedEnabled, industryId]);
 
   return (
-    <div ref={layoutRef} className="flex flex-col lg:flex-row gap-1">
+    <div ref={layoutRef} className="flex flex-col lg:flex-row gap-1 text-[13px] leading-snug">
       {/* Левая панель */}
       <div
         className="lg:shrink-0"
         suppressHydrationWarning
         style={hydrated && isLg() ? { width: sidebarWidth } : undefined}>
         <Card>
-          <CardHeader className="grid grid-cols-[1fr,auto] items-center gap-2">
-            <CardTitle>ОКВЭД</CardTitle>
+          <CardHeader className="grid grid-cols-[1fr,auto] items-center gap-1 p-3">
+            <CardTitle className="text-sm">ОКВЭД</CardTitle>
 
             <Button
               variant="ghost"
               size="icon"
+              className={`h-7 w-7 ${isAll ? 'opacity-0 pointer-events-none' : ''}`}
               onClick={() => {
                 setOkved('');
                 setPage(1);
               }}
               title={isAll ? 'Нет активного фильтра' : 'Сбросить фильтр'}
-              className={isAll ? 'opacity-0 pointer-events-none' : 'opacity-100'}
               aria-disabled={isAll}
               tabIndex={isAll ? -1 : 0}>
-              <X className="h-5 w-5" />
+              <X className="h-4 w-4" />
             </Button>
           </CardHeader>
 
-          <CardContent className="space-y-3">
+          <CardContent className="space-y-2 p-3">
             {/* Отрасли */}
             <div className="flex items-center gap-2">
-              <label className="inline-flex items-center gap-2 text-sm">
+              <label className="inline-flex items-center gap-2 text-xs">
                 <input
                   type="checkbox"
-                  className="h-4 w-4"
+                  className="h-3.5 w-3.5"
                   checked={csOkvedEnabled}
                   onChange={(e) => {
                     const checked = e.target.checked;
                     setCsOkvedEnabled(checked);
                     if (!checked) {
-                      // ✅ Сброс на «Все отрасли» при снятии чекбокса
                       setIndustryId('all');
                       setPage(1);
                     }
@@ -355,7 +353,7 @@ export default function OkvedTab() {
                   setIndustryId(e.target.value);
                   setPage(1);
                 }}
-                className="h-9 w-[280px] max-w-[280px] truncate border rounded-md px-2 text-sm"
+                className="h-8 w-[260px] max-w-[260px] truncate border rounded-md px-2 text-xs"
                 title={
                   industryId !== 'all'
                     ? industryList.find((i) => String(i.id) === industryId)?.industry
@@ -377,10 +375,10 @@ export default function OkvedTab() {
             </div>
 
             {/* Искать в дополнительных ОКВЭД */}
-            <label className="inline-flex items-center gap-2 text-sm">
+            <label className="inline-flex items-center gap-2 text-xs">
               <input
                 type="checkbox"
-                className="h-4 w-4"
+                className="h-3.5 w-3.5"
                 checked={includeExtra}
                 onChange={(e) => setIncludeExtra(e.target.checked)}
               />
@@ -389,6 +387,7 @@ export default function OkvedTab() {
 
             {/* Поиск в списке слева */}
             <Input
+              className="h-8 text-xs"
               placeholder="Поиск по коду/названию…"
               onChange={(e) => {
                 const q = e.target.value.toLowerCase();
@@ -400,11 +399,11 @@ export default function OkvedTab() {
               }}
             />
 
-            <div className="max-h-[60vh] overflow-auto divide-y">
+            <div className="max-h-[58vh] overflow-auto divide-y">
               <div
                 data-okved-row
                 data-q="все компании"
-                className={`flex items-center gap-2 py-2 px-2 rounded-md cursor-pointer ${
+                className={`flex items-center gap-2 py-1.5 px-2 rounded-md cursor-pointer ${
                   isAll ? 'bg-muted' : 'hover:bg-muted'
                 }`}
                 onClick={() => {
@@ -415,7 +414,7 @@ export default function OkvedTab() {
                 <Button
                   size="icon"
                   variant="secondary"
-                  className="shrink-0"
+                  className="shrink-0 h-7 w-7"
                   title="Открыть все компании в новой вкладке"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -424,8 +423,8 @@ export default function OkvedTab() {
                   <ArrowUpRight className="h-4 w-4" />
                 </Button>
                 <div className="truncate">
-                  <div className="font-medium">Все компании</div>
-                  <div className="text-xs text-muted-foreground truncate">без фильтра</div>
+                  <div className="font-medium text-xs">Все компании</div>
+                  <div className="text-[11px] text-muted-foreground truncate">без фильтра</div>
                 </div>
               </div>
 
@@ -436,7 +435,7 @@ export default function OkvedTab() {
                     key={x.id}
                     data-okved-row
                     data-q={`${x.okved_code} ${x.okved_main}`}
-                    className={`flex items-center gap-2 py-2 px-2 rounded-md cursor-pointer ${
+                    className={`flex items-center gap-2 py-1.5 px-2 rounded-md cursor-pointer ${
                       active ? 'bg-muted' : 'hover:bg-muted'
                     }`}
                     onClick={() => {
@@ -447,7 +446,7 @@ export default function OkvedTab() {
                     <Button
                       size="icon"
                       variant="secondary"
-                      className="shrink-0"
+                      className="shrink-0 h-7 w-7"
                       title="Открыть в новой вкладке"
                       onClick={(e) => {
                         e.stopPropagation();
@@ -459,8 +458,10 @@ export default function OkvedTab() {
                       <ArrowUpRight className="h-4 w-4" />
                     </Button>
                     <div className="truncate">
-                      <div className="font-medium">{x.okved_code}</div>
-                      <div className="text-xs text-muted-foreground truncate">{x.okved_main}</div>
+                      <div className="font-medium text-xs">{x.okved_code}</div>
+                      <div className="text-[11px] text-muted-foreground truncate">
+                        {x.okved_main}
+                      </div>
                     </div>
                   </div>
                 );
@@ -486,25 +487,23 @@ export default function OkvedTab() {
       {/* Правая часть */}
       <div className="min-w-0 flex-1">
         <Card>
-          <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            {/* Заголовок + описание выбранного ОКВЭД */}
-            <CardTitle className="flex flex-col">
+          <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3">
+            <CardTitle className="flex flex-col text-sm">
               <span>
                 {isAll ? 'Все компании' : `Компании по ОКВЭД ${okved}`}
                 {total ? ` · ${total.toLocaleString('ru-RU')}` : ''}
               </span>
               {activeOkved && (
-                <span className="text-sm text-muted-foreground">
+                <span className="text-xs text-muted-foreground">
                   <span className="font-medium">{activeOkved.okved_code}</span> —{' '}
                   {activeOkved.okved_main}
                 </span>
               )}
             </CardTitle>
 
-            {/* Поиск по названию справа */}
             <div className="flex items-center gap-2">
               <Input
-                className="w-[360px]"
+                className="w-[320px] h-8 text-xs"
                 placeholder="Поиск по названию компании…"
                 value={searchName}
                 onChange={(e) => setSearchName(e.target.value)}
@@ -512,42 +511,42 @@ export default function OkvedTab() {
             </div>
           </CardHeader>
 
-          <CardContent>
+          <CardContent className="p-3">
             <div className="relative w-full overflow-auto">
-              <table className="w-full text-sm">
+              <table className="w-full text-[13px]">
                 <thead className="[&_tr]:border-b">
                   <tr className="text-left">
-                    <th className="py-2 pr-2 w-[56px]"></th>
-                    <th className="py-2 pr-4">ИНН</th>
-                    <th className="py-2 pr-4">Название</th>
+                    <th className="py-1 pr-2 w-[35px]"></th>
+                    <th className="py-1 pr-3">ИНН</th>
+                    <th className="py-1 pr-3">Название</th>
                     <th
-                      className="py-2 pr-4 cursor-pointer select-none"
+                      className="py-1 pr-3 cursor-pointer select-none"
                       title="Сортировать по выручке"
                       onClick={() => {
                         setSortKey((s) => (s === 'revenue_desc' ? 'revenue_asc' : 'revenue_desc'));
                         setPage(1);
                       }}>
                       Выручка, млн
-                      <span className="ml-1 text-xs text-muted-foreground">
+                      <span className="ml-1 text-[11px] text-muted-foreground">
                         {sortKey === 'revenue_desc' ? '↓' : '↑'}
                       </span>
                     </th>
-                    <th className="py-2 pr-4">Адрес</th>
-                    <th className="py-2 pr-4">Филиалов</th>
-                    <th className="py-2 pr-2">Год</th>
+                    <th className="py-1 pr-3">Адрес</th>
+                    <th className="py-1 pr-3">Филиалов</th>
+                    <th className="py-1 pr-2">Год</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading && (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-muted-foreground">
+                      <td colSpan={7} className="py-6 text-center text-muted-foreground text-xs">
                         Загрузка…
                       </td>
                     </tr>
                   )}
                   {!loading && companies.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="py-8 text-center text-muted-foreground">
+                      <td colSpan={7} className="py-6 text-center text-muted-foreground text-xs">
                         Нет данных
                       </td>
                     </tr>
@@ -555,10 +554,11 @@ export default function OkvedTab() {
                   {!loading &&
                     companies.map((c) => (
                       <tr key={`${c.inn}-${c.year}`} className="border-b hover:bg-muted/40">
-                        <td className="py-1 pr-2">
+                        <td className="py-0.5 pr-2">
                           <Button
                             size="icon"
                             variant="ghost"
+                            className="h-7 w-7"
                             title="Открыть карточку компании в Bitrix24"
                             onClick={() =>
                               window.open(
@@ -572,14 +572,14 @@ export default function OkvedTab() {
                             <ArrowUpRight className="h-4 w-4" />
                           </Button>
                         </td>
-                        <td className="py-1 pr-4 whitespace-nowrap">{c.inn}</td>
-                        <td className="py-1 pr-4">{c.short_name}</td>
-                        <td className="py-1 pr-4 text-right tabular-nums">
+                        <td className="py-0.5 pr-3 whitespace-nowrap">{c.inn}</td>
+                        <td className="py-0.5 pr-3">{c.short_name}</td>
+                        <td className="py-0.5 pr-3 text-right tabular-nums">
                           {revenueMln(c.revenue)}
                         </td>
-                        <td className="py-1 pr-4">{c.address ?? '—'}</td>
-                        <td className="py-1 pr-4">{c.branch_count ?? '—'}</td>
-                        <td className="py-1 pr-2">{c.year ?? '—'}</td>
+                        <td className="py-0.5 pr-3">{c.address ?? '—'}</td>
+                        <td className="py-0.5 pr-3">{c.branch_count ?? '—'}</td>
+                        <td className="py-0.5 pr-2">{c.year ?? '—'}</td>
                       </tr>
                     ))}
                 </tbody>
@@ -587,18 +587,20 @@ export default function OkvedTab() {
             </div>
 
             {pages > 1 && (
-              <div className="flex items-center justify-end gap-2 pt-3">
+              <div className="flex items-center justify-end gap-2 pt-2">
                 <Button
                   variant="secondary"
+                  className="h-8 px-2 text-xs"
                   disabled={page <= 1}
                   onClick={() => setPage((p) => Math.max(1, p - 1))}>
                   Назад
                 </Button>
-                <div className="text-xs text-muted-foreground">
+                <div className="text-[11px] text-muted-foreground">
                   страница {page} / {pages}
                 </div>
                 <Button
                   variant="secondary"
+                  className="h-8 px-2 text-xs"
                   disabled={page >= pages}
                   onClick={() => setPage((p) => Math.min(pages, p + 1))}>
                   Вперёд
