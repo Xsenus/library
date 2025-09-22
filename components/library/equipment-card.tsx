@@ -291,12 +291,12 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   useEffect(() => {
     if (!openSections) return;
     if (gptAvailable === true && !autoOpenedGPT) {
-      if (!openSections.includes('gpt-images')) {
+      if (!openSections.includes('gpt-images') && wantGptFromMemoryRef.current) {
         setOpenSections((prev) => [...(prev || []), 'gpt-images']);
       }
       setAutoOpenedGPT(true);
     }
-    if (gptAvailable === false || gptAvailable === null) {
+    if (gptAvailable === false) {
       if (openSections.includes('gpt-images')) {
         setOpenSections((prev) => (prev || []).filter((x) => x !== 'gpt-images'));
       }
@@ -304,13 +304,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   }, [gptAvailable, autoOpenedGPT, openSections, setOpenSections]);
 
   /** Значение для аккордеона */
-  const accordionValue =
-    (openSections?.filter((s) => {
-      if (s !== 'gpt-images') return true;
-      if (gptAvailable === true) return true;
-      if (gptAvailable === null && wantGptFromMemoryRef.current) return true;
-      return false;
-    }) as ImgSection[]) ?? [];
+  const accordionValue = openSections ?? [];
 
   const [showText, setShowText] = useState(false);
 
@@ -581,7 +575,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
               onValueChange={(v) => {
                 const arr = (Array.isArray(v) ? v : []) as ImgSection[];
                 let filtered = arr.filter((x) => x === 'google-images' || x === 'gpt-images');
-                if (gptAvailable !== true) {
+                if (gptAvailable === false) {
                   filtered = filtered.filter((x) => x !== 'gpt-images');
                 }
                 setOpenSections(filtered);
@@ -605,10 +599,10 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                 <AccordionTrigger
                   className={cn(
                     'text-sm font-medium',
-                    gptAvailable !== true && 'opacity-50 pointer-events-none select-none',
+                    gptAvailable === false && 'opacity-50 pointer-events-none select-none',
                   )}
-                  onClick={gptAvailable !== true ? (e) => e.preventDefault() : undefined}
-                  aria-disabled={gptAvailable !== true}>
+                  onClick={gptAvailable === false ? (e) => e.preventDefault() : undefined}
+                  aria-disabled={gptAvailable === false}>
                   Картинки GPT
                 </AccordionTrigger>
 
