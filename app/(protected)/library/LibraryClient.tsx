@@ -35,6 +35,7 @@ import {
   SelectContent,
   SelectItem,
 } from '@/components/ui/select';
+import AiSearchTab from '@/components/library/ai-search-tab';
 
 interface ListState<T> {
   items: T[];
@@ -51,9 +52,13 @@ type CleanScoreRowEx = CleanScoreRow & {
 export default function LibraryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialTab = (searchParams.get('tab') ?? 'library') as 'library' | 'cleanscore' | 'okved';
+  const initialTab = (searchParams.get('tab') ?? 'library') as
+    | 'library'
+    | 'cleanscore'
+    | 'okved'
+    | 'aisearch';
 
-  const [tab, setTab] = useState<'library' | 'cleanscore' | 'okved'>(initialTab);
+  const [tab, setTab] = useState<'library' | 'cleanscore' | 'okved' | 'aisearch'>(initialTab);
 
   // ======= auth/user flags =======
   const [isWorker, setIsWorker] = useState<boolean>(false);
@@ -93,9 +98,11 @@ export default function LibraryPage() {
 
   // держим таб в синхроне с URL (?tab=...)
   useEffect(() => {
-    const t = (searchParams.get('tab') ?? 'library') as 'library' | 'cleenscore' | 'okved';
-    // опечатка в типе в строке выше специально не нужна; исправим на корректный разбор:
-    const tSafe = (searchParams.get('tab') ?? 'library') as 'library' | 'cleanscore' | 'okved';
+    const tSafe = (searchParams.get('tab') ?? 'library') as
+      | 'library'
+      | 'cleanscore'
+      | 'okved'
+      | 'aisearch';
     setTab(tSafe === 'cleanscore' && !isWorker ? 'library' : tSafe);
   }, [searchParams, isWorker]);
 
@@ -842,7 +849,7 @@ export default function LibraryPage() {
               router.replace(`/library?${qp.toString()}`);
             }}
             className="w-full">
-            <div className="grid w-full grid-cols-3 gap-1 rounded-lg bg-muted p-1">
+            <div className="grid w-full grid-cols-4 gap-1 rounded-lg bg-muted p-1">
               <TabsList className="contents">
                 <TabsTrigger
                   value="library"
@@ -881,6 +888,18 @@ export default function LibraryPage() {
                     shadow-none transition
                   ">
                   ОКВЭД
+                </TabsTrigger>
+
+                <TabsTrigger
+                  value="aisearch"
+                  className="
+                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    border border-transparent
+                    data-[state=active]:bg-background data-[state=active]:border-border
+                    data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
+                    shadow-none transition
+                  ">
+                  AI-поиск
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -1351,6 +1370,10 @@ export default function LibraryPage() {
               <div className="py-4">
                 <OkvedTab />
               </div>
+            </TabsContent>
+
+            <TabsContent value="aisearch" className="mt-0">
+              <AiSearchTab />
             </TabsContent>
           </Tabs>
         </div>
