@@ -116,7 +116,7 @@ export default function OkvedTab() {
                 setOkved('');
                 setPage(1);
               }}
-              title="Показать все компании">
+              title="Все компании — без фильтра">
               <Button
                 size="icon"
                 variant="secondary"
@@ -149,7 +149,7 @@ export default function OkvedTab() {
                     setPage(1);
                     setOkved(active ? '' : x.okved_code);
                   }}
-                  title="Загрузить компании справа">
+                  title={x.okved_main}>
                   <Button
                     size="icon"
                     variant="secondary"
