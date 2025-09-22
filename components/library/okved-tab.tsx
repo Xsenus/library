@@ -164,10 +164,16 @@ export default function OkvedTab() {
     return () => window.removeEventListener('keydown', onKey);
   }, [isAll]);
 
+  const [hydrated, setHydrated] = useState(false);
+  useEffect(() => setHydrated(true), []);
+
   return (
     <div ref={layoutRef} className="flex flex-col lg:flex-row gap-1">
       {/* Левая панель — фиксируем ширину только на lg+ */}
-      <div className="lg:shrink-0" style={isLg() ? { width: sidebarWidth } : {}}>
+      <div
+        className="lg:shrink-0"
+        suppressHydrationWarning
+        style={hydrated && isLg() ? { width: sidebarWidth } : undefined}>
         <Card>
           <CardHeader className="grid grid-cols-[1fr,auto] items-center gap-2">
             <CardTitle>ОКВЭД</CardTitle>
