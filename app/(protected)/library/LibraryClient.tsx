@@ -1284,9 +1284,11 @@ export default function LibraryPage() {
                                   <a
                                     href={`/library?tab=okved&okvedId=${encodeURIComponent(
                                       String(r.okved_id ?? ''),
-                                    )}&okved=${encodeURIComponent(r.okved_code)}`}
+                                    )}&okved=${encodeURIComponent(r.okved_code)}&lock=1`}
                                     className="text-blue-600 hover:underline"
-                                    title="Открыть вкладку ОКВЭД и выбрать этот код">
+                                    title="Открыть вкладку ОКВЭД и выбрать этот код"
+                                    target="_blank"
+                                    rel="noopener noreferrer">
                                     {r.okved_code}
                                     {r.okved_main ? ` — ${r.okved_main}` : ''}
                                   </a>
