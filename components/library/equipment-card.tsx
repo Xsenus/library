@@ -342,6 +342,22 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       );
     };
 
+    const OkvedBlock = () => {
+      if (!Array.isArray(okvedList) || okvedList.length === 0) return null;
+      return (
+        <div className="space-y-1">
+          <div className="font-bold">Примеры основных ОКВЭД в исследуемой отрасли</div>
+          <ul className="list-disc pl-4 space-y-0.5">
+            {okvedList.map((row) => (
+              <li key={row.id} className="break-words">
+                {row.okved_code} — {row.okved_main}
+              </li>
+            ))}
+          </ul>
+        </div>
+      );
+    };
+
     return (
       <div className="text-[13px] leading-6">
         {has(equipment.equipment_name) && (
@@ -373,6 +389,8 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           </div>
         )}
 
+        <OkvedBlock />
+
         <ListBlock title="Примеры товаров" items={equipment.goods_examples} />
 
         {(has(equipment.company_name) || has(equipment.site_description)) && (
@@ -391,6 +409,10 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       </div>
     );
   };
+
+  // ==== ЗАГРУЗКА ОКВЭД по оборудованию ====
+  const [okvedList, setOkvedList] = useState<OkvedByEquipment[]>([]);
+  const [okvedLoading, setOkvedLoading] = useState(false);
 
   /** Текст для копирования (plain text), совпадает по структуре с визуалом */
   const buildCopyText = (): string => {
@@ -444,6 +466,17 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       add('Закупка', equipment.decision_proc);
     }
 
+    if (Array.isArray(okvedList) && okvedList.length > 0) {
+      lines.push('Примеры основных ОКВЭД в исследуемой отрасли');
+      for (const row of okvedList) {
+        const code = row.okved_code?.trim();
+        const name = row.okved_main?.trim();
+        if (code && name) lines.push(`- ${code} — ${name}`);
+        else if (code) lines.push(`- ${code}`);
+        else if (name) lines.push(`- ${name}`);
+      }
+    }
+
     addList('Примеры товаров', equipment.goods_examples || undefined);
 
     if (equipment.company_name || equipment.site_description) {
@@ -463,10 +496,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       .filter((l) => l.length > 0) // без пустых строк
       .join('\n'); // один \n между строками
   };
-
-  // ==== ЗАГРУЗКА ОКВЭД по оборудованию ====
-  const [okvedList, setOkvedList] = useState<OkvedByEquipment[]>([]);
-  const [okvedLoading, setOkvedLoading] = useState(false);
 
   useEffect(() => {
     const id = equipment?.id;
