@@ -342,10 +342,11 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       );
     };
 
+    // >>> УЖАТЫЙ список ОКВЭД в модальном тексте
     const OkvedBlock = () => {
       if (!Array.isArray(okvedList) || okvedList.length === 0) return null;
       return (
-        <div className="space-y-1 text-[13px] leading-6">
+        <div className="space-y-0.5 text-[11px] leading-4">
           <div className="font-bold">Примеры основных ОКВЭД в исследуемой отрасли</div>
           <ul className="list-disc pl-4 space-y-0.5">
             {okvedList.map((row) => (
@@ -485,16 +486,16 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       if (equipment.site_description?.trim()) lines.push(equipment.site_description.trim());
     }
 
-    // Финальная чистка: убираем пустые строки, множественные пробелы и тримим
+    // Финальная чистка
     return lines
       .map((l) =>
         l
           .replace(/\u00A0/g, ' ')
           .replace(/[ \t]+/g, ' ')
           .trim(),
-      ) // одинарные пробелы
-      .filter((l) => l.length > 0) // без пустых строк
-      .join('\n'); // один \n между строками
+      )
+      .filter((l) => l.length > 0)
+      .join('\n');
   };
 
   useEffect(() => {
@@ -740,25 +741,25 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
           <Sep />
 
-          {/* ==== НОВЫЙ РАЗДЕЛ: Примеры основных ОКВЭД ==== */}
+          {/* ==== ОКВЭД: компактная таблица ==== */}
           <div className="space-y-1.5">
             <div className="text-sm font-semibold">
               Примеры основных ОКВЭД в исследуемой отрасли
             </div>
 
             <div className="rounded-md border overflow-hidden">
-              <table className="w-full text-xs">
+              <table className="w-full text-[11px] leading-4">
                 <thead className="bg-muted/50">
                   <tr className="text-left">
-                    <th className="w-[40px] px-1 py-1"></th>
-                    <th className="px-1 py-1 w-[70px]">Код</th>
-                    <th className="px-1 py-1">Наименование</th>
+                    <th className="px-1 py-0.5 w-[30px] "></th>
+                    <th className="px-1 py-0.5 w-[40px]">Код</th>
+                    <th className="px-1 py-0.5">Наименование</th>
                   </tr>
                 </thead>
                 <tbody>
                   {okvedLoading && (
                     <tr>
-                      <td colSpan={3} className="px-2 py-4 text-center text-muted-foreground">
+                      <td colSpan={3} className="px-2 py-3 text-center text-muted-foreground">
                         Загрузка…
                       </td>
                     </tr>
@@ -766,7 +767,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
                   {!okvedLoading && okvedList.length === 0 && (
                     <tr>
-                      <td colSpan={3} className="px-2 py-4 text-center text-muted-foreground">
+                      <td colSpan={3} className="px-2 py-3 text-center text-muted-foreground">
                         Нет данных
                       </td>
                     </tr>
@@ -774,12 +775,13 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
                   {!okvedLoading &&
                     okvedList.map((row) => (
-                      <tr key={row.id} className="border-t hover:bg-muted/40 leading-5">
-                        <td className="px-0.5 py-0.5">
+                      <tr key={row.id} className="border-t hover:bg-muted/40 leading-4">
+                        <td className="px-0.5 py-0">
                           {/* Переход на вкладку ОКВЭД с выбранным кодом */}
                           <Button
                             size="icon"
                             variant="ghost"
+                            className="h-7 w-7"
                             title="Открыть вкладку ОКВЭД"
                             onClick={() =>
                               window.open(
@@ -790,10 +792,10 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                             <ArrowUpRight className="h-3.5 w-3.5" />
                           </Button>
                         </td>
-                        <td className="px-1 py-1 font-medium whitespace-nowrap">
+                        <td className="px-1 py-0.5 font-medium whitespace-nowrap">
                           {row.okved_code}
                         </td>
-                        <td className="px-1 py-1">{row.okved_main}</td>
+                        <td className="px-1 py-0.5">{row.okved_main}</td>
                       </tr>
                     ))}
                 </tbody>
