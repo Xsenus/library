@@ -334,9 +334,15 @@ export default function OkvedTab() {
                           <Button
                             size="icon"
                             variant="ghost"
-                            title="Открыть карточку компании"
+                            title="Открыть карточку компании в Bitrix24"
                             onClick={() =>
-                              window.open(`/company?inn=${encodeURIComponent(c.inn)}`, '_blank')
+                              window.open(
+                                `/api/b24/resolve-company?inn=${encodeURIComponent(
+                                  c.inn,
+                                )}&mode=pick`,
+                                '_blank',
+                                'noopener',
+                              )
                             }>
                             <ArrowUpRight className="h-4 w-4" />
                           </Button>
