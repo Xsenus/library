@@ -1,11 +1,35 @@
 // app/api/okved/companies/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
+import { db } from '@/lib/db';
 import { okvedCompaniesQuerySchema, okvedCompanySchema } from '@/lib/validators';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const runtime = 'nodejs';
+
+// простой in-memory кэш корней по industryId
+const rootsCache = new Map<number, { roots: string[]; ts: number }>();
+const ROOTS_TTL_MS = 10 * 60 * 1000;
+
+async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
+  const now = Date.now();
+  const hit = rootsCache.get(industryId);
+  if (hit && now - hit.ts < ROOTS_TTL_MS) return hit.roots;
+
+  // тянем из второй БД (db): ib_okved_main
+  const { rows } = await db.query<{ root: string }>(
+    `
+      SELECT DISTINCT split_part(m.okved_code, '.', 1) AS root
+      FROM ib_okved_main m
+      WHERE m.industry_id = $1
+    `,
+    [industryId],
+  );
+  const roots = rows.map((r) => r.root).filter(Boolean);
+  rootsCache.set(industryId, { roots, ts: now });
+  return roots;
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -25,7 +49,7 @@ export async function GET(request: NextRequest) {
     const includeExtra = (searchParams.get('extra') ?? '0') === '1';
 
     const industryIdRaw = searchParams.get('industryId');
-    const industryId = industryIdRaw ? Number(industryIdRaw) : null;
+    const industryId = industryIdRaw && /^\d+$/.test(industryIdRaw) ? Number(industryIdRaw) : null;
 
     const offset = (base.page - 1) * base.pageSize;
 
@@ -33,13 +57,21 @@ export async function GET(request: NextRequest) {
     const args: any[] = [];
     let i = 1;
 
+    // Фильтр по ОКВЭД
     if (base.okved) {
       if (includeExtra) {
+        // main_okved ИЛИ в JSONB-списке дополнительных
         where.push(
           `(d.main_okved = $${i} OR EXISTS (
              SELECT 1
-             FROM dadata_okveds x
-             WHERE x.inn = d.inn AND x.okved = $${i}
+             FROM jsonb_array_elements(d.okveds) AS elem(val)
+             WHERE
+               (jsonb_typeof(elem.val) = 'string' AND elem.val::text = to_jsonb($${i})::text)
+               OR (jsonb_typeof(elem.val) = 'object' AND (
+                   elem.val->>'okved' = $${i} OR
+                   elem.val->>'code' = $${i} OR
+                   elem.val->>'okved_code' = $${i}
+               ))
            ))`,
         );
       } else {
@@ -49,18 +81,21 @@ export async function GET(request: NextRequest) {
       i++;
     }
 
-    if (industryId && Number.isFinite(industryId)) {
-      where.push(`
-        split_part(d.main_okved, '.', 1) IN (
-          SELECT DISTINCT split_part(m.okved_code, '.', 1)
-          FROM ib_okved_main m
-          WHERE m.industry_id = $${i}
-        )
-      `);
-      args.push(industryId);
-      i++;
+    // Фильтр по индустрии — тянем корни из ДРУГОЙ БД и фильтруем по ним в dadata_result
+    if (industryId != null) {
+      const roots = await getOkvedRootsForIndustry(industryId); // ['28','10','33',...]
+      if (roots.length > 0) {
+        // используем ANY($::text[]) — один параметр-массив вместо сотни плейсхолдеров
+        where.push(`split_part(d.main_okved, '.', 1) = ANY($${i}::text[])`);
+        args.push(roots);
+        i++;
+      } else {
+        // если по индустрии нет корней — заведомо пусто
+        return NextResponse.json({ items: [], total: 0, page: base.page, pageSize: base.pageSize });
+      }
     }
 
+    // Поиск по названию
     if (q) {
       where.push(`d.short_name ILIKE $${i}`);
       args.push(`%${q}%`);
@@ -89,7 +124,7 @@ export async function GET(request: NextRequest) {
     `;
 
     const countRes = await dbBitrix.query(countSql, args);
-    const total = countRes.rows[0]?.cnt ?? 0;
+    const total = countRes.rows?.[0]?.cnt ?? 0;
 
     const dataRes = await dbBitrix.query(dataSql, [...args, offset, base.pageSize]);
     const items = dataRes.rows.map((r: any) => okvedCompanySchema.parse(r));

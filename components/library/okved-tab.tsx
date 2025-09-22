@@ -8,15 +8,26 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ArrowUpRight, X } from 'lucide-react';
 
+// Типы
 type OkvedMain = ReturnType<typeof okvedMainSchema.parse>;
 type SortKey = 'revenue_desc' | 'revenue_asc';
+
+// Совпадает с Industry из валидаторов (id, industry)
 type IndustryItem = { id: number; industry: string };
 
+// Константы
 const MIN_SIDEBAR = 480;
 const MAX_SIDEBAR = 1200;
 const MIN_RIGHT = 420;
 const DEFAULT_SIDEBAR = 640;
 const LS_KEY = 'okved:sidebarWidth';
+
+// Общий ответ со списком
+type ListResponse<T> = {
+  items: T[];
+  page: number;
+  totalPages: number;
+};
 
 export default function OkvedTab() {
   const sp = useSearchParams();
@@ -24,7 +35,7 @@ export default function OkvedTab() {
 
   // --- initial from URL
   const initialOkved = (sp.get('okved') ?? '').trim();
-  const initialIndustryId = sp.get('industryId') ?? 'all';
+  const initialIndustryIdRaw = sp.get('industryId') ?? 'all';
   const initialQ = sp.get('q') ?? '';
   const initialSort = ((sp.get('sort') as SortKey) ?? 'revenue_desc') as SortKey;
   const initialExtra = (sp.get('extra') ?? '0') === '1';
@@ -39,10 +50,19 @@ export default function OkvedTab() {
   const [loading, setLoading] = useState(false);
   const pageSize = 50;
 
-  // индустрии (человеческие названия)
+  // индустрии
   const [industryList, setIndustryList] = useState<IndustryItem[]>([]);
-  const [csOkvedEnabled, setCsOkvedEnabled] = useState<boolean>(!!sp.get('industryId'));
-  const [industryId, setIndustryId] = useState<string>(initialIndustryId); // 'all' | id
+  const [industriesLoading, setIndustriesLoading] = useState<boolean>(true);
+
+  // включаем «Отрасли» только если в URL пришёл числовой id, а не 'all'
+  const initialIndustryIsNumber =
+    initialIndustryIdRaw !== 'all' && /^\d+$/.test(initialIndustryIdRaw);
+  const [csOkvedEnabled, setCsOkvedEnabled] = useState<boolean>(initialIndustryIsNumber);
+
+  const [industryId, setIndustryId] = useState<string>(
+    initialIndustryIsNumber ? initialIndustryIdRaw : 'all',
+  ); // 'all' | id
+
   const [includeExtra, setIncludeExtra] = useState<boolean>(initialExtra);
 
   // поиск/сортировка
@@ -96,24 +116,59 @@ export default function OkvedTab() {
     return () => ac.abort();
   }, []);
 
-  // industries list
+  // industries list — загружаем ВСЕ страницы
   useEffect(() => {
     const ac = new AbortController();
-    (async () => {
+
+    async function loadAllIndustries() {
       try {
-        const url = new URL('/api/industries', window.location.origin);
-        url.searchParams.set('page', '1');
-        url.searchParams.set('pageSize', '500');
-        const res = await fetch(url.toString(), { cache: 'no-store', signal: ac.signal });
-        if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const j = await res.json();
-        setIndustryList(Array.isArray(j?.items) ? j.items : []);
+        setIndustriesLoading(true);
+        const collected: IndustryItem[] = [];
+        let page = 1;
+        let totalPages = 1;
+
+        do {
+          const params = new URLSearchParams({
+            page: String(page),
+            pageSize: '50', // небольшими порциями, чтобы UI не замирал
+            ts: String(Date.now()), // на всякий
+          });
+          const res = await fetch(`/api/industries?${params}`, {
+            cache: 'no-store',
+            signal: ac.signal,
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const j: Partial<ListResponse<IndustryItem>> = await res.json();
+
+          const items = Array.isArray(j?.items) ? j!.items! : [];
+          collected.push(...items);
+
+          const p = typeof j?.page === 'number' ? j!.page! : page;
+          const tp = typeof j?.totalPages === 'number' ? j!.totalPages! : 1;
+
+          page = p + 1;
+          totalPages = tp;
+        } while (page <= totalPages && !ac.signal.aborted);
+
+        // Убираем дубликаты (на всякий), сортируем по названию
+        const unique = dedupeById(collected).sort((a, b) =>
+          a.industry.localeCompare(b.industry, 'ru'),
+        );
+
+        if (!ac.signal.aborted) {
+          setIndustryList(unique);
+        }
       } catch (err: any) {
-        if (err?.name === 'AbortError') return;
-        console.error('Failed to load industries:', err);
-        setIndustryList([]);
+        if (err?.name !== 'AbortError') {
+          console.error('Failed to load industries:', err);
+          setIndustryList([]);
+        }
+      } finally {
+        if (!ac.signal.aborted) setIndustriesLoading(false);
       }
-    })();
+    }
+
+    loadAllIndustries();
     return () => ac.abort();
   }, []);
 
@@ -132,7 +187,6 @@ export default function OkvedTab() {
     url.searchParams.set('sort', sortKey);
     url.searchParams.set('extra', includeExtra ? '1' : '0');
     if (csOkvedEnabled && industryId !== 'all') {
-      // сервер понимает industryId (id из ib_industry)
       url.searchParams.set('industryId', industryId);
     }
 
@@ -155,7 +209,7 @@ export default function OkvedTab() {
       }
     })();
 
-    // sync URL (только после старта запроса; самого запроса ждать не нужно)
+    // sync URL (после старта запроса)
     const qs = new URLSearchParams(Array.from(sp.entries()));
     qs.set('tab', 'okved');
     if (okved) qs.set('okved', okved);
@@ -180,7 +234,6 @@ export default function OkvedTab() {
   useEffect(() => {
     const abortFn = loadCompanies();
     return () => {
-      // если loadCompanies вернул функцию abort — вызываем
       if (typeof abortFn === 'function') abortFn();
     };
   }, [loadCompanies]);
@@ -263,6 +316,7 @@ export default function OkvedTab() {
     setPage(1);
   }, [okved, searchName, includeExtra, sortKey, csOkvedEnabled, industryId]);
 
+  // ========================= RENDER =========================
   return (
     <div ref={layoutRef} className="flex flex-col lg:flex-row gap-1">
       {/* Левая панель */}
@@ -306,13 +360,24 @@ export default function OkvedTab() {
                 disabled={!csOkvedEnabled}
                 value={industryId}
                 onChange={(e) => setIndustryId(e.target.value)}
-                className="h-9 w-[280px] max-w-[280px] truncate border rounded-md px-2 text-sm">
+                className="h-9 w-[280px] max-w-[280px] truncate border rounded-md px-2 text-sm"
+                title={
+                  industryId !== 'all'
+                    ? industryList.find((i) => String(i.id) === industryId)?.industry
+                    : '— Все отрасли —'
+                }>
                 <option value="all">— Все отрасли —</option>
-                {industryList.map((it) => (
-                  <option key={it.id} value={String(it.id)}>
-                    {it.industry}
+                {industriesLoading && (
+                  <option value="" disabled>
+                    (загрузка…)
                   </option>
-                ))}
+                )}
+                {!industriesLoading &&
+                  industryList.map((it) => (
+                    <option key={it.id} value={String(it.id)}>
+                      {it.industry}
+                    </option>
+                  ))}
               </select>
             </div>
 
@@ -554,4 +619,15 @@ function getPointerX(e: MouseEvent | TouchEvent): number | null {
   if (e instanceof MouseEvent) return e.clientX;
   const t = e.touches[0] ?? e.changedTouches[0];
   return t ? t.clientX : null;
+}
+function dedupeById<T extends { id: number }>(arr: T[]): T[] {
+  const seen = new Set<number>();
+  const out: T[] = [];
+  for (const it of arr) {
+    if (!seen.has(it.id)) {
+      seen.add(it.id);
+      out.push(it);
+    }
+  }
+  return out;
 }
