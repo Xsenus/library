@@ -345,7 +345,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     const OkvedBlock = () => {
       if (!Array.isArray(okvedList) || okvedList.length === 0) return null;
       return (
-        <div className="space-y-1">
+        <div className="space-y-1 text-[13px] leading-6">
           <div className="font-bold">Примеры основных ОКВЭД в исследуемой отрасли</div>
           <ul className="list-disc pl-4 space-y-0.5">
             {okvedList.map((row) => (
@@ -747,7 +747,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
             </div>
 
             <div className="rounded-md border overflow-hidden">
-              <table className="w-full text-sm">
+              <table className="w-full text-xs">
                 <thead className="bg-muted/50">
                   <tr className="text-left">
                     <th className="w-[40px] px-1 py-1"></th>
@@ -774,7 +774,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
                   {!okvedLoading &&
                     okvedList.map((row) => (
-                      <tr key={row.id} className="border-t hover:bg-muted/40">
+                      <tr key={row.id} className="border-t hover:bg-muted/40 leading-5">
                         <td className="px-0.5 py-0.5">
                           {/* Переход на вкладку ОКВЭД с выбранным кодом */}
                           <Button
@@ -787,13 +787,13 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                                 '_blank',
                               )
                             }>
-                            <ArrowUpRight className="h-4 w-4" />
+                            <ArrowUpRight className="h-3.5 w-3.5" />
                           </Button>
                         </td>
-                        <td className="px-2 py-1 font-medium whitespace-nowrap">
+                        <td className="px-1 py-1 font-medium whitespace-nowrap">
                           {row.okved_code}
                         </td>
-                        <td className="px-2 py-1">{row.okved_main}</td>
+                        <td className="px-1 py-1">{row.okved_main}</td>
                       </tr>
                     ))}
                 </tbody>
