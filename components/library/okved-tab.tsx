@@ -46,15 +46,9 @@ export default function OkvedTab() {
   const [industryList, setIndustryList] = useState<IndustryItem[]>([]);
   const [industriesLoading, setIndustriesLoading] = useState<boolean>(true);
 
-  const initialIndustryIsNumber =
-    initialIndustryIdRaw !== 'all' && /^\d+$/.test(initialIndustryIdRaw);
-  const [csOkvedEnabled, setCsOkvedEnabled] = useState<boolean>(initialIndustryIsNumber);
-
-  const [industryId, setIndustryId] = useState<string>(
-    initialIndustryIsNumber ? initialIndustryIdRaw : 'all',
-  );
-
-  const [includeExtra, setIncludeExtra] = useState<boolean>(initialExtra);
+  const [csOkvedEnabled, setCsOkvedEnabled] = useState<boolean>(false);
+  const [industryId, setIndustryId] = useState<string>('all');
+  const [includeExtra, setIncludeExtra] = useState<boolean>(false);
 
   const [searchName, setSearchName] = useState<string>(initialQ);
   const [sortKey, setSortKey] = useState<SortKey>(initialSort);
