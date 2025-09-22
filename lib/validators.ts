@@ -178,3 +178,28 @@ export const cleanScoreQuerySchema = z
     message: 'maxScore must be greater than or equal to minScore',
     path: ['maxScore'],
   });
+
+  // OKVED (main list)
+export const okvedMainSchema = z.object({
+  id: z.coerce.number(),
+  okved_code: z.string(),
+  okved_main: z.string(),
+});
+export type OkvedMain = z.infer<typeof okvedMainSchema>;
+
+// Companies by OKVED (from bitrix_data.dadata_result)
+export const okvedCompanySchema = z.object({
+  inn: z.string(),
+  short_name: z.string(),
+  address: z.string().nullable(),
+  branch_count: z.coerce.number().nullable(),
+  year: z.coerce.number().nullable(),
+  revenue: z.coerce.number().nullable(), // RUB
+});
+export type OkvedCompany = z.infer<typeof okvedCompanySchema>;
+
+// Query for okved companies
+export const okvedCompaniesQuerySchema = paginationSchema.extend({
+  okved: z.string().min(1),
+});
+export type OkvedCompaniesQuery = z.infer<typeof okvedCompaniesQuerySchema>;

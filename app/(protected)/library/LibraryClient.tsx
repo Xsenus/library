@@ -26,6 +26,7 @@ import {
 import { Home, ArrowUpRight } from 'lucide-react';
 import { useDailyQuota } from '@/app/hooks/use-daily-quota';
 import { cn } from '@/lib/utils';
+import OkvedTab from '@/components/library/okved-tab';
 
 interface ListState<T> {
   items: T[];
@@ -43,10 +44,10 @@ type CleanScoreRowEx = CleanScoreRow & {
 export default function LibraryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  const initialTab = (searchParams.get('tab') ?? 'library') as 'library' | 'cleanscore';
+  const initialTab = (searchParams.get('tab') ?? 'library') as 'library' | 'cleanscore' | 'okved';
 
   // Табы
-  const [tab, setTab] = useState<'library' | 'cleanscore'>(initialTab);
+  const [tab, setTab] = useState<'library' | 'cleanscore' | 'okved'>(initialTab);
 
   // ======= auth/user flags =======
   const [isWorker, setIsWorker] = useState<boolean>(false);
@@ -841,8 +842,7 @@ export default function LibraryPage() {
                 </TabsTrigger>
 
                 <TabsTrigger
-                  value="search"
-                  disabled
+                  value="okved"
                   className="
                     h-10 w-full justify-center rounded-md px-4 text-sm
                     border border-transparent
@@ -850,7 +850,7 @@ export default function LibraryPage() {
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
                     shadow-none transition
                   ">
-                  AI-поиск
+                  ОКВЭД
                 </TabsTrigger>
               </TabsList>
             </div>
@@ -1262,6 +1262,12 @@ export default function LibraryPage() {
                 </div>
               </TabsContent>
             )}
+
+            <TabsContent value="okved" className="mt-0">
+              <div className="py-4">
+                <OkvedTab />
+              </div>
+            </TabsContent>
           </Tabs>
         </div>
       </div>
