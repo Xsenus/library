@@ -153,25 +153,38 @@ export default function OkvedTab() {
     return Math.round(x / 1_000_000).toLocaleString('ru-RU');
   }
 
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === 'Escape' && !isAll) {
+        setOkved('');
+        setPage(1);
+      }
+    }
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isAll]);
+
   return (
     <div ref={layoutRef} className="flex flex-col lg:flex-row gap-1">
       {/* Левая панель — фиксируем ширину только на lg+ */}
       <div className="lg:shrink-0" style={isLg() ? { width: sidebarWidth } : {}}>
         <Card>
-          <CardHeader className="flex flex-row items-center justify-between">
+          <CardHeader className="grid grid-cols-[1fr,auto] items-center gap-2">
             <CardTitle>ОКВЭД</CardTitle>
-            {!isAll && (
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={() => {
-                  setOkved('');
-                  setPage(1);
-                }}
-                title="Сбросить фильтр">
-                <X className="h-4 w-4 mr-1" /> Сбросить
-              </Button>
-            )}
+
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => {
+                setOkved('');
+                setPage(1);
+              }}
+              title={isAll ? 'Нет активного фильтра' : 'Сбросить фильтр'}
+              className={isAll ? 'opacity-0 pointer-events-none' : 'opacity-100'}
+              aria-disabled={isAll}
+              tabIndex={isAll ? -1 : 0}>
+              <X className="h-5 w-5" />
+            </Button>
           </CardHeader>
 
           <CardContent className="space-y-2">
