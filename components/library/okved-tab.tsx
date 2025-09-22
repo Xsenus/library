@@ -35,16 +35,6 @@ export default function OkvedTab() {
   const initialExtra = (sp.get('extra') ?? '0') === '1';
   const initialPage = Number(sp.get('page')) || 1;
 
-  // флаг блокировки по ссылке
-  const lockParam = (sp.get('lock') ?? '') === '1';
-  const [controlsLocked, setControlsLocked] = useState(false);
-
-  useEffect(() => {
-    const fromOpener = typeof window !== 'undefined' && !!window.opener;
-    setControlsLocked(lockParam || fromOpener);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
   const [okveds, setOkveds] = useState<OkvedMain[]>([]);
   const [okved, setOkved] = useState<string>(initialOkved);
   const [companies, setCompanies] = useState<OkvedCompany[]>([]);
@@ -218,16 +208,11 @@ export default function OkvedTab() {
     else qs.delete('industryId');
 
     qs.set('page', String(page));
-
-    // сохраняем lock=1, если включён
-    if (controlsLocked || lockParam) qs.set('lock', '1');
-    else qs.delete('lock');
-
     router.replace(`/library?${qs.toString()}`);
 
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [okved, page, searchName, includeExtra, sortKey, csOkvedEnabled, industryId, controlsLocked]);
+  }, [okved, page, searchName, includeExtra, sortKey, csOkvedEnabled, industryId]);
 
   useEffect(() => {
     const abortFn = loadCompanies();
@@ -349,9 +334,7 @@ export default function OkvedTab() {
                   type="checkbox"
                   className="h-3.5 w-3.5"
                   checked={csOkvedEnabled}
-                  disabled={controlsLocked}
                   onChange={(e) => {
-                    if (controlsLocked) return;
                     const checked = e.target.checked;
                     setCsOkvedEnabled(checked);
                     if (!checked) {
@@ -364,10 +347,9 @@ export default function OkvedTab() {
               </label>
 
               <select
-                disabled={!csOkvedEnabled || controlsLocked}
+                disabled={!csOkvedEnabled}
                 value={industryId}
                 onChange={(e) => {
-                  if (controlsLocked) return;
                   setIndustryId(e.target.value);
                   setPage(1);
                 }}
@@ -398,11 +380,7 @@ export default function OkvedTab() {
                 type="checkbox"
                 className="h-3.5 w-3.5"
                 checked={includeExtra}
-                disabled={controlsLocked}
-                onChange={(e) => {
-                  if (controlsLocked) return;
-                  setIncludeExtra(e.target.checked);
-                }}
+                onChange={(e) => setIncludeExtra(e.target.checked)}
               />
               Искать в дополнительных ОКВЭД
             </label>
@@ -440,7 +418,7 @@ export default function OkvedTab() {
                   title="Открыть все компании в новой вкладке"
                   onClick={(e) => {
                     e.stopPropagation();
-                    window.open(`/library?tab=okved&lock=1`, '_blank');
+                    window.open(`/library?tab=okved`, '_blank');
                   }}>
                   <ArrowUpRight className="h-4 w-4" />
                 </Button>
@@ -474,7 +452,7 @@ export default function OkvedTab() {
                         e.stopPropagation();
                         const url = `/library?tab=okved${
                           x.okved_code ? `&okved=${encodeURIComponent(x.okved_code)}` : ''
-                        }&lock=1`;
+                        }`;
                         window.open(url, '_blank');
                       }}>
                       <ArrowUpRight className="h-4 w-4" />

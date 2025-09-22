@@ -779,11 +779,8 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                             title="Открыть вкладку ОКВЭД"
                             onClick={() =>
                               window.open(
-                                `/library?tab=okved&okved=${encodeURIComponent(
-                                  row.okved_code,
-                                )}&lock=1`,
+                                `/library?tab=okved&okved=${encodeURIComponent(row.okved_code)}`,
                                 '_blank',
-                                'noopener',
                               )
                             }>
                             <ArrowUpRight className="h-3.5 w-3.5" />
