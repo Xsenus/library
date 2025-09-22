@@ -86,12 +86,20 @@ export default function OkvedTab() {
   useEffect(() => {
     const ac = new AbortController();
     const myId = ++okvedReqId.current;
+
     (async () => {
       try {
-        const res = await fetch('/api/okved/main', { cache: 'no-store', signal: ac.signal });
+        const url = new URL('/api/okved/main', window.location.origin);
+        if (csOkvedEnabled && industryId !== 'all') {
+          url.searchParams.set('industryId', industryId);
+        }
+
+        const res = await fetch(url.toString(), { cache: 'no-store', signal: ac.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
         const data = await res.json();
         if (myId !== okvedReqId.current) return;
+
         setOkveds(Array.isArray(data.items) ? data.items : []);
       } catch (e: any) {
         if (e?.name === 'AbortError') return;
@@ -100,8 +108,9 @@ export default function OkvedTab() {
         setOkveds([]);
       }
     })();
+
     return () => ac.abort();
-  }, []);
+  }, [csOkvedEnabled, industryId]);
 
   useEffect(() => {
     const ac = new AbortController();
