@@ -1113,12 +1113,7 @@ export default function LibraryPage() {
                           side="bottom"
                           align="start"
                           position="popper"
-                          className="
-                            w-[min(90vw,480px)]            /* ширина дропдауна */
-                            max-h-80                       /* общий предел высоты (20rem) */
-                            [&_[data-radix-select-viewport]]:max-h-80
-                            [&_[data-radix-select-viewport]]:overflow-y-auto
-                          ">
+                          className="force-select-scroll w-[min(90vw,480px)] max-h-80">
                           <SelectItem
                             value="all"
                             className="whitespace-normal break-words leading-5">
