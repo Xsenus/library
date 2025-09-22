@@ -146,22 +146,21 @@ export const cleanScoreRowSchema = z.object({
   equipment_name: z.string(),
   clean_score: z.coerce.number().nullable(),
   equipment_score_real: z.coerce.number().nullable().optional(),
-
   industry_id: z.coerce.number().nullable().optional(),
   industry: z.string().nullable().optional(),
-
   prodclass_id: z.coerce.number().nullable().optional(),
   prodclass: z.string().nullable().optional(),
-
   workshop_id: z.coerce.number().nullable().optional(),
   workshop_name: z.string().nullable().optional(),
-
   contamination: z.string().nullable().optional(),
   surface: z.string().nullable().optional(),
   problems: z.string().nullable().optional(),
   old_method: z.string().nullable().optional(),
   old_problem: z.string().nullable().optional(),
   benefit: z.string().nullable().optional(),
+  okved_id: z.number().nullable(),
+  okved_code: z.string().nullable(),
+  okved_main: z.string().nullable(),
 });
 export type CleanScoreRow = z.infer<typeof cleanScoreRowSchema>;
 
@@ -173,6 +172,8 @@ export const cleanScoreQuerySchema = z
     minScore: z.coerce.number().min(0.85).max(1.0).default(0.95),
     maxScore: z.coerce.number().min(0.85).max(1.0).default(1.0),
     industryId: z.coerce.number().int().positive().optional().nullable(),
+    okvedId: z.coerce.number().int().optional().nullable(),
+    okvedCode: z.string().trim().optional().nullable(),
   })
   .refine((v) => v.maxScore >= v.minScore, {
     message: 'maxScore must be greater than or equal to minScore',

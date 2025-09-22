@@ -10,6 +10,8 @@ export const runtime = 'nodejs';
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
+
+    // cleanScoreQuerySchema должен включать okvedId, okvedCode (оба optional)
     const parsed = cleanScoreQuerySchema.parse({
       page: searchParams.get('page'),
       pageSize: searchParams.get('pageSize'),
@@ -17,37 +19,76 @@ export async function GET(req: NextRequest) {
       minScore: searchParams.get('minScore'),
       maxScore: searchParams.get('maxScore'),
       industryId: searchParams.get('industryId'),
+      okvedId: searchParams.get('okvedId'),
+      okvedCode: searchParams.get('okvedCode'),
     });
 
-    const { page, pageSize, query, minScore, maxScore, industryId } = parsed;
+    const { page, pageSize, query, minScore, maxScore, industryId, okvedId, okvedCode } = parsed;
+
     const offset = (page - 1) * pageSize;
 
     const where = `
       (e.clean_score IS NOT NULL AND e.clean_score BETWEEN $1 AND $2)
-      AND ($3::int IS NULL OR i.id = $3)
+      AND ($3::int  IS NULL OR i.id = $3)
       AND (
-        $4::text IS NULL OR
-        e.equipment_name ILIKE '%'||$4||'%' OR
-        i.industry       ILIKE '%'||$4||'%' OR
-        p.prodclass      ILIKE '%'||$4||'%' OR
-        w.workshop_name  ILIKE '%'||$4||'%' OR
-        e.contamination  ILIKE '%'||$4||'%' OR
-        e.surface        ILIKE '%'||$4||'%' OR
-        e.problems       ILIKE '%'||$4||'%' OR
-        e.old_method     ILIKE '%'||$4||'%' OR
-        e.old_problem    ILIKE '%'||$4||'%' OR
-        e.benefit        ILIKE '%'||$4||'%'
+        $4::int IS NULL
+        OR EXISTS (
+            SELECT 1
+            FROM ib_okved_main om2
+            WHERE om2.id = $4
+              AND om2.industry_id = i.id
+        )
+      )
+      AND (
+        $5::text IS NULL
+        OR EXISTS (
+            SELECT 1
+            FROM ib_okved_main om3
+            WHERE om3.okved_code = $5
+              AND om3.industry_id = i.id
+        )
+      )
+      AND (
+        $6::text IS NULL OR
+        e.equipment_name ILIKE '%'||$6||'%' OR
+        i.industry       ILIKE '%'||$6||'%' OR
+        p.prodclass      ILIKE '%'||$6||'%' OR
+        w.workshop_name  ILIKE '%'||$6||'%' OR
+        e.contamination  ILIKE '%'||$6||'%' OR
+        e.surface        ILIKE '%'||$6||'%' OR
+        e.problems       ILIKE '%'||$6||'%' OR
+        e.old_method     ILIKE '%'||$6||'%' OR
+        e.old_problem    ILIKE '%'||$6||'%' OR
+        e.benefit        ILIKE '%'||$6||'%'
       )
     `;
 
-    const baseParams = [minScore, maxScore, industryId ?? null, query ?? null];
+    const baseParams = [
+      minScore, // $1
+      maxScore, // $2
+      industryId ?? null, // $3
+      okvedId ?? null, // $4
+      okvedCode ?? null, // $5
+      query ?? null, // $6
+    ];
+
+    const fromJoins = `
+      FROM ib_equipment e
+      LEFT JOIN ib_workshops w  ON w.id = e.workshop_id
+      LEFT JOIN ib_prodclass p  ON p.id = w.prodclass_id
+      LEFT JOIN ib_industry i   ON i.id = p.industry_id
+      LEFT JOIN LATERAL (
+        SELECT om.id, om.okved_code, om.okved_main
+        FROM ib_okved_main om
+        WHERE om.industry_id = i.id
+        ORDER BY om.okved_code
+        LIMIT 1
+      ) o ON TRUE
+    `;
 
     const countSql = `
       SELECT COUNT(*)::int AS count
-      FROM ib_equipment e
-      LEFT JOIN ib_workshops w ON w.id = e.workshop_id
-      LEFT JOIN ib_prodclass p ON p.id = w.prodclass_id
-      LEFT JOIN ib_industry i ON i.id = p.industry_id
+      ${fromJoins}
       WHERE ${where};
     `;
     const countRes = await db.query<{ count: number }>(countSql, baseParams);
@@ -71,20 +112,23 @@ export async function GET(req: NextRequest) {
         e.problems,
         e.old_method,
         e.old_problem,
-        e.benefit
-      FROM ib_equipment e
-      LEFT JOIN ib_workshops w ON w.id = e.workshop_id
-      LEFT JOIN ib_prodclass p ON p.id = w.prodclass_id
-      LEFT JOIN ib_industry i ON i.id = p.industry_id
+        e.benefit,
+
+        -- ОКВЭД из LATERAL-подзапроса (важно привести id к int)
+        o.id::int           AS okved_id,
+        o.okved_code,
+        o.okved_main
+      ${fromJoins}
       WHERE ${where}
       ORDER BY
         COALESCE(i.industry,'~'),
         COALESCE(p.prodclass,'~'),
         COALESCE(w.workshop_name,'~'),
         e.equipment_name
-      LIMIT $5 OFFSET $6;
+      LIMIT $7 OFFSET $8;
     `;
     const listRes = await db.query(listSql, [...baseParams, pageSize, offset]);
+
     const items = listRes.rows.map((r) => cleanScoreRowSchema.parse(r));
 
     return NextResponse.json({ items, page, pageSize, total, totalPages });

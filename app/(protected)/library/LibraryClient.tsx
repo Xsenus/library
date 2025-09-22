@@ -1,7 +1,8 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
+import Link from 'next/link';
 import Image from 'next/image';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import {
@@ -27,6 +28,13 @@ import { Home, ArrowUpRight } from 'lucide-react';
 import { useDailyQuota } from '@/app/hooks/use-daily-quota';
 import { cn } from '@/lib/utils';
 import OkvedTab from '@/components/library/okved-tab';
+import {
+  Select,
+  SelectTrigger,
+  SelectValue,
+  SelectContent,
+  SelectItem,
+} from '@/components/ui/select';
 
 interface ListState<T> {
   items: T[];
@@ -36,7 +44,6 @@ interface ListState<T> {
   searchQuery: string;
 }
 
-// расширяем тип строки таблицы мягко — поле с чекбоксом приходит как 0/1
 type CleanScoreRowEx = CleanScoreRow & {
   equipment_score_real?: number | null;
 };
@@ -46,18 +53,13 @@ export default function LibraryPage() {
   const searchParams = useSearchParams();
   const initialTab = (searchParams.get('tab') ?? 'library') as 'library' | 'cleanscore' | 'okved';
 
-  // Табы
   const [tab, setTab] = useState<'library' | 'cleanscore' | 'okved'>(initialTab);
 
   // ======= auth/user flags =======
   const [isWorker, setIsWorker] = useState<boolean>(false);
   const [isAdmin, setIsAdmin] = useState<boolean>(false);
 
-  const {
-    quota,
-    /* loading: quotaLoading, */ refetch: refetchQuota,
-    setRemaining,
-  } = useDailyQuota({ showLoading: false });
+  const { quota, refetch: refetchQuota, setRemaining } = useDailyQuota({ showLoading: false });
 
   const didInitQuota = useRef(false);
   useEffect(() => {
@@ -82,18 +84,22 @@ export default function LibraryPage() {
   }, []);
 
   useEffect(() => {
-    // первичная загрузка (на случай если сразу на таблицу пришли по deeplink)
     loadMe();
   }, [loadMe]);
 
   useEffect(() => {
-    // каждый раз при переходе на вкладку таблицы — обновляем флаг
-    if (tab === 'cleanscore') {
-      loadMe();
-    }
+    if (tab === 'cleanscore') loadMe();
   }, [tab, loadMe]);
 
-  // Logout state/handler
+  // держим таб в синхроне с URL (?tab=...)
+  useEffect(() => {
+    const t = (searchParams.get('tab') ?? 'library') as 'library' | 'cleenscore' | 'okved';
+    // опечатка в типе в строке выше специально не нужна; исправим на корректный разбор:
+    const tSafe = (searchParams.get('tab') ?? 'library') as 'library' | 'cleanscore' | 'okved';
+    setTab(tSafe === 'cleanscore' && !isWorker ? 'library' : tSafe);
+  }, [searchParams, isWorker]);
+
+  // Logout
   const [loggingOut, setLoggingOut] = useState(false);
   const handleLogout = useCallback(async () => {
     try {
@@ -107,7 +113,7 @@ export default function LibraryPage() {
     }
   }, [router]);
 
-  // Selection state (иерархия)
+  // Selection state
   const [selectedIndustry, setSelectedIndustry] = useState<Industry | null>(null);
   const [selectedProdclass, setSelectedProdclass] = useState<Prodclass | null>(null);
   const [selectedWorkshop, setSelectedWorkshop] = useState<Workshop | null>(null);
@@ -116,31 +122,27 @@ export default function LibraryPage() {
 
   const handleEsConfirmChange = useCallback((id: number, confirmed: boolean) => {
     const val = confirmed ? 1 : 0;
-    // 1) обновить элемент в списке
     setEquipmentState((prev) => ({
       ...prev,
       items: prev.items.map((it) => (it.id === id ? { ...it, equipment_score_real: val } : it)),
     }));
-    // 2) обновить выбранный элемент (для локального состояния)
     setSelectedEquipment((prev) =>
       prev && prev.id === id ? { ...prev, equipment_score_real: val } : prev,
     );
-    // 3) обновить деталь карточки
     setEquipmentDetail((prev) =>
       prev && prev.id === id ? { ...prev, equipment_score_real: val } : prev,
     );
-    // 4) обновить ту же запись в таблице (если загружена)
     setCsRows((prev) =>
       prev.map((r) => (r.equipment_id === id ? ({ ...r, equipment_score_real: val } as any) : r)),
     );
   }, []);
 
-  // Флаги автоподстановки «первого элемента» по каскаду
+  // Автовыбор
   const [autoSelectProdclass, setAutoSelectProdclass] = useState(false);
   const [autoSelectWorkshop, setAutoSelectWorkshop] = useState(false);
   const [autoSelectEquipment, setAutoSelectEquipment] = useState(false);
 
-  // List states
+  // Lists
   const [industriesState, setIndustriesState] = useState<ListState<Industry>>({
     items: [],
     loading: true,
@@ -173,7 +175,7 @@ export default function LibraryPage() {
     searchQuery: '',
   });
 
-  // CleanScore state (таблица)
+  // Table (CleanScore)
   const [csRows, setCsRows] = useState<CleanScoreRowEx[]>([]);
   const [csPage, setCsPage] = useState(1);
   const [csHasNext, setCsHasNext] = useState(true);
@@ -181,16 +183,15 @@ export default function LibraryPage() {
   const [csQuery, setCsQuery] = useState('');
   const csQueryDebounced = useDebounce(csQuery, 300);
 
-  // карта «сохраняем ли строку сейчас»
   const [rowSaving, setRowSaving] = useState<Record<number, boolean>>({});
 
-  // Debounced search queries (иерархия)
+  // Debounced search (hierarchy)
   const debouncedIndustrySearch = useDebounce(industriesState.searchQuery, 300);
   const debouncedProdclassSearch = useDebounce(prodclassesState.searchQuery, 300);
   const debouncedWorkshopSearch = useDebounce(workshopsState.searchQuery, 300);
   const debouncedEquipmentSearch = useDebounce(equipmentState.searchQuery, 300);
 
-  // Фильтры CleanScore
+  // CleanScore filters
   const [csIndustryEnabled, setCsIndustryEnabled] = useState(false);
   const [csIndustryId, setCsIndustryId] = useState<number | null>(null);
 
@@ -198,12 +199,24 @@ export default function LibraryPage() {
   const [csMaxScore, setCsMaxScore] = useState(1.0);
   const scoreOptions = Array.from({ length: 16 }, (_, i) => Number((0.85 + i * 0.01).toFixed(2)));
 
-  // ====== ширины: фиксируем первую, «Чек» и CS ======
-  const colW = {
-    card: 35, // первая колонка с кнопкой
-    check: 35, // «Чек» — узкий столбец с чекбоксом
-    cs: 35, // CS — фикс ширина
-  } as const;
+  // ===== ОКВЭД: состояние селекта/списка
+  const [csOkvedEnabled, setCsOkvedEnabled] = useState(false);
+  const [csOkvedId, setCsOkvedId] = useState<number | null>(null);
+  const [okvedOptions, setOkvedOptions] = useState<
+    Array<{ id: number; okved_code: string; okved_main: string }>
+  >([]);
+
+  // + перед return (рядом с остальными хелперами)
+  const selectedOkvedLabel =
+    csOkvedId != null
+      ? (() => {
+          const o = okvedOptions.find((x) => x.id === csOkvedId);
+          return o ? `${o.okved_code} — ${o.okved_main}` : '— Все ОКВЭД —';
+        })()
+      : '— Все ОКВЭД —';
+
+  // ====== фикс ширины столбцов в таблице
+  const colW = { card: 35, check: 35, cs: 35 } as const;
 
   // ========================= API LOADERS =========================
   const fetchIndustries = useCallback(
@@ -366,7 +379,23 @@ export default function LibraryPage() {
     [isWorker, refetchQuota, setRemaining],
   );
 
-  // CleanScore loader (с фильтрами)
+  const loadOkvedOptions = useCallback(async () => {
+    const params = new URLSearchParams();
+    if (csIndustryEnabled && csIndustryId) params.set('industryId', String(csIndustryId));
+    const r = await fetch(`/api/okved?${params.toString()}`, { cache: 'no-store' });
+    const j = await r.json();
+    setOkvedOptions(Array.isArray(j.items) ? j.items : []);
+  }, [csIndustryEnabled, csIndustryId]);
+
+  useEffect(() => {
+    loadOkvedOptions();
+  }, [loadOkvedOptions]);
+
+  useEffect(() => {
+    loadOkvedOptions();
+    setCsOkvedId(null);
+  }, [csIndustryEnabled, csIndustryId, loadOkvedOptions]);
+
   const fetchCleanScore = useCallback(
     async (page: number, query: string, append = false) => {
       try {
@@ -379,27 +408,27 @@ export default function LibraryPage() {
           maxScore: csMaxScore.toFixed(2),
           ts: String(Date.now()),
         });
-        if (csIndustryEnabled && csIndustryId) {
-          params.set('industryId', String(csIndustryId));
-        }
+        if (csIndustryEnabled && csIndustryId) params.set('industryId', String(csIndustryId));
+        if (csOkvedEnabled && csOkvedId) params.set('okvedId', String(csOkvedId));
 
-        const res = await fetch(`/api/cleanscore?${params}`, {
-          cache: 'no-store',
-        });
-        const data: ListResponse<CleanScoreRowEx> = await res.json();
+        const res = await fetch(`/api/cleanscore?${params}`, { cache: 'no-store' });
+        const data: Partial<ListResponse<CleanScoreRowEx>> = await res.json();
 
-        setCsRows((prev) =>
-          append ? [...prev, ...data.items] : (data.items as CleanScoreRowEx[]),
-        );
-        setCsHasNext(page < data.totalPages);
+        const items: CleanScoreRowEx[] = Array.isArray(data?.items) ? data!.items! : [];
+        const totalPages = typeof data?.totalPages === 'number' ? data!.totalPages! : 1;
+
+        setCsRows((prev) => (append ? [...prev, ...items] : items));
+        setCsHasNext(page < totalPages);
         setCsPage(page);
       } catch (e) {
         console.error('Failed to fetch cleanscore:', e);
+        if (!append) setCsRows([]);
+        setCsHasNext(false);
       } finally {
         setCsLoading(false);
       }
     },
-    [csIndustryEnabled, csIndustryId, csMinScore, csMaxScore],
+    [csIndustryEnabled, csIndustryId, csOkvedEnabled, csOkvedId, csMinScore, csMaxScore],
   );
 
   // ========================= EFFECTS =========================
@@ -444,20 +473,28 @@ export default function LibraryPage() {
     csQueryDebounced,
     csIndustryEnabled,
     csIndustryId,
+    csOkvedEnabled,
+    csOkvedId,
     csMinScore,
     csMaxScore,
     fetchCleanScore,
   ]);
 
-  // Поддержка deep-link
+  useEffect(() => {
+    if (tab === 'cleanscore' && isWorker) {
+      setCsPage(1);
+      fetchCleanScore(1, csQueryDebounced);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [csOkvedEnabled, csOkvedId]);
+
+  // Deep link
   useEffect(() => {
     const iid = Number(searchParams.get('industryId') ?? '');
     const pid = Number(searchParams.get('prodclassId') ?? '');
     const wid = Number(searchParams.get('workshopId') ?? '');
     const eid = Number(searchParams.get('equipmentId') ?? '');
-    if (iid) {
-      setSelectedIndustry({ id: iid, industry: '(загрузка...)' } as Industry);
-    }
+    if (iid) setSelectedIndustry({ id: iid, industry: '(загрузка...)' } as Industry);
     if (pid) {
       setSelectedProdclass({
         id: pid,
@@ -522,7 +559,7 @@ export default function LibraryPage() {
     }
   }, [equipmentState.items, selectedEquipment]);
 
-  // ===== АВТОВЫБОР "первого элемента" ПО КАСКАДУ =====
+  // Автовыбор цепочки
   useEffect(() => {
     if (
       isWorker &&
@@ -531,8 +568,7 @@ export default function LibraryPage() {
       prodclassesState.items.length > 0
     ) {
       setAutoSelectProdclass(false);
-      const first = prodclassesState.items[0];
-      handleProdclassSelect(first);
+      handleProdclassSelect(prodclassesState.items[0]);
     }
   }, [autoSelectProdclass, prodclassesState.loading, prodclassesState.items]); // eslint-disable-line
 
@@ -544,8 +580,7 @@ export default function LibraryPage() {
       workshopsState.items.length > 0
     ) {
       setAutoSelectWorkshop(false);
-      const first = workshopsState.items[0] as Workshop;
-      handleWorkshopSelect(first);
+      handleWorkshopSelect(workshopsState.items[0] as Workshop);
     }
   }, [autoSelectWorkshop, workshopsState.loading, workshopsState.items]); // eslint-disable-line
 
@@ -557,8 +592,7 @@ export default function LibraryPage() {
       equipmentState.items.length > 0
     ) {
       setAutoSelectEquipment(false);
-      const first = equipmentState.items[0];
-      handleEquipmentSelect(first);
+      handleEquipmentSelect(equipmentState.items[0]);
     }
   }, [autoSelectEquipment, equipmentState.loading, equipmentState.items]); // eslint-disable-line
 
@@ -663,7 +697,7 @@ export default function LibraryPage() {
     setSelectedEquipment(equipment);
   };
 
-  // Load more handlers
+  // Пагинации и вспомогательные
   const LoadingCrumb = () => <div className="h-4 w-24 rounded bg-muted animate-pulse" />;
   const isLoadingText = (s?: string | null) => Boolean(s && s.startsWith('(загруз'));
 
@@ -709,13 +743,12 @@ export default function LibraryPage() {
     return `/library?${qp.toString()}`;
   };
 
-  // вычислим количество видимых колонок для colSpan
-  // было: const visibleColCount = isWorker ? 12 : 6;  // +1 за "Чек"
-  const visibleColCount = (isWorker ? 12 : 6) + 1;
+  // видимые колонки для colSpan
+  const visibleColCount = (isWorker ? 12 : 6) + 2;
 
   const SHOW_BREADCRUMBS = false;
 
-  // ========================= HANDЛЕР ЧЕКБОКСА В ТАБЛИЦЕ =========================
+  // чекбокс подтверждения
   const toggleRowConfirm = useCallback(
     async (row: CleanScoreRowEx) => {
       if (!isAdmin || !row?.equipment_id) return;
@@ -724,8 +757,6 @@ export default function LibraryPage() {
       const want = !current;
 
       setRowSaving((prev) => ({ ...prev, [id]: true }));
-
-      // Оптимистично обновляем везде (карточка, списки, таблица)
       handleEsConfirmChange(id, want);
 
       try {
@@ -741,11 +772,9 @@ export default function LibraryPage() {
         }
         const data = await r.json();
         const confirmedServer = !!Number(data?.equipment_score_real);
-        // На всякий: синхронизируемся с сервером, если вдруг отличилось
         handleEsConfirmChange(id, confirmedServer);
       } catch (e) {
         console.error('Failed to toggle ES confirm (table):', e);
-        // Откат оптимизма
         handleEsConfirmChange(id, current);
       } finally {
         setRowSaving((prev) => {
@@ -761,7 +790,7 @@ export default function LibraryPage() {
   // ========================= RENDER =========================
   return (
     <div className="h-screen flex flex-col">
-      {/* ===== ГЛАВНАЯ ШАПКА СВЕРХУ (над вкладками) ===== */}
+      {/* ===== HEADER ===== */}
       <div className="border-b bg-background">
         <div className="container mx-auto px-4">
           <div className="flex flex-wrap items-center justify-between gap-2 py-3 sm:py-4">
@@ -774,9 +803,7 @@ export default function LibraryPage() {
                 <div
                   className="inline-flex items-center rounded-full border px-2 py-0.5 text-xs leading-5"
                   title="Сколько карточек можно открыть сегодня">
-                  <strong className={quota.remaining === 0 ? 'text-red-600' : 'text-red-600'}>
-                    Остаток лимита: {quota.remaining}
-                  </strong>
+                  <strong className="text-red-600">Остаток лимита: {quota.remaining}</strong>
                 </div>
               )}
             </div>
@@ -802,7 +829,7 @@ export default function LibraryPage() {
         </div>
       </div>
 
-      {/* ===== ВКЛАДКИ И СОДЕРЖИМОЕ ===== */}
+      {/* ===== TABS ===== */}
       <div className="bg-background">
         <div className="container mx-auto px-4">
           <Tabs
@@ -810,6 +837,9 @@ export default function LibraryPage() {
             onValueChange={(v) => {
               if (v === 'cleanscore' && !isWorker) return;
               setTab(v as any);
+              const qp = new URLSearchParams(searchParams);
+              qp.set('tab', v);
+              router.replace(`/library?${qp.toString()}`);
             }}
             className="w-full">
             <div className="grid w-full grid-cols-3 gap-1 rounded-lg bg-muted p-1">
@@ -858,7 +888,6 @@ export default function LibraryPage() {
             {/* ===== LIBRARY TAB ===== */}
             <TabsContent value="library" className="mt-0">
               <div className="py-4 space-y-4">
-                {/* Breadcrumbs */}
                 {false && (
                   <Breadcrumb>
                     <BreadcrumbList>
@@ -877,9 +906,7 @@ export default function LibraryPage() {
                   </Breadcrumb>
                 )}
 
-                {/* Main Content */}
                 <div className="grid grid-cols-1 lg:grid-cols-[max-content_1fr] gap-4 h-[calc(100vh-200px)] bg-background">
-                  {/* === ОБЩАЯ РАМКА ДЛЯ 4 КОЛОНОК === */}
                   <div className="h-full">
                     <div className="flex h-full flex-col rounded-xl border shadow-sm bg-card overflow-hidden">
                       <div className="px-3 py-2 border-b bg-card text-sm font-semibold">
@@ -887,7 +914,6 @@ export default function LibraryPage() {
                       </div>
 
                       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-[160px_160px_160px_160px] gap-5 md:gap-3 lg:gap-1 p-2 h-full text-base md:text-sm bg-background">
-                        {/* Industries — всегда активен */}
                         <HierarchyList
                           title="Индустрия"
                           enabled={true}
@@ -904,7 +930,6 @@ export default function LibraryPage() {
                           getItemTitle={(item) => item.industry}
                         />
 
-                        {/* Prodclasses — активен после выбора индустрии */}
                         <HierarchyList
                           title="Класс предприятия"
                           enabled={!!selectedIndustry}
@@ -924,7 +949,6 @@ export default function LibraryPage() {
                           }
                         />
 
-                        {/* Workshops — активен после выбора класса */}
                         <HierarchyList
                           title="Цех предприятия"
                           enabled={!!selectedProdclass}
@@ -945,7 +969,6 @@ export default function LibraryPage() {
                           }
                         />
 
-                        {/* Equipment — активен после выбора цеха */}
                         <HierarchyList
                           title="Оборудование из цеха"
                           enabled={!!selectedWorkshop}
@@ -968,7 +991,6 @@ export default function LibraryPage() {
                     </div>
                   </div>
 
-                  {/* Details */}
                   <div className="h-full min-w-0">
                     {!isWorker && limitExceeded ? (
                       <div className="h-full flex items-center justify-center rounded-lg bg-background">
@@ -1006,16 +1028,16 @@ export default function LibraryPage() {
               </div>
             </TabsContent>
 
-            {/* ===== CLEAN SCORE TAB (Таблица) ===== */}
+            {/* ===== CLEAN SCORE TAB ===== */}
             {isWorker && (
               <TabsContent value="cleanscore" className="mt-0">
                 <div className="py-4 space-y-4">
-                  {/* Панель поиска + фильтры */}
-                  <div className="flex flex-col md:flex-row md:items-center gap-2 md:gap-3">
-                    {/* Поиск и Обновить */}
-                    <div className="flex items-center gap-2">
+                  {/* Панель фильтров (всегда в одну строку, со скроллом на узких) */}
+                  <div className="flex flex-nowrap items-center gap-2 md:gap-3 overflow-x-auto min-w-0">
+                    {/* Поиск + Обновить */}
+                    <div className="flex items-center gap-2 shrink-0">
                       <input
-                        className="w-[320px] rounded-md border px-3 py-1.5 text-sm"
+                        className="h-9 w-[320px] rounded-md border px-3 text-sm"
                         placeholder="Поиск (оборудование, отрасль, цех, текст...)"
                         value={csQuery}
                         onChange={(e) => {
@@ -1024,7 +1046,7 @@ export default function LibraryPage() {
                         }}
                       />
                       <button
-                        className="rounded-md border px-3 py-1.5 text-sm"
+                        className="h-9 rounded-md border px-3 text-sm"
                         onClick={() => fetchCleanScore(1, csQueryDebounced)}
                         disabled={!isWorker || csLoading}>
                         Обновить
@@ -1032,7 +1054,7 @@ export default function LibraryPage() {
                     </div>
 
                     {/* Фильтр отрасли */}
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 shrink-0">
                       <label className="inline-flex items-center gap-2 text-sm">
                         <input
                           type="checkbox"
@@ -1040,29 +1062,85 @@ export default function LibraryPage() {
                           checked={csIndustryEnabled}
                           onChange={(e) => setCsIndustryEnabled(e.target.checked)}
                         />
-                        Фильтр по отрасли
+                        Отрасли
                       </label>
-                      <select
-                        className="rounded-md border px-2 py-1.5 text-sm min-w-[220px]"
-                        disabled={!csIndustryEnabled}
-                        value={csIndustryId ?? ''}
-                        onChange={(e) =>
-                          setCsIndustryId(e.target.value ? Number(e.target.value) : null)
-                        }>
-                        <option value="">— Все отрасли —</option>
-                        {industriesState.items.map((i) => (
-                          <option key={i.id} value={i.id}>
-                            {i.industry}
-                          </option>
-                        ))}
-                      </select>
+                      <div className="max-w-[260px]">
+                        <select
+                          className="h-9 w-full rounded-md border px-2 text-sm overflow-hidden text-ellipsis whitespace-nowrap"
+                          disabled={!csIndustryEnabled}
+                          value={csIndustryId ?? ''}
+                          onChange={(e) =>
+                            setCsIndustryId(e.target.value ? Number(e.target.value) : null)
+                          }
+                          title={
+                            csIndustryEnabled
+                              ? industriesState.items.find((i) => i.id === csIndustryId)?.industry
+                              : '— Все отрасли —'
+                          }>
+                          <option value="">— Все отрасли —</option>
+                          {industriesState.items.map((i) => (
+                            <option key={i.id} value={i.id}>
+                              {i.industry}
+                            </option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Фильтр ОКВЭД */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <label className="inline-flex items-center gap-2 text-sm">
+                        <input
+                          type="checkbox"
+                          className="h-4 w-4"
+                          checked={csOkvedEnabled}
+                          onChange={(e) => setCsOkvedEnabled(e.target.checked)}
+                        />
+                        ОКВЭД
+                      </label>
+
+                      <Select
+                        disabled={!csOkvedEnabled}
+                        value={csOkvedId == null ? 'all' : String(csOkvedId)}
+                        onValueChange={(v) => setCsOkvedId(v === 'all' ? null : Number(v))}>
+                        <SelectTrigger
+                          title={selectedOkvedLabel}
+                          className="h-9 w-[360px] max-w-[360px] truncate">
+                          <SelectValue placeholder="— Все ОКВЭД —" />
+                        </SelectTrigger>
+
+                        <SelectContent
+                          side="bottom"
+                          align="start"
+                          position="popper"
+                          className="
+                            w-[min(90vw,480px)]            /* ширина дропдауна */
+                            max-h-80                       /* общий предел высоты (20rem) */
+                            [&_[data-radix-select-viewport]]:max-h-80
+                            [&_[data-radix-select-viewport]]:overflow-y-auto
+                          ">
+                          <SelectItem
+                            value="all"
+                            className="whitespace-normal break-words leading-5">
+                            — Все ОКВЭД —
+                          </SelectItem>
+                          {okvedOptions.map((o) => (
+                            <SelectItem
+                              key={o.id}
+                              value={String(o.id)}
+                              className="whitespace-normal break-words leading-5">
+                              {o.okved_code} — {o.okved_main}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     </div>
 
                     {/* Диапазон CS */}
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-muted-foreground">CS от</span>
+                    <div className="flex items-center gap-2 shrink-0">
+                      <span className="text-sm text-muted-foreground">CS</span>
                       <select
-                        className="rounded-md border px-2 py-1.5 text-sm"
+                        className="h-9 rounded-md border px-2 text-sm"
                         value={csMinScore.toFixed(2)}
                         onChange={(e) => {
                           const v = Number(e.target.value);
@@ -1075,9 +1153,9 @@ export default function LibraryPage() {
                           </option>
                         ))}
                       </select>
-                      <span className="text-sm text-muted-foreground">до</span>
+                      <span className="text-sm text-muted-foreground"></span>
                       <select
-                        className="rounded-md border px-2 py-1.5 text-sm"
+                        className="h-9 rounded-md border px-2 text-sm"
                         value={csMaxScore.toFixed(2)}
                         onChange={(e) => {
                           const v = Number(e.target.value);
@@ -1106,22 +1184,17 @@ export default function LibraryPage() {
                       ">
                         <tr>
                           <th style={{ width: colW.card }} className="text-center" />
-
-                          {/* новый узкий столбец «Чек» */}
                           <th
                             style={{ width: colW.check }}
                             className="w-[1%] text-center whitespace-nowrap">
                             Чек
                           </th>
-                          {/* «Нормальные» авто-ширины для этих четырёх */}
                           <th className="text-left">Отрасль</th>
+                          <th className="text-left whitespace-nowrap">Основной ОКВЭД</th>
                           <th className="text-left">Класс</th>
                           <th className="text-left">Цех</th>
                           <th className="text-left">Оборудование</th>
-                          {/* CS — фикс */}
                           <th style={{ width: colW.cs }}>CS</th>
-
-                          {/* 6 текстовых колонок — только для работников */}
                           {isWorker && (
                             <>
                               <th className="text-left">Загрязнения</th>
@@ -1140,7 +1213,7 @@ export default function LibraryPage() {
                         [&>tr>td]:px-2 [&>tr>td]:py-1.5 align-top
                         [&>tr]:border-b
                       ">
-                        {csRows.map((r) => {
+                        {(csRows ?? []).map((r) => {
                           const confirmed = !!Number(r.equipment_score_real || 0);
                           return (
                             <tr
@@ -1191,6 +1264,23 @@ export default function LibraryPage() {
                               <td className="whitespace-normal break-words leading-4">
                                 {r.industry}
                               </td>
+
+                              <td className="whitespace-normal break-words leading-4">
+                                {r.okved_code ? (
+                                  <a
+                                    href={`/library?tab=okved&okvedId=${encodeURIComponent(
+                                      String(r.okved_id ?? ''),
+                                    )}&okved=${encodeURIComponent(r.okved_code)}`}
+                                    className="text-blue-600 hover:underline"
+                                    title="Открыть вкладку ОКВЭД и выбрать этот код">
+                                    {r.okved_code}
+                                    {r.okved_main ? ` — ${r.okved_main}` : ''}
+                                  </a>
+                                ) : (
+                                  '—'
+                                )}
+                              </td>
+
                               <td className="whitespace-normal break-words leading-4">
                                 {r.prodclass}
                               </td>
@@ -1208,7 +1298,6 @@ export default function LibraryPage() {
                                 {r.clean_score != null ? r.clean_score.toFixed(2) : '—'}
                               </td>
 
-                              {/* 6 текстовых — только для работников */}
                               {isWorker && (
                                 <>
                                   <td className="whitespace-normal break-words leading-4">
@@ -1252,7 +1341,7 @@ export default function LibraryPage() {
                   <div className="flex justify-center">
                     {csHasNext && (
                       <button
-                        className="rounded-md border px-3 py-1.5 text-sm"
+                        className="h-9 rounded-md border px-3 text-sm"
                         onClick={() => fetchCleanScore(csPage + 1, csQueryDebounced, true)}
                         disabled={csLoading}>
                         Загрузить ещё
