@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { okvedMainSchema, type OkvedCompany } from '@/lib/validators';
 import { Button } from '@/components/ui/button';
@@ -9,6 +9,8 @@ import { Input } from '@/components/ui/input';
 import { ArrowUpRight, X } from 'lucide-react';
 
 type OkvedMain = ReturnType<typeof okvedMainSchema.parse>;
+type SortKey = 'revenue_desc' | 'revenue_asc';
+type IndustryItem = { id: number; industry: string };
 
 const MIN_SIDEBAR = 480;
 const MAX_SIDEBAR = 1200;
@@ -20,33 +22,48 @@ export default function OkvedTab() {
   const sp = useSearchParams();
   const router = useRouter();
 
+  // --- initial from URL
   const initialOkved = (sp.get('okved') ?? '').trim();
+  const initialIndustryId = sp.get('industryId') ?? 'all';
+  const initialQ = sp.get('q') ?? '';
+  const initialSort = ((sp.get('sort') as SortKey) ?? 'revenue_desc') as SortKey;
+  const initialExtra = (sp.get('extra') ?? '0') === '1';
+  const initialPage = Number(sp.get('page')) || 1;
 
+  // --- local state
   const [okveds, setOkveds] = useState<OkvedMain[]>([]);
   const [okved, setOkved] = useState<string>(initialOkved);
   const [companies, setCompanies] = useState<OkvedCompany[]>([]);
   const [total, setTotal] = useState(0);
-  const [page, setPage] = useState(1);
+  const [page, setPage] = useState(initialPage);
   const [loading, setLoading] = useState(false);
   const pageSize = 50;
 
-  // --- resizer state ---
+  // индустрии (человеческие названия)
+  const [industryList, setIndustryList] = useState<IndustryItem[]>([]);
+  const [csOkvedEnabled, setCsOkvedEnabled] = useState<boolean>(!!sp.get('industryId'));
+  const [industryId, setIndustryId] = useState<string>(initialIndustryId); // 'all' | id
+  const [includeExtra, setIncludeExtra] = useState<boolean>(initialExtra);
+
+  // поиск/сортировка
+  const [searchName, setSearchName] = useState<string>(initialQ);
+  const [sortKey, setSortKey] = useState<SortKey>(initialSort);
+
+  // --- resizer
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     if (typeof window === 'undefined') return DEFAULT_SIDEBAR;
     const v = Number(localStorage.getItem(LS_KEY));
     return Number.isFinite(v) ? clamp(v, MIN_SIDEBAR, MAX_SIDEBAR) : DEFAULT_SIDEBAR;
   });
   const draggingRef = useRef(false);
-  const layoutRef = useRef<HTMLDivElement | null>(null); // контейнер двух колонок
+  const layoutRef = useRef<HTMLDivElement | null>(null);
 
-  // обработка ограничения правой части при ресайзе окна
   useEffect(() => {
     function ensureBounds() {
       const el = layoutRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
-      const totalW = rect.width;
-      const maxSidebar = Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, totalW - MIN_RIGHT));
+      const maxSidebar = Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, rect.width - MIN_RIGHT));
       setSidebarWidth((w) => clamp(w, MIN_SIDEBAR, maxSidebar));
     }
     ensureBounds();
@@ -54,46 +71,125 @@ export default function OkvedTab() {
     return () => window.removeEventListener('resize', ensureBounds);
   }, []);
 
+  // ====== loaders (with abort & race guards) ======
+  const okvedReqId = useRef(0);
+  const companiesReqId = useRef(0);
+
+  // okved list
   useEffect(() => {
-    let mounted = true;
+    const ac = new AbortController();
+    const myId = ++okvedReqId.current;
     (async () => {
-      const res = await fetch('/api/okved/main', { cache: 'no-store' });
-      const data = await res.json();
-      if (!mounted) return;
-      setOkveds(data.items ?? []);
+      try {
+        const res = await fetch('/api/okved/main', { cache: 'no-store', signal: ac.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (myId !== okvedReqId.current) return;
+        setOkveds(Array.isArray(data.items) ? data.items : []);
+      } catch (e: any) {
+        if (e?.name === 'AbortError') return;
+        console.error('Failed to load okved list:', e);
+        if (myId !== okvedReqId.current) return;
+        setOkveds([]);
+      }
     })();
-    return () => {
-      mounted = false;
-    };
+    return () => ac.abort();
   }, []);
 
+  // industries list
   useEffect(() => {
+    const ac = new AbortController();
+    (async () => {
+      try {
+        const url = new URL('/api/industries', window.location.origin);
+        url.searchParams.set('page', '1');
+        url.searchParams.set('pageSize', '500');
+        const res = await fetch(url.toString(), { cache: 'no-store', signal: ac.signal });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const j = await res.json();
+        setIndustryList(Array.isArray(j?.items) ? j.items : []);
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        console.error('Failed to load industries:', err);
+        setIndustryList([]);
+      }
+    })();
+    return () => ac.abort();
+  }, []);
+
+  // companies load
+  const loadCompanies = useCallback(() => {
+    const ac = new AbortController();
+    const myId = ++companiesReqId.current;
+
     setLoading(true);
+
     const url = new URL('/api/okved/companies', window.location.origin);
     if (okved) url.searchParams.set('okved', okved);
     url.searchParams.set('page', String(page));
     url.searchParams.set('pageSize', String(pageSize));
+    if (searchName.trim()) url.searchParams.set('q', searchName.trim());
+    url.searchParams.set('sort', sortKey);
+    url.searchParams.set('extra', includeExtra ? '1' : '0');
+    if (csOkvedEnabled && industryId !== 'all') {
+      // сервер понимает industryId (id из ib_industry)
+      url.searchParams.set('industryId', industryId);
+    }
 
-    fetch(url.toString(), { cache: 'no-store' })
-      .then((r) => r.json())
-      .then((data) => {
-        setCompanies(data.items ?? []);
-        setTotal(data.total ?? 0);
-      })
-      .finally(() => setLoading(false));
+    (async () => {
+      try {
+        const r = await fetch(url.toString(), { cache: 'no-store', signal: ac.signal });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        const data = await r.json();
+        if (myId !== companiesReqId.current) return; // защита от гонок
+        setCompanies(Array.isArray(data.items) ? data.items : []);
+        setTotal(Number.isFinite(data.total) ? data.total : 0);
+      } catch (e: any) {
+        if (e?.name === 'AbortError') return;
+        console.error('Failed to load companies:', e);
+        if (myId !== companiesReqId.current) return;
+        setCompanies([]);
+        setTotal(0);
+      } finally {
+        if (myId === companiesReqId.current) setLoading(false);
+      }
+    })();
 
+    // sync URL (только после старта запроса; самого запроса ждать не нужно)
     const qs = new URLSearchParams(Array.from(sp.entries()));
     qs.set('tab', 'okved');
     if (okved) qs.set('okved', okved);
     else qs.delete('okved');
-    router.replace(`/library?${qs.toString()}`);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [okved, page]);
 
+    if (searchName.trim()) qs.set('q', searchName.trim());
+    else qs.delete('q');
+
+    qs.set('sort', sortKey);
+    qs.set('extra', includeExtra ? '1' : '0');
+
+    if (csOkvedEnabled && industryId !== 'all') qs.set('industryId', industryId);
+    else qs.delete('industryId');
+
+    qs.set('page', String(page));
+    router.replace(`/library?${qs.toString()}`);
+
+    return () => ac.abort();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [okved, page, searchName, includeExtra, sortKey, csOkvedEnabled, industryId]);
+
+  useEffect(() => {
+    const abortFn = loadCompanies();
+    return () => {
+      // если loadCompanies вернул функцию abort — вызываем
+      if (typeof abortFn === 'function') abortFn();
+    };
+  }, [loadCompanies]);
+
+  // вычисления
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total]);
   const isAll = okved === '';
 
-  // --- resizer handlers ---
+  // --- resizer handlers
   useEffect(() => {
     function onMove(e: MouseEvent | TouchEvent) {
       if (!draggingRef.current) return;
@@ -104,17 +200,12 @@ export default function OkvedTab() {
       const pointerX = getPointerX(e);
       if (pointerX == null) return;
 
-      // ширина левой панели = X курсора — левый край контейнера
       let newW = pointerX - rect.left;
-
-      // учитываем минимальную ширину правой колонки и сам резайзер (2px + отступы)
       const maxSidebarByRight = rect.width - MIN_RIGHT;
       const maxSidebar = Math.min(MAX_SIDEBAR, Math.max(MIN_SIDEBAR, maxSidebarByRight));
-
       newW = clamp(newW, MIN_SIDEBAR, maxSidebar);
       setSidebarWidth(newW);
 
-      // предотвратить скролл на таче
       if (e instanceof TouchEvent) e.preventDefault();
     }
     function onUp() {
@@ -133,14 +224,13 @@ export default function OkvedTab() {
     window.addEventListener('touchend', onUp);
     return () => {
       window.removeEventListener('mousemove', onMove);
-      window.removeEventListener('touchmove', onMove);
+      window.removeEventListener('touchmove', onMove as any);
       window.removeEventListener('mouseup', onUp);
       window.removeEventListener('touchend', onUp);
     };
   }, [sidebarWidth]);
 
   function startDrag(e: React.MouseEvent | React.TouchEvent) {
-    // начинаем тянуть только на lg+ (визуально резайзер скрыт на мобилке)
     if (!isLg()) return;
     draggingRef.current = true;
     document.body.style.cursor = 'col-resize';
@@ -153,6 +243,7 @@ export default function OkvedTab() {
     return Math.round(x / 1_000_000).toLocaleString('ru-RU');
   }
 
+  // Esc -> сброс активного ОКВЭД
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
       if (e.key === 'Escape' && !isAll) {
@@ -167,9 +258,14 @@ export default function OkvedTab() {
   const [hydrated, setHydrated] = useState(false);
   useEffect(() => setHydrated(true), []);
 
+  // сброс страницы при изменении фильтров
+  useEffect(() => {
+    setPage(1);
+  }, [okved, searchName, includeExtra, sortKey, csOkvedEnabled, industryId]);
+
   return (
     <div ref={layoutRef} className="flex flex-col lg:flex-row gap-1">
-      {/* Левая панель — фиксируем ширину только на lg+ */}
+      {/* Левая панель */}
       <div
         className="lg:shrink-0"
         suppressHydrationWarning
@@ -193,7 +289,45 @@ export default function OkvedTab() {
             </Button>
           </CardHeader>
 
-          <CardContent className="space-y-2">
+          <CardContent className="space-y-3">
+            {/* Отрасли (человеческие) */}
+            <div className="flex items-center gap-2">
+              <label className="inline-flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={csOkvedEnabled}
+                  onChange={(e) => setCsOkvedEnabled(e.target.checked)}
+                />
+                Отрасли
+              </label>
+
+              <select
+                disabled={!csOkvedEnabled}
+                value={industryId}
+                onChange={(e) => setIndustryId(e.target.value)}
+                className="h-9 w-[280px] max-w-[280px] truncate border rounded-md px-2 text-sm">
+                <option value="all">— Все отрасли —</option>
+                {industryList.map((it) => (
+                  <option key={it.id} value={String(it.id)}>
+                    {it.industry}
+                  </option>
+                ))}
+              </select>
+            </div>
+
+            {/* Искать в дополнительных ОКВЭД */}
+            <label className="inline-flex items-center gap-2 text-sm">
+              <input
+                type="checkbox"
+                className="h-4 w-4"
+                checked={includeExtra}
+                onChange={(e) => setIncludeExtra(e.target.checked)}
+              />
+              Искать в дополнительных ОКВЭД
+            </label>
+
+            {/* Поиск по коду/названию в списке слева (визуальный фильтр) */}
             <Input
               placeholder="Поиск по коду/названию…"
               onChange={(e) => {
@@ -276,7 +410,7 @@ export default function OkvedTab() {
         </Card>
       </div>
 
-      {/* Резайзер: только на lg+ */}
+      {/* Резайзер */}
       <div
         className="hidden lg:block relative w-2 cursor-col-resize select-none"
         onMouseDown={startDrag}
@@ -292,12 +426,23 @@ export default function OkvedTab() {
       {/* Правая часть */}
       <div className="min-w-0 flex-1">
         <Card>
-          <CardHeader>
+          <CardHeader className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <CardTitle>
               {isAll ? 'Все компании' : `Компании по ОКВЭД ${okved}`}
               {total ? ` · ${total.toLocaleString('ru-RU')}` : ''}
             </CardTitle>
+
+            {/* Поиск по названию справа */}
+            <div className="flex items-center gap-2">
+              <Input
+                className="w-[360px]"
+                placeholder="Поиск по названию компании…"
+                value={searchName}
+                onChange={(e) => setSearchName(e.target.value)}
+              />
+            </div>
           </CardHeader>
+
           <CardContent>
             <div className="relative w-full overflow-auto">
               <table className="w-full text-sm">
@@ -306,7 +451,18 @@ export default function OkvedTab() {
                     <th className="py-2 pr-2 w-[56px]"></th>
                     <th className="py-2 pr-4">ИНН</th>
                     <th className="py-2 pr-4">Название</th>
-                    <th className="py-2 pr-4">Выручка, млн</th>
+                    <th
+                      className="py-2 pr-4 cursor-pointer select-none"
+                      title="Сортировать по выручке"
+                      onClick={() => {
+                        setSortKey((s) => (s === 'revenue_desc' ? 'revenue_asc' : 'revenue_desc'));
+                        setPage(1);
+                      }}>
+                      Выручка, млн
+                      <span className="ml-1 text-xs text-muted-foreground">
+                        {sortKey === 'revenue_desc' ? '↓' : '↑'}
+                      </span>
+                    </th>
                     <th className="py-2 pr-4">Адрес</th>
                     <th className="py-2 pr-4">Филиалов</th>
                     <th className="py-2 pr-2">Год</th>

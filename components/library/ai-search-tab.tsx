@@ -28,12 +28,14 @@ type AiResponse = {
   prodclasses: ProdclassRow[];
 };
 
-function toLibraryLink(ids: Partial<{
-  industry_id: number;
-  prodclass_id: number;
-  workshop_id: number;
-  equipment_id: number;
-}>) {
+function toLibraryLink(
+  ids: Partial<{
+    industry_id: number;
+    prodclass_id: number;
+    workshop_id: number;
+    equipment_id: number;
+  }>,
+) {
   const qp = new URLSearchParams();
   qp.set('tab', 'library');
   if (ids.industry_id) qp.set('industryId', String(ids.industry_id));
@@ -142,7 +144,7 @@ export default function AiSearchTab() {
             <details className="mt-2 text-[11px] text-muted-foreground">
               <summary className="cursor-pointer">SQL (подсказка)</summary>
               <pre className="mt-1 whitespace-pre-wrap">
-{`-- Сопоставлять Search_vector с ib_goods_types.goods_type_vector
+                {`-- Сопоставлять Search_vector с ib_goods_types.goods_type_vector
 -- SELECT TOP 20 лучших совпадений
 -- Затем по кнопке открывать соответствующие карточки оборудования в каталоге
 
@@ -212,7 +214,7 @@ WHERE eg.goods_id = :id;`}
             <details className="mt-2 text-[11px] text-muted-foreground">
               <summary className="cursor-pointer">SQL (подсказка)</summary>
               <pre className="mt-1 whitespace-pre-wrap">
-{`-- Сопоставлять Search_vector с ib_equipment.equipment_vector
+                {`-- Сопоставлять Search_vector с ib_equipment.equipment_vector
 -- SELECT TOP 20
 -- Для выбранного оборудования определить отрасль/класс/цех
 
@@ -279,7 +281,7 @@ WHERE e.id = :id;`}
             <details className="mt-2 text-[11px] text-muted-foreground">
               <summary className="cursor-pointer">SQL (подсказка)</summary>
               <pre className="mt-1 whitespace-pre-wrap">
-{`-- Сопоставлять Search_vector с ib_prodclass.prodclass_vector
+                {`-- Сопоставлять Search_vector с ib_prodclass.prodclass_vector
 -- SELECT TOP 20
 SELECT DISTINCT pc.id AS prodclass_id
 FROM ib_prodclass AS pc
