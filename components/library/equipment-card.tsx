@@ -8,12 +8,13 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { ExternalLink, X, Copy } from 'lucide-react';
+import { ExternalLink, X, Copy, ArrowUpRight } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
 import { GoogleImagesCarousel } from './google-images-carousel';
+import type { OkvedByEquipment } from '@/lib/validators';
 
 interface EquipmentCardProps {
   equipment: EquipmentDetail;
@@ -463,6 +464,31 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       .join('\n'); // один \n между строками
   };
 
+  // ==== ЗАГРУЗКА ОКВЭД по оборудованию ====
+  const [okvedList, setOkvedList] = useState<OkvedByEquipment[]>([]);
+  const [okvedLoading, setOkvedLoading] = useState(false);
+
+  useEffect(() => {
+    const id = equipment?.id;
+    if (!id) {
+      setOkvedList([]);
+      return;
+    }
+    let cancelled = false;
+    setOkvedLoading(true);
+    fetch(`/api/equipment/${id}/okved`, { cache: 'no-store' })
+      .then((r) => r.json())
+      .then((d) => {
+        if (!cancelled) setOkvedList(Array.isArray(d.items) ? d.items : []);
+      })
+      .finally(() => {
+        if (!cancelled) setOkvedLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [equipment?.id]);
+
   return (
     <div className="space-y-4 pb-[1cm]">
       <Card>
@@ -682,6 +708,71 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
               </div>
             </div>
           )}
+
+          <Sep />
+
+          {/* ==== НОВЫЙ РАЗДЕЛ: Примеры основных ОКВЭД ==== */}
+          <div className="space-y-1.5">
+            <div className="text-sm font-semibold">
+              Примеры основных ОКВЭД в исследуемой отрасли
+            </div>
+
+            <div className="rounded-md border overflow-hidden">
+              <table className="w-full text-sm">
+                <thead className="bg-muted/50">
+                  <tr className="text-left">
+                    <th className="w-[40px] px-1 py-1"></th>
+                    <th className="px-1 py-1 w-[70px]">Код</th>
+                    <th className="px-1 py-1">Наименование</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {okvedLoading && (
+                    <tr>
+                      <td colSpan={3} className="px-2 py-4 text-center text-muted-foreground">
+                        Загрузка…
+                      </td>
+                    </tr>
+                  )}
+
+                  {!okvedLoading && okvedList.length === 0 && (
+                    <tr>
+                      <td colSpan={3} className="px-2 py-4 text-center text-muted-foreground">
+                        Нет данных
+                      </td>
+                    </tr>
+                  )}
+
+                  {!okvedLoading &&
+                    okvedList.map((row) => (
+                      <tr key={row.id} className="border-t hover:bg-muted/40">
+                        <td className="px-0.5 py-0.5">
+                          {/* Переход на вкладку ОКВЭД с выбранным кодом */}
+                          <Button
+                            size="icon"
+                            variant="ghost"
+                            title="Открыть вкладку ОКВЭД"
+                            onClick={() =>
+                              window.open(
+                                `/library?tab=okved&okved=${encodeURIComponent(row.okved_code)}`,
+                                '_blank',
+                              )
+                            }>
+                            <ArrowUpRight className="h-4 w-4" />
+                          </Button>
+                        </td>
+                        <td className="px-2 py-1 font-medium whitespace-nowrap">
+                          {row.okved_code}
+                        </td>
+                        <td className="px-2 py-1">{row.okved_main}</td>
+                      </tr>
+                    ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <Sep />
 
           {/* Примеры товаров */}
           {Array.isArray(equipment.goods_examples) && equipment.goods_examples.length > 0 ? (

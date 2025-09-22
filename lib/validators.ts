@@ -203,3 +203,12 @@ export const okvedCompaniesQuerySchema = paginationSchema.extend({
   okved: z.string().optional().default(''),
 });
 export type OkvedCompaniesQuery = z.infer<typeof okvedCompaniesQuerySchema>;
+
+// ОКВЭД, полученные по ID оборудования (для карточки оборудования)
+export const okvedByEquipmentSchema = z.object({
+  prodclass_id: z.coerce.number(),
+  id: z.coerce.number(),
+  okved_code: z.string(),
+  okved_main: z.string(),
+});
+export type OkvedByEquipment = z.infer<typeof okvedByEquipmentSchema>;
