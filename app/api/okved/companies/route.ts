@@ -17,7 +17,6 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
   const hit = rootsCache.get(industryId);
   if (hit && now - hit.ts < ROOTS_TTL_MS) return hit.roots;
 
-  // тянем из второй БД (db): ib_okved_main
   const { rows } = await db.query<{ root: string }>(
     `
       SELECT DISTINCT split_part(m.okved_code, '.', 1) AS root
@@ -46,7 +45,8 @@ export async function GET(request: NextRequest) {
     const sortParam = (searchParams.get('sort') ?? 'revenue_desc') as
       | 'revenue_desc'
       | 'revenue_asc';
-    const includeExtra = (searchParams.get('extra') ?? '0') === '1';
+    const includeExtra = (searchParams.get('extra') ?? '0') === '1'; // ЧБ №2
+    const includeParent = (searchParams.get('parent') ?? '0') === '1'; // ЧБ №3
 
     const industryIdRaw = searchParams.get('industryId');
     const industryId = industryIdRaw && /^\d+$/.test(industryIdRaw) ? Number(industryIdRaw) : null;
@@ -57,47 +57,93 @@ export async function GET(request: NextRequest) {
     const args: any[] = [];
     let i = 1;
 
-    // Фильтр по ОКВЭД
+    // ---------- ФИЛЬТР ПО ОКВЭД (точно / родовой + доп.коды) ----------
     if (base.okved) {
-      if (includeExtra) {
-        // main_okved ИЛИ в JSONB-списке дополнительных
-        where.push(
-          `(d.main_okved = $${i} OR EXISTS (
-             SELECT 1
-             FROM jsonb_array_elements(d.okveds) AS elem(val)
-             WHERE
-               (jsonb_typeof(elem.val) = 'string' AND elem.val::text = to_jsonb($${i})::text)
-               OR (jsonb_typeof(elem.val) = 'object' AND (
-                   elem.val->>'okved' = $${i} OR
-                   elem.val->>'code' = $${i} OR
-                   elem.val->>'okved_code' = $${i}
-               ))
-           ))`,
-        );
+      if (includeParent) {
+        // Родовой: первые две цифры, затем точка ИЛИ конец строки.
+        // Пример для 18.12 -> '^18(\.|$)'
+        const prefix2 = (base.okved.match(/^\d{2}/)?.[0] ?? '').trim();
+        if (!prefix2) {
+          return NextResponse.json({
+            items: [],
+            total: 0,
+            page: base.page,
+            pageSize: base.pageSize,
+          });
+        }
+
+        let cond = `TRIM(d.main_okved) ~ ('^' || $${i} || '(\\.|$)')`;
+        args.push(prefix2);
+        i++;
+
+        if (includeExtra) {
+          cond += `
+            OR EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(COALESCE(d.okveds, '[]'::jsonb)) AS elem(val)
+              WHERE
+                -- элемент-строка: "18.12"
+                (
+                  jsonb_typeof(elem.val) = 'string'
+                  AND TRIM(BOTH '"' FROM elem.val::text) ~ ('^' || $${i} || '(\\.|$)')
+                )
+                OR
+                -- элемент-объект с любым полем кода
+                (
+                  jsonb_typeof(elem.val) = 'object'
+                  AND COALESCE(elem.val->>'okved', elem.val->>'code', elem.val->>'okved_code', '') ~ ('^' || $${i} || '(\\.|$)')
+                )
+            )`;
+          args.push(prefix2);
+          i++;
+        }
+
+        where.push(`(${cond})`);
       } else {
-        where.push(`d.main_okved = $${i}`);
+        // Точное совпадение выбранного кода
+        let cond = `TRIM(d.main_okved) = $${i}`;
+        args.push(base.okved);
+        i++;
+
+        if (includeExtra) {
+          cond += `
+            OR EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(COALESCE(d.okveds, '[]'::jsonb)) AS elem(val)
+              WHERE
+                (jsonb_typeof(elem.val) = 'string' AND TRIM(BOTH '"' FROM elem.val::text) = $${i})
+                OR (
+                  jsonb_typeof(elem.val) = 'object'
+                  AND (
+                    elem.val->>'okved' = $${i}
+                    OR elem.val->>'code' = $${i}
+                    OR elem.val->>'okved_code' = $${i}
+                  )
+                )
+            )`;
+          args.push(base.okved);
+          i++;
+        }
+
+        where.push(`(${cond})`);
       }
-      args.push(base.okved);
-      i++;
     }
 
-    // Фильтр по индустрии — тянем корни из ДРУГОЙ БД и фильтруем по ним в dadata_result
+    // ---------- Фильтр по индустрии (как было у тебя) ----------
     if (industryId != null) {
       const roots = await getOkvedRootsForIndustry(industryId); // ['28','10','33',...]
       if (roots.length > 0) {
-        // используем ANY($::text[]) — один параметр-массив вместо сотни плейсхолдеров
         where.push(`split_part(d.main_okved, '.', 1) = ANY($${i}::text[])`);
         args.push(roots);
         i++;
       } else {
-        // если по индустрии нет корней — заведомо пусто
         return NextResponse.json({ items: [], total: 0, page: base.page, pageSize: base.pageSize });
       }
     }
 
-    // Поиск по названию
+    // ---------- Поиск по названию/ИНН ----------
     if (q) {
-      where.push(`d.short_name ILIKE $${i}`);
+      where.push(`(d.short_name ILIKE $${i} OR d.inn ILIKE $${i})`);
       args.push(`%${q}%`);
       i++;
     }
@@ -137,6 +183,6 @@ export async function GET(request: NextRequest) {
     });
   } catch (e) {
     console.error('GET /api/okved/companies error', e);
-    return NextResponse.json({ items: [], total: 0 });
+    return NextResponse.json({ items: [], total: 0, page: 1, pageSize: 50 }, { status: 500 });
   }
 }

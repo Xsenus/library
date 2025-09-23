@@ -1,3 +1,4 @@
+// app/api/okved/company/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
 
@@ -12,7 +13,7 @@ export async function GET(request: NextRequest) {
     if (!inn) return NextResponse.json({ ok: false, error: 'inn required' });
 
     const infoSql = `
-      SELECT inn, short_name, address
+      SELECT inn, short_name, address, main_okved, okveds
       FROM dadata_result
       WHERE inn = $1
       ORDER BY year DESC

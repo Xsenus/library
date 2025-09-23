@@ -29,10 +29,10 @@ export default function OkvedTab() {
   const router = useRouter();
 
   const initialOkved = (sp.get('okved') ?? '').trim();
-  const initialIndustryIdRaw = sp.get('industryId') ?? 'all';
   const initialQ = sp.get('q') ?? '';
   const initialSort = ((sp.get('sort') as SortKey) ?? 'revenue_desc') as SortKey;
-  const initialExtra = (sp.get('extra') ?? '0') === '1';
+  const initialExtra = (sp.get('extra') ?? '0') === '1'; // ЧБ №2
+  const initialParent = (sp.get('parent') ?? '0') === '1'; // ЧБ №3
   const initialPage = Number(sp.get('page')) || 1;
 
   const [okveds, setOkveds] = useState<OkvedMain[]>([]);
@@ -48,7 +48,9 @@ export default function OkvedTab() {
 
   const [csOkvedEnabled, setCsOkvedEnabled] = useState<boolean>(false);
   const [industryId, setIndustryId] = useState<string>('all');
-  const [includeExtra, setIncludeExtra] = useState<boolean>(false);
+
+  const [includeExtra, setIncludeExtra] = useState<boolean>(initialExtra); // ЧБ №2
+  const [includeParent, setIncludeParent] = useState<boolean>(initialParent); // ЧБ №3
 
   const [searchName, setSearchName] = useState<string>(initialQ);
   const [sortKey, setSortKey] = useState<SortKey>(initialSort);
@@ -167,12 +169,16 @@ export default function OkvedTab() {
     setLoading(true);
 
     const url = new URL('/api/okved/companies', window.location.origin);
+
     if (okved) url.searchParams.set('okved', okved);
+    url.searchParams.set('extra', includeExtra ? '1' : '0');
+    // передаём parent всегда; на бэке он игнорится, если okved пуст
+    url.searchParams.set('parent', includeParent ? '1' : '0');
+
     url.searchParams.set('page', String(page));
     url.searchParams.set('pageSize', String(pageSize));
     if (searchName.trim()) url.searchParams.set('q', searchName.trim());
     url.searchParams.set('sort', sortKey);
-    url.searchParams.set('extra', includeExtra ? '1' : '0');
     if (csOkvedEnabled && industryId !== 'all') {
       url.searchParams.set('industryId', industryId);
     }
@@ -196,6 +202,7 @@ export default function OkvedTab() {
       }
     })();
 
+    // sync URL
     const qs = new URLSearchParams(Array.from(sp.entries()));
     qs.set('tab', 'okved');
     if (okved) qs.set('okved', okved);
@@ -206,6 +213,7 @@ export default function OkvedTab() {
 
     qs.set('sort', sortKey);
     qs.set('extra', includeExtra ? '1' : '0');
+    qs.set('parent', includeParent ? '1' : '0');
 
     if (csOkvedEnabled && industryId !== 'all') qs.set('industryId', industryId);
     else qs.delete('industryId');
@@ -215,14 +223,7 @@ export default function OkvedTab() {
 
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [okved, page, searchName, includeExtra, sortKey, csOkvedEnabled, industryId]);
-
-  useEffect(() => {
-    const abortFn = loadCompanies();
-    return () => {
-      if (typeof abortFn === 'function') abortFn();
-    };
-  }, [loadCompanies]);
+  }, [okved, page, searchName, includeExtra, includeParent, sortKey, csOkvedEnabled, industryId]);
 
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total]);
   const isAll = okved === '';
@@ -231,6 +232,11 @@ export default function OkvedTab() {
     () => (okved ? okveds.find((o) => o.okved_code === okved) ?? null : null),
     [okved, okveds],
   );
+
+  const parent2 = useMemo(() => {
+    const m = okved.match(/^\d{2}/);
+    return m ? m[0] : null;
+  }, [okved]);
 
   useEffect(() => {
     function onMove(e: MouseEvent | TouchEvent) {
@@ -301,7 +307,14 @@ export default function OkvedTab() {
 
   useEffect(() => {
     setPage(1);
-  }, [okved, searchName, includeExtra, sortKey, csOkvedEnabled, industryId]);
+  }, [okved, searchName, includeExtra, includeParent, sortKey, csOkvedEnabled, industryId]);
+
+  useEffect(() => {
+    const abortFn = loadCompanies();
+    return () => {
+      if (typeof abortFn === 'function') abortFn();
+    };
+  }, [loadCompanies]);
 
   return (
     <div ref={layoutRef} className="flex flex-col lg:flex-row gap-1 text-[13px] leading-snug">
@@ -332,10 +345,10 @@ export default function OkvedTab() {
           <CardContent className="space-y-2 p-3">
             {/* Отрасли */}
             <div className="flex items-center gap-2">
-              <label className="inline-flex items-center gap-2 text-xs">
+              <label className="inline-flex items-center gap-2 text-xs leading-none">
                 <input
                   type="checkbox"
-                  className="h-3.5 w-3.5"
+                  className="h-4 w-4"
                   checked={csOkvedEnabled}
                   onChange={(e) => {
                     const checked = e.target.checked;
@@ -377,16 +390,36 @@ export default function OkvedTab() {
               </select>
             </div>
 
-            {/* Искать в дополнительных ОКВЭД */}
-            <label className="inline-flex items-center gap-2 text-xs">
-              <input
-                type="checkbox"
-                className="h-3.5 w-3.5"
-                checked={includeExtra}
-                onChange={(e) => setIncludeExtra(e.target.checked)}
-              />
-              Искать в дополнительных ОКВЭД
-            </label>
+            {/* Чекбоксы один под другим */}
+            <div className="flex flex-col gap-2">
+              {/* ЧБ №2 */}
+              <label className="inline-flex items-center gap-2 text-xs leading-none">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={includeExtra}
+                  onChange={(e) => setIncludeExtra(e.target.checked)}
+                />
+                Искать в дополнительных ОКВЭД
+              </label>
+
+              {/* ЧБ №3 */}
+              <label
+                className="inline-flex items-center gap-2 text-xs leading-none"
+                title={
+                  okved
+                    ? `Искать по всем кодам, начинающимся на ${parent2}`
+                    : 'Выберите ОКВЭД слева — без выбранного кода флаг не влияет на результат'
+                }>
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={includeParent}
+                  onChange={(e) => setIncludeParent(e.target.checked)}
+                />
+                Все коды из родового ОКВЭД {okved ? parent2 : '—'}
+              </label>
+            </div>
 
             {/* Поиск в списке слева */}
             <Input
