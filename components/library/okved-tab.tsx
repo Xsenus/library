@@ -568,6 +568,7 @@ export default function OkvedTab() {
                       </span>
                     </th>
                     <th className="py-1 pr-3">Адрес</th>
+                    <th className="py-1 pr-3">Штат</th>
                     <th className="py-1 pr-3">Филиалов</th>
                     <th className="py-1 pr-2">Год</th>
                   </tr>
@@ -575,14 +576,14 @@ export default function OkvedTab() {
                 <tbody>
                   {loading && (
                     <tr>
-                      <td colSpan={7} className="py-6 text-center text-muted-foreground text-xs">
+                      <td colSpan={8} className="py-6 text-center text-muted-foreground text-xs">
                         Загрузка…
                       </td>
                     </tr>
                   )}
                   {!loading && companies.length === 0 && (
                     <tr>
-                      <td colSpan={7} className="py-6 text-center text-muted-foreground text-xs">
+                      <td colSpan={8} className="py-6 text-center text-muted-foreground text-xs">
                         Нет данных
                       </td>
                     </tr>
@@ -614,6 +615,7 @@ export default function OkvedTab() {
                           {revenueMln(c.revenue)}
                         </td>
                         <td className="py-0.5 pr-3">{c.address ?? '—'}</td>
+                        <td className="py-0.5 pr-3">{formatEmployees(getEmployeeCount(c))}</td>
                         <td className="py-0.5 pr-3">{c.branch_count ?? '—'}</td>
                         <td className="py-0.5 pr-2">{c.year ?? '—'}</td>
                       </tr>
@@ -672,4 +674,14 @@ function dedupeById<T extends { id: number }>(arr: T[]): T[] {
     }
   }
   return out;
+}
+function getEmployeeCount(c: OkvedCompany): number | null {
+  const anyC = c as any;
+  const v = anyC?.dadata_result?.employee_count ?? anyC?.employee_count ?? null;
+  return Number.isFinite(v) ? Number(v) : null;
+}
+
+function formatEmployees(n: number | null): string {
+  if (!n || !Number.isFinite(n)) return '—';
+  return n.toLocaleString('ru-RU');
 }

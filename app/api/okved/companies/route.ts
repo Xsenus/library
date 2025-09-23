@@ -162,7 +162,7 @@ export async function GET(request: NextRequest) {
     `;
 
     const dataSql = `
-      SELECT d.inn, d.short_name, d.address, d.branch_count, d.year, d.revenue
+      SELECT d.inn, d.short_name, d.address, d.branch_count, d.year, d.revenue, d.employee_count
       FROM dadata_result d
       ${whereSql}
       ${orderSql}
