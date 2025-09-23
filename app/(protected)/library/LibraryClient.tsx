@@ -885,7 +885,7 @@ export default function LibraryPage() {
                     disabled:opacity-50 disabled:cursor-not-allowed
                     shadow-none transition
                   ">
-                  ОКВЭД
+                  База компаний
                 </TabsTrigger>
 
                 <TabsTrigger
@@ -1284,7 +1284,9 @@ export default function LibraryPage() {
                                       String(r.okved_id ?? ''),
                                     )}&okved=${encodeURIComponent(r.okved_code)}`}
                                     className="text-blue-600 hover:underline"
-                                    title="Открыть вкладку ОКВЭД и выбрать этот код">
+                                    title="Открыть вкладку «База компаний» и выбрать этот код"
+                                    target="_blank"
+                                    rel="noopener noreferrer">
                                     {r.okved_code}
                                     {r.okved_main ? ` — ${r.okved_main}` : ''}
                                   </a>
