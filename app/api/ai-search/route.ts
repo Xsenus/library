@@ -5,7 +5,7 @@ export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const runtime = 'nodejs';
 
-const BASE = process.env.AI_SEARCH_BASE ?? 'http://37.221.125.221:8090/';
+const BASE = process.env.AI_SEARCH_BASE ?? 'http://37.221.125.221:8123/ai-search';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? '';
 const OPENAI_EMBED_MODEL = process.env.OPENAI_EMBED_MODEL ?? 'text-embedding-3-large';
 const AI_TIMEOUT_MS = 15000;
