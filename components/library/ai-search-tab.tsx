@@ -91,6 +91,22 @@ export default function AiSearchTab() {
     }
   }, [q]);
 
+  // Высота рабочей области: отнимаем шапку/панель (примерно 220px).
+  // При желании подстрой: 200–260 в зависимости от макета.
+  const WRAP_HEIGHT = 'h-[calc(100vh-220px)]';
+
+  const Column: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
+    <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col">
+      <div className="px-3 py-2 border-b bg-card text-sm font-semibold">{title}</div>
+      <div className="p-2 flex-1 min-h-0 flex flex-col">
+        {/* min-h-0 ВАЖЕН: позволяет flex-детям с overflow корректно ужиматься */}
+        <div className="flex-1 min-h-0 rounded-md border bg-background overflow-y-auto">
+          {children}
+        </div>
+      </div>
+    </div>
+  );
+
   return (
     <div className="py-4 space-y-4">
       {/* Верхняя панель */}
@@ -111,148 +127,129 @@ export default function AiSearchTab() {
         </button>
       </div>
 
-      {/* Три колонки */}
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-3 pb-6">
+      {/* Рабочая область фиксированной высоты → внутри уже скроллятся таблицы */}
+      <div className={`${WRAP_HEIGHT} grid grid-cols-1 gap-2 lg:grid-cols-3 pb-2`}>
         {/* Типы продукции */}
-        <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col max-h-[78vh]">
-          <div className="px-3 py-2 border-b bg-card text-sm font-semibold">Типы продукции</div>
-          <div className="p-2 flex-1 flex flex-col">
-            <div className="flex-1 overflow-auto rounded-md border bg-background">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 z-10 border-b bg-sky-50">
-                  <tr>
-                    <th className="px-2 py-2 text-left">Наименование</th>
-                    <th className="px-2 py-2 w-[1%] text-center"></th>
-                  </tr>
-                </thead>
-                <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1.5">
-                  {goods.map((g) => (
-                    <tr key={g.id} className="border-b">
-                      <td className="whitespace-normal break-words leading-5">{g.name}</td>
-                      <td className="text-center">
-                        <a
-                          href={toLibraryLinkByGoods(g.id)}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
-                          title="Открыть каталог: оборудование для этого продукта">
-                          <ArrowUpRight className="h-4 w-4" />
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                  {!goods.length && (
-                    <tr>
-                      <td colSpan={2} className="text-center py-6 text-muted-foreground">
-                        {hasAny ? 'Нет результатов в разделе' : 'Пока пусто'}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <Column title="Типы продукции">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 z-10 border-b bg-sky-50">
+              <tr>
+                <th className="px-2 py-2 text-left">Наименование</th>
+                <th className="px-2 py-2 w-[1%] text-center" />
+              </tr>
+            </thead>
+            <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1.5">
+              {goods.map((g) => (
+                <tr key={g.id} className="border-b">
+                  <td className="whitespace-normal break-words leading-5">{g.name}</td>
+                  <td className="text-center">
+                    <a
+                      href={toLibraryLinkByGoods(g.id)}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
+                      title="Открыть каталог: оборудование для этого продукта">
+                      <ArrowUpRight className="h-4 w-4" />
+                    </a>
+                  </td>
+                </tr>
+              ))}
+              {!goods.length && (
+                <tr>
+                  <td colSpan={2} className="text-center py-6 text-muted-foreground">
+                    {hasAny ? 'Нет результатов в разделе' : 'Пока пусто'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </Column>
 
         {/* Оборудования */}
-        <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col max-h-[78vh]">
-          <div className="px-3 py-2 border-b bg-card text-sm font-semibold">Оборудования</div>
-          <div className="p-2 flex-1 flex flex-col">
-            <div className="flex-1 overflow-auto rounded-md border bg-background">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 z-10 border-b bg-sky-50">
-                  <tr>
-                    <th className="px-2 py-2">Отрасль</th>
-                    <th className="px-2 py-2">Наименование</th>
-                    <th className="px-2 py-2 w-[1%] text-center"></th>
-                  </tr>
-                </thead>
-                <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1.5">
-                  {equipment.map((r) => (
-                    <tr key={r.id} className="border-b align-top">
-                      <td className="whitespace-normal break-words leading-5">
-                        {r.industry || '—'}
-                      </td>
-                      <td className="whitespace-normal break-words leading-5">
-                        <div className="font-medium">{r.equipment_name}</div>
-                        <div className="text-muted-foreground">
-                          {r.prodclass} / {r.workshop_name}
-                        </div>
-                      </td>
-                      <td className="text-center">
-                        <a
-                          href={toLibraryLink({
-                            industry_id: r.industry_id,
-                            prodclass_id: r.prodclass_id,
-                            workshop_id: r.workshop_id,
-                            equipment_id: r.id,
-                          })}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
-                          title="Открыть карточку в каталоге">
-                          <ArrowUpRight className="h-4 w-4" />
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                  {!equipment.length && (
-                    <tr>
-                      <td colSpan={3} className="text-center py-6 text-muted-foreground">
-                        {hasAny ? 'Нет результатов в разделе' : 'Пока пусто'}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <Column title="Оборудования">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 z-10 border-b bg-sky-50">
+              <tr>
+                <th className="px-2 py-2">Отрасль</th>
+                <th className="px-2 py-2">Наименование</th>
+                <th className="px-2 py-2 w-[1%] text-center" />
+              </tr>
+            </thead>
+            <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1.5">
+              {equipment.map((r) => (
+                <tr key={r.id} className="border-b align-top">
+                  <td className="whitespace-normal break-words leading-5">{r.industry || '—'}</td>
+                  <td className="whitespace-normal break-words leading-5">
+                    <div className="font-medium">{r.equipment_name}</div>
+                    <div className="text-muted-foreground">
+                      {r.prodclass} / {r.workshop_name}
+                    </div>
+                  </td>
+                  <td className="text-center">
+                    <a
+                      href={toLibraryLink({
+                        industry_id: r.industry_id,
+                        prodclass_id: r.prodclass_id,
+                        workshop_id: r.workshop_id,
+                        equipment_id: r.id,
+                      })}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
+                      title="Открыть карточку в каталоге">
+                      <ArrowUpRight className="h-4 w-4" />
+                    </a>
+                  </td>
+                </tr>
+              ))}
+              {!equipment.length && (
+                <tr>
+                  <td colSpan={3} className="text-center py-6 text-muted-foreground">
+                    {hasAny ? 'Нет результатов в разделе' : 'Пока пусто'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </Column>
 
         {/* Классы предприятий */}
-        <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col max-h-[78vh]">
-          <div className="px-3 py-2 border-b bg-card text-sm font-semibold">Классы предприятий</div>
-          <div className="p-2 flex-1 flex flex-col">
-            <div className="flex-1 overflow-auto rounded-md border bg-background">
-              <table className="w-full text-xs">
-                <thead className="sticky top-0 z-10 border-b bg-sky-50">
-                  <tr>
-                    <th className="px-2 py-2">Отрасль</th>
-                    <th className="px-2 py-2">Наименование класса</th>
-                    <th className="px-2 py-2 w-[1%] text-center"></th>
-                  </tr>
-                </thead>
-                <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1.5">
-                  {prodclasses.map((r) => (
-                    <tr key={r.id} className="border-b">
-                      <td className="whitespace-normal break-words leading-5">
-                        {r.industry || '—'}
-                      </td>
-                      <td className="whitespace-normal break-words leading-5">{r.prodclass}</td>
-                      <td className="text-center">
-                        <a
-                          href={toLibraryLink({ industry_id: r.industry_id, prodclass_id: r.id })}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
-                          title="Открыть класс в каталоге">
-                          <ArrowUpRight className="h-4 w-4" />
-                        </a>
-                      </td>
-                    </tr>
-                  ))}
-                  {!prodclasses.length && (
-                    <tr>
-                      <td colSpan={3} className="text-center py-6 text-muted-foreground">
-                        {hasAny ? 'Нет результатов в разделе' : 'Пока пусто'}
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </div>
+        <Column title="Классы предприятий">
+          <table className="w-full text-xs">
+            <thead className="sticky top-0 z-10 border-b bg-sky-50">
+              <tr>
+                <th className="px-2 py-2">Отрасль</th>
+                <th className="px-2 py-2">Наименование класса</th>
+                <th className="px-2 py-2 w-[1%] text-center" />
+              </tr>
+            </thead>
+            <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1.5">
+              {prodclasses.map((r) => (
+                <tr key={r.id} className="border-b">
+                  <td className="whitespace-normal break-words leading-5">{r.industry || '—'}</td>
+                  <td className="whitespace-normal break-words leading-5">{r.prodclass}</td>
+                  <td className="text-center">
+                    <a
+                      href={toLibraryLink({ industry_id: r.industry_id, prodclass_id: r.id })}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
+                      title="Открыть класс в каталоге">
+                      <ArrowUpRight className="h-4 w-4" />
+                    </a>
+                  </td>
+                </tr>
+              ))}
+              {!prodclasses.length && (
+                <tr>
+                  <td colSpan={3} className="text-center py-6 text-muted-foreground">
+                    {hasAny ? 'Нет результатов в разделе' : 'Пока пусто'}
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </Column>
       </div>
     </div>
   );

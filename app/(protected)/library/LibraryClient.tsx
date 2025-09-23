@@ -490,6 +490,38 @@ export default function LibraryPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [csOkvedEnabled, csOkvedId]);
 
+  // Deep link по goodsId: превращаем в набор industryId/prodclassId/workshopId/equipmentId
+  useEffect(() => {
+    const gid = Number(searchParams.get('goodsId') ?? '');
+    if (!gid) return;
+
+    (async () => {
+      try {
+        const r = await fetch(`/api/goods/${gid}/resolve`, { cache: 'no-store' });
+        const j = await r.json();
+
+        const qp = new URLSearchParams(searchParams);
+        qp.delete('goodsId'); // убираем, чтобы не зациклиться
+        qp.set('tab', 'library');
+
+        if (j?.found && (j.equipment_id || j.workshop_id || j.prodclass_id || j.industry_id)) {
+          if (j.industry_id) qp.set('industryId', String(j.industry_id));
+          if (j.prodclass_id) qp.set('prodclassId', String(j.prodclass_id));
+          if (j.workshop_id) qp.set('workshopId', String(j.workshop_id));
+          if (j.equipment_id) qp.set('equipmentId', String(j.equipment_id));
+        }
+
+        router.replace(`/library?${qp.toString()}`);
+      } catch (e) {
+        console.error('Failed to resolve goodsId → chain:', e);
+        const qp = new URLSearchParams(searchParams);
+        qp.delete('goodsId');
+        router.replace(`/library?${qp.toString()}`);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
+
   // Deep link
   useEffect(() => {
     const iid = Number(searchParams.get('industryId') ?? '');
