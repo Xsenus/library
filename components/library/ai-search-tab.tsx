@@ -44,6 +44,13 @@ function toLibraryLink(
   return `/library?${qp.toString()}`;
 }
 
+function toLibraryLinkByGoods(goodsId: number) {
+  const qp = new URLSearchParams();
+  qp.set('tab', 'library');
+  qp.set('goodsId', String(goodsId));
+  return `/library?${qp.toString()}`;
+}
+
 export default function AiSearchTab() {
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
@@ -55,13 +62,20 @@ export default function AiSearchTab() {
   const hasAny = goods.length || equipment.length || prodclasses.length;
 
   const runSearch = useCallback(async () => {
+    const query = q.trim();
+    if (!query) return;
+
     setLoading(true);
+    setGoods([]);
+    setEquipment([]);
+    setProdclasses([]);
+
     try {
       const res = await fetch('/api/ai-search', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         cache: 'no-store',
-        body: JSON.stringify({ q }),
+        body: JSON.stringify({ q: query }),
       });
       const data: Partial<AiResponse> = await res.json();
       setGoods(Array.isArray(data.goods) ? data.goods : []);
@@ -78,7 +92,7 @@ export default function AiSearchTab() {
   }, [q]);
 
   return (
-    <div className="min-h-[100vh] flex flex-col py-4 space-y-4">
+    <div className="py-4 space-y-4">
       {/* Верхняя панель */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm text-muted-foreground">Введите поисковую фразу:</span>
@@ -98,11 +112,10 @@ export default function AiSearchTab() {
       </div>
 
       {/* Три колонки */}
-      <div className="grid grid-cols-1 gap-2 lg:grid-cols-3 flex-1 items-stretch pb-6">
-        {/* Колонка 1: Типы продукции */}
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-3 pb-6">
+        {/* Типы продукции */}
         <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col max-h-[78vh]">
           <div className="px-3 py-2 border-b bg-card text-sm font-semibold">Типы продукции</div>
-
           <div className="p-2 flex-1 flex flex-col">
             <div className="flex-1 overflow-auto rounded-md border bg-background">
               <table className="w-full text-xs">
@@ -116,7 +129,16 @@ export default function AiSearchTab() {
                   {goods.map((g) => (
                     <tr key={g.id} className="border-b">
                       <td className="whitespace-normal break-words leading-5">{g.name}</td>
-                      <td className="text-center">{/* ссылка убрана */}</td>
+                      <td className="text-center">
+                        <a
+                          href={toLibraryLinkByGoods(g.id)}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
+                          title="Открыть каталог: оборудование для этого продукта">
+                          <ArrowUpRight className="h-4 w-4" />
+                        </a>
+                      </td>
                     </tr>
                   ))}
                   {!goods.length && (
@@ -132,10 +154,9 @@ export default function AiSearchTab() {
           </div>
         </div>
 
-        {/* Колонка 2: Оборудования */}
+        {/* Оборудования */}
         <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col max-h-[78vh]">
           <div className="px-3 py-2 border-b bg-card text-sm font-semibold">Оборудования</div>
-
           <div className="p-2 flex-1 flex flex-col">
             <div className="flex-1 overflow-auto rounded-md border bg-background">
               <table className="w-full text-xs">
@@ -188,10 +209,9 @@ export default function AiSearchTab() {
           </div>
         </div>
 
-        {/* Колонка 3: Классы предприятий */}
+        {/* Классы предприятий */}
         <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col max-h-[78vh]">
           <div className="px-3 py-2 border-b bg-card text-sm font-semibold">Классы предприятий</div>
-
           <div className="p-2 flex-1 flex flex-col">
             <div className="flex-1 overflow-auto rounded-md border bg-background">
               <table className="w-full text-xs">
@@ -211,10 +231,7 @@ export default function AiSearchTab() {
                       <td className="whitespace-normal break-words leading-5">{r.prodclass}</td>
                       <td className="text-center">
                         <a
-                          href={toLibraryLink({
-                            industry_id: r.industry_id,
-                            prodclass_id: r.id,
-                          })}
+                          href={toLibraryLink({ industry_id: r.industry_id, prodclass_id: r.id })}
                           target="_blank"
                           rel="noopener noreferrer"
                           className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
