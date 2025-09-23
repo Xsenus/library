@@ -1,8 +1,7 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useState } from 'react';
 import { ArrowUpRight } from 'lucide-react';
-import { cn } from '@/lib/utils';
 
 type GoodRow = { id: number; name: string };
 type EquipRow = {
@@ -79,7 +78,7 @@ export default function AiSearchTab() {
   }, [q]);
 
   return (
-    <div className="py-4 space-y-4">
+    <div className="min-h-[100vh] flex flex-col py-4 space-y-4">
       {/* Верхняя панель */}
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-sm text-muted-foreground">Введите поисковую фразу:</span>
@@ -99,34 +98,25 @@ export default function AiSearchTab() {
       </div>
 
       {/* Три колонки */}
-      <div className="grid grid-cols-1 gap-4 lg:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2 lg:grid-cols-3 flex-1 items-stretch pb-6">
         {/* Колонка 1: Типы продукции */}
-        <div className="rounded-xl border shadow-sm bg-card overflow-hidden">
+        <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col max-h-[78vh]">
           <div className="px-3 py-2 border-b bg-card text-sm font-semibold">Типы продукции</div>
 
-          <div className="p-2">
-            <div className="h-[520px] overflow-auto rounded-md border bg-background">
+          <div className="p-2 flex-1 flex flex-col">
+            <div className="flex-1 overflow-auto rounded-md border bg-background">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 z-10 border-b bg-sky-50">
                   <tr>
                     <th className="px-2 py-2 text-left">Наименование</th>
-                    <th className="px-2 py-2 w-[1%] text-center">→</th>
+                    <th className="px-2 py-2 w-[1%] text-center"></th>
                   </tr>
                 </thead>
                 <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1.5">
                   {goods.map((g) => (
                     <tr key={g.id} className="border-b">
                       <td className="whitespace-normal break-words leading-5">{g.name}</td>
-                      <td className="text-center">
-                        {/* По макету — переход в каталог с ассоциированным оборудованием.
-                           Бэкенд может маппить goods->equipment. Пока открываем библиотеку без id. */}
-                        <a
-                          href="/library?tab=library"
-                          className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
-                          title="Открыть каталог">
-                          <ArrowUpRight className="h-4 w-4" />
-                        </a>
-                      </td>
+                      <td className="text-center">{/* ссылка убрана */}</td>
                     </tr>
                   ))}
                   {!goods.length && (
@@ -139,38 +129,21 @@ export default function AiSearchTab() {
                 </tbody>
               </table>
             </div>
-
-            {/* SQL-подсказка (из макета) */}
-            <details className="mt-2 text-[11px] text-muted-foreground">
-              <summary className="cursor-pointer">SQL (подсказка)</summary>
-              <pre className="mt-1 whitespace-pre-wrap">
-                {`-- Сопоставлять Search_vector с ib_goods_types.goods_type_vector
--- SELECT TOP 20 лучших совпадений
--- Затем по кнопке открывать соответствующие карточки оборудования в каталоге
-
-SELECT DISTINCT pc.id AS prodclass_id
-FROM ib_prodclass AS pc
-JOIN ib_workshops AS w ON w.prodclass_id = pc.id
-JOIN ib_equipment AS e ON e.workshop_id = w.id
-JOIN ib_equipment_goods AS eg ON eg.equipment_id = e.id
-WHERE eg.goods_id = :id;`}
-              </pre>
-            </details>
           </div>
         </div>
 
         {/* Колонка 2: Оборудования */}
-        <div className="rounded-xl border shadow-sm bg-card overflow-hidden">
+        <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col max-h-[78vh]">
           <div className="px-3 py-2 border-b bg-card text-sm font-semibold">Оборудования</div>
 
-          <div className="p-2">
-            <div className="h-[520px] overflow-auto rounded-md border bg-background">
+          <div className="p-2 flex-1 flex flex-col">
+            <div className="flex-1 overflow-auto rounded-md border bg-background">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 z-10 border-b bg-sky-50">
                   <tr>
                     <th className="px-2 py-2">Отрасль</th>
                     <th className="px-2 py-2">Наименование</th>
-                    <th className="px-2 py-2 w-[1%] text-center">→</th>
+                    <th className="px-2 py-2 w-[1%] text-center"></th>
                   </tr>
                 </thead>
                 <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1.5">
@@ -193,6 +166,8 @@ WHERE eg.goods_id = :id;`}
                             workshop_id: r.workshop_id,
                             equipment_id: r.id,
                           })}
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
                           title="Открыть карточку в каталоге">
                           <ArrowUpRight className="h-4 w-4" />
@@ -210,41 +185,21 @@ WHERE eg.goods_id = :id;`}
                 </tbody>
               </table>
             </div>
-
-            <details className="mt-2 text-[11px] text-muted-foreground">
-              <summary className="cursor-pointer">SQL (подсказка)</summary>
-              <pre className="mt-1 whitespace-pre-wrap">
-                {`-- Сопоставлять Search_vector с ib_equipment.equipment_vector
--- SELECT TOP 20
--- Для выбранного оборудования определить отрасль/класс/цех
-
-SELECT
-  e.id AS equipment_id,
-  w.id AS workshop_id,
-  pc.id AS prodclass_id,
-  i.id AS industry_id
-FROM ib_equipment AS e
-LEFT JOIN ib_workshops AS w ON w.id = e.workshop_id
-LEFT JOIN ib_prodclass AS pc ON pc.id = w.prodclass_id
-LEFT JOIN ib_industry AS i ON i.id = pc.industry_id
-WHERE e.id = :id;`}
-              </pre>
-            </details>
           </div>
         </div>
 
         {/* Колонка 3: Классы предприятий */}
-        <div className="rounded-xl border shadow-sm bg-card overflow-hidden">
+        <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col max-h-[78vh]">
           <div className="px-3 py-2 border-b bg-card text-sm font-semibold">Классы предприятий</div>
 
-          <div className="p-2">
-            <div className="h-[520px] overflow-auto rounded-md border bg-background">
+          <div className="p-2 flex-1 flex flex-col">
+            <div className="flex-1 overflow-auto rounded-md border bg-background">
               <table className="w-full text-xs">
                 <thead className="sticky top-0 z-10 border-b bg-sky-50">
                   <tr>
                     <th className="px-2 py-2">Отрасль</th>
                     <th className="px-2 py-2">Наименование класса</th>
-                    <th className="px-2 py-2 w-[1%] text-center">→</th>
+                    <th className="px-2 py-2 w-[1%] text-center"></th>
                   </tr>
                 </thead>
                 <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1.5">
@@ -260,6 +215,8 @@ WHERE e.id = :id;`}
                             industry_id: r.industry_id,
                             prodclass_id: r.id,
                           })}
+                          target="_blank"
+                          rel="noopener noreferrer"
                           className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
                           title="Открыть класс в каталоге">
                           <ArrowUpRight className="h-4 w-4" />
@@ -277,20 +234,6 @@ WHERE e.id = :id;`}
                 </tbody>
               </table>
             </div>
-
-            <details className="mt-2 text-[11px] text-muted-foreground">
-              <summary className="cursor-pointer">SQL (подсказка)</summary>
-              <pre className="mt-1 whitespace-pre-wrap">
-                {`-- Сопоставлять Search_vector с ib_prodclass.prodclass_vector
--- SELECT TOP 20
-SELECT DISTINCT pc.id AS prodclass_id
-FROM ib_prodclass AS pc
-JOIN ib_workshops AS w ON w.prodclass_id = pc.id
-JOIN ib_equipment AS e ON e.workshop_id = w.id
-LEFT JOIN ib_equipment_goods AS eg ON eg.equipment_id = e.id
-WHERE /* фильтрация по релевантности */;`}
-              </pre>
-            </details>
           </div>
         </div>
       </div>
