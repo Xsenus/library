@@ -1,87 +1,73 @@
 // app/api/user/quota/route.ts
-import { NextRequest, NextResponse } from 'next/server';
-import { db } from '@/lib/db';
+import { NextResponse } from 'next/server';
 import { getSession, clearSession } from '@/lib/auth';
 import { getLiveUserState } from '@/lib/user-state';
+import { resolveUserLimit, countUsedToday } from '@/lib/quota';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
 export const runtime = 'nodejs';
 
-const DEFAULT_DAILY_LIMIT = 10; // дефолт для тех, у кого нет персонального лимита и кто не сотрудник
-const DAY_COND = 'open_at::date = CURRENT_DATE';
+type Quota =
+  | {
+      authenticated: true;
+      unlimited: boolean;
+      limit: number | null;
+      used: number;
+      remaining: number | null;
+    }
+  | {
+      authenticated: false;
+    };
 
-type Quota = {
-  unlimited: boolean;
-  limit: number | null;
-  used: number;
-  remaining: number | null;
-};
-
-export async function GET(_req: NextRequest) {
+export async function GET() {
   try {
     const session = await getSession();
     if (!session) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+      return NextResponse.json({ authenticated: false } satisfies Quota, { status: 401 });
     }
 
     const live = await getLiveUserState(session.id);
     if (!live || !live.activated) {
       clearSession();
-      return NextResponse.json({ error: 'Доступ заблокирован' }, { status: 403 });
+      return NextResponse.json({ authenticated: false } satisfies Quota, { status: 401 });
     }
 
-    // used = COUNT DISTINCT за сегодня
-    const { rows: usedRows } = await db.query<{ c: number }>(
-      `
-      SELECT COUNT(DISTINCT equipment_id)::int AS c
-      FROM users_activity
-      WHERE user_id = $1 AND ${DAY_COND}
-    `,
-      [session.id],
-    );
-    const used = usedRows?.[0]?.c ?? 0;
+    // 1) Сколько уже потрачено сегодня (по Europe/Amsterdam — внутри countUsedToday)
+    const used = await countUsedToday(session.id);
 
-    const isWorker = !!live.irbis_worker;
+    // 2) Резолвим лимит (персональный > 0 имеет приоритет; иначе сотрудник = безлимит; иначе дефолт)
+    const resolved = await resolveUserLimit(session.id, !!live.irbis_worker);
 
-    // тянем персональный лимит для любого пользователя
-    const { rows: limRows } = await db.query<{ lim: number | null }>(
-      `SELECT limits::int AS lim FROM users_irbis WHERE id = $1 LIMIT 1`,
-      [session.id],
-    );
-    const personalLimit = limRows?.[0]?.lim ?? null;
-
-    // логика:
-    // 1) если limits > 0 — используем его для любого пользователя
-    if ((personalLimit ?? 0) > 0) {
-      const limit = personalLimit!;
-      return NextResponse.json({
-        unlimited: false,
-        limit,
-        used,
-        remaining: Math.max(0, limit - used),
-      } satisfies Quota);
-    }
-
-    // 2) если сотрудник и limits <= 0/NULL — безлимит
-    if (isWorker) {
-      return NextResponse.json({
+    // 3) Формируем ответ + заголовки
+    if (resolved.unlimited) {
+      const res = NextResponse.json({
+        authenticated: true,
         unlimited: true,
         limit: null,
         used,
         remaining: null,
-      } as Quota);
+      } satisfies Quota);
+      res.headers.set('X-Views-Limit', 'unlimited');
+      res.headers.set('X-Views-Remaining', 'unlimited');
+      return res;
     }
 
-    // 3) иначе — дефолт
-    return NextResponse.json({
+    const limit = resolved.limit;
+    const remaining = Math.max(0, limit - used);
+
+    const res = NextResponse.json({
+      authenticated: true,
       unlimited: false,
-      limit: DEFAULT_DAILY_LIMIT,
+      limit,
       used,
-      remaining: Math.max(0, DEFAULT_DAILY_LIMIT - used),
-    } as Quota);
+      remaining,
+    } satisfies Quota);
+    res.headers.set('X-Views-Limit', String(limit));
+    res.headers.set('X-Views-Remaining', String(remaining));
+    return res;
   } catch (e) {
-    console.error('Quota error', e);
+    console.error('Quota API error:', e);
     return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 }
