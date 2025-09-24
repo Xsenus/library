@@ -58,7 +58,9 @@ export default function LibraryPage() {
     | 'okved'
     | 'aisearch';
 
-  const [tab, setTab] = useState<'library' | 'cleanscore' | 'okved' | 'aisearch'>(initialTab);
+  const [tab, setTab] = useState<'library' | 'cleanscore' | 'okved' | 'aisearch'>(
+    initialTab === 'cleanscore' || initialTab === 'okved' ? 'library' : initialTab,
+  );
 
   // ======= auth/user flags =======
   const [isWorker, setIsWorker] = useState<boolean>(false);
@@ -382,21 +384,44 @@ export default function LibraryPage() {
   );
 
   const loadOkvedOptions = useCallback(async () => {
-    const params = new URLSearchParams();
-    if (csIndustryEnabled && csIndustryId) params.set('industryId', String(csIndustryId));
-    const r = await fetch(`/api/okved?${params.toString()}`, { cache: 'no-store' });
-    const j = await r.json();
-    setOkvedOptions(Array.isArray(j.items) ? j.items : []);
-  }, [csIndustryEnabled, csIndustryId]);
+    // Не сотрудник — не дергаем API вообще
+    if (!isWorker) {
+      setOkvedOptions([]);
+      return;
+    }
+    try {
+      const params = new URLSearchParams();
+      if (csIndustryEnabled && csIndustryId) params.set('industryId', String(csIndustryId));
+
+      const r = await fetch(`/api/okved?${params.toString()}`, { cache: 'no-store' });
+      if (!r.ok) {
+        console.warn('loadOkvedOptions: HTTP', r.status);
+        setOkvedOptions([]);
+        return;
+      }
+
+      const j = await r.json();
+      setOkvedOptions(Array.isArray(j.items) ? j.items : []);
+    } catch (e) {
+      console.error('loadOkvedOptions failed:', e);
+      setOkvedOptions([]);
+    }
+  }, [isWorker, csIndustryEnabled, csIndustryId]);
 
   useEffect(() => {
+    if (!isWorker) return;
     loadOkvedOptions();
-  }, [loadOkvedOptions]);
+  }, [isWorker, loadOkvedOptions]);
 
   useEffect(() => {
+    if (!isWorker) {
+      setCsOkvedId(null);
+      setOkvedOptions([]);
+      return;
+    }
     loadOkvedOptions();
     setCsOkvedId(null);
-  }, [csIndustryEnabled, csIndustryId, loadOkvedOptions]);
+  }, [isWorker, csIndustryEnabled, csIndustryId, loadOkvedOptions]);
 
   const fetchCleanScore = useCallback(
     async (page: number, query: string, append = false) => {
@@ -414,6 +439,13 @@ export default function LibraryPage() {
         if (csOkvedEnabled && csOkvedId) params.set('okvedId', String(csOkvedId));
 
         const res = await fetch(`/api/cleanscore?${params}`, { cache: 'no-store' });
+        if (!res.ok) {
+          console.warn('fetchCleanScore HTTP', res.status);
+          if (!append) setCsRows([]);
+          setCsHasNext(false);
+          return;
+        }
+
         const data: Partial<ListResponse<CleanScoreRowEx>> = await res.json();
 
         const items: CleanScoreRowEx[] = Array.isArray(data?.items) ? data!.items! : [];
@@ -489,6 +521,38 @@ export default function LibraryPage() {
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [csOkvedEnabled, csOkvedId]);
+
+  // Deep link по goodsId: превращаем в набор industryId/prodclassId/workshopId/equipmentId
+  useEffect(() => {
+    const gid = Number(searchParams.get('goodsId') ?? '');
+    if (!gid) return;
+
+    (async () => {
+      try {
+        const r = await fetch(`/api/goods/${gid}/resolve`, { cache: 'no-store' });
+        const j = await r.json();
+
+        const qp = new URLSearchParams(searchParams);
+        qp.delete('goodsId'); // убираем, чтобы не зациклиться
+        qp.set('tab', 'library');
+
+        if (j?.found && (j.equipment_id || j.workshop_id || j.prodclass_id || j.industry_id)) {
+          if (j.industry_id) qp.set('industryId', String(j.industry_id));
+          if (j.prodclass_id) qp.set('prodclassId', String(j.prodclass_id));
+          if (j.workshop_id) qp.set('workshopId', String(j.workshop_id));
+          if (j.equipment_id) qp.set('equipmentId', String(j.equipment_id));
+        }
+
+        router.replace(`/library?${qp.toString()}`);
+      } catch (e) {
+        console.error('Failed to resolve goodsId → chain:', e);
+        const qp = new URLSearchParams(searchParams);
+        qp.delete('goodsId');
+        router.replace(`/library?${qp.toString()}`);
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   // Deep link
   useEffect(() => {

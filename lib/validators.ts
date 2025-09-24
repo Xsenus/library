@@ -195,7 +195,8 @@ export const okvedCompanySchema = z.object({
   address: z.string().nullable(),
   branch_count: z.coerce.number().nullable(),
   year: z.coerce.number().nullable(),
-  revenue: z.coerce.number().nullable(), // RUB
+  revenue: z.coerce.number().nullable(),
+  employee_count: z.coerce.number().nullable().optional(),
 });
 export type OkvedCompany = z.infer<typeof okvedCompanySchema>;
 
