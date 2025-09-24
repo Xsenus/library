@@ -24,6 +24,11 @@ type ListResponse<T> = {
   totalPages: number;
 };
 
+// ——— стили подсветки выбранного фильтра ———
+const ACTIVE_ROW =
+  'bg-blue-100 text-blue-700 ring-1 ring-blue-300 dark:bg-blue-900/40 dark:text-blue-100 dark:ring-blue-700';
+const INACTIVE_ROW = 'hover:bg-muted';
+
 export default function OkvedTab() {
   const sp = useSearchParams();
   const router = useRouter();
@@ -233,6 +238,14 @@ export default function OkvedTab() {
     [okved, okveds],
   );
 
+  // поднятие выбранного фильтра в начало (не трогаем исходный массив)
+  const okvedsView = useMemo(() => {
+    if (!okved) return okveds;
+    const idx = okveds.findIndex((o) => o.okved_code === okved);
+    if (idx < 0) return okveds;
+    return [okveds[idx], ...okveds.slice(0, idx), ...okveds.slice(idx + 1)];
+  }, [okved, okveds]);
+
   const parent2 = useMemo(() => {
     const m = okved.match(/^\d{2}/);
     return m ? m[0] : null;
@@ -440,7 +453,7 @@ export default function OkvedTab() {
                 data-okved-row
                 data-q="все компании"
                 className={`flex items-center gap-2 py-1.5 px-2 rounded-md cursor-pointer ${
-                  isAll ? 'bg-muted' : 'hover:bg-muted'
+                  isAll ? ACTIVE_ROW : INACTIVE_ROW
                 }`}
                 onClick={() => {
                   setOkved('');
@@ -459,12 +472,22 @@ export default function OkvedTab() {
                   <ArrowUpRight className="h-4 w-4" />
                 </Button>
                 <div className="truncate">
-                  <div className="font-medium text-xs">Все компании</div>
-                  <div className="text-[11px] text-muted-foreground truncate">без фильтра</div>
+                  <div
+                    className={`font-medium text-xs ${
+                      isAll ? 'text-blue-900 dark:text-blue-100' : ''
+                    }`}>
+                    Все компании
+                  </div>
+                  <div
+                    className={`text-[11px] truncate ${
+                      isAll ? 'text-blue-800/80 dark:text-blue-200/80' : 'text-muted-foreground'
+                    }`}>
+                    без фильтра
+                  </div>
                 </div>
               </div>
 
-              {okveds.map((x) => {
+              {okvedsView.map((x) => {
                 const active = okved === x.okved_code;
                 return (
                   <div
@@ -472,7 +495,7 @@ export default function OkvedTab() {
                     data-okved-row
                     data-q={`${x.okved_code} ${x.okved_main}`}
                     className={`flex items-center gap-2 py-1.5 px-2 rounded-md cursor-pointer ${
-                      active ? 'bg-muted' : 'hover:bg-muted'
+                      active ? ACTIVE_ROW : INACTIVE_ROW
                     }`}
                     onClick={() => {
                       setPage(1);
@@ -494,8 +517,18 @@ export default function OkvedTab() {
                       <ArrowUpRight className="h-4 w-4" />
                     </Button>
                     <div className="truncate">
-                      <div className="font-medium text-xs">{x.okved_code}</div>
-                      <div className="text-[11px] text-muted-foreground truncate">
+                      <div
+                        className={`font-medium text-xs ${
+                          active ? 'text-blue-900 dark:text-blue-100' : ''
+                        }`}>
+                        {x.okved_code}
+                      </div>
+                      <div
+                        className={`text-[11px] truncate ${
+                          active
+                            ? 'text-blue-800/80 dark:text-blue-200/80'
+                            : 'text-muted-foreground'
+                        }`}>
                         {x.okved_main}
                       </div>
                     </div>
