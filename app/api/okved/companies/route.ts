@@ -57,11 +57,10 @@ export async function GET(request: NextRequest) {
     const args: any[] = [];
     let i = 1;
 
-    // ---------- ФИЛЬТР ПО ОКВЭД (точно / родовой + доп.коды) ----------
+    // ---------- ФИЛЬТР ПО ОКВЭД ----------
     if (base.okved) {
       if (includeParent) {
-        // Родовой: первые две цифры, затем точка ИЛИ конец строки.
-        // Пример для 18.12 -> '^18(\.|$)'
+        // Префикс по первым двум цифрам
         const prefix2 = (base.okved.match(/^\d{2}/)?.[0] ?? '').trim();
         if (!prefix2) {
           return NextResponse.json({
@@ -82,13 +81,11 @@ export async function GET(request: NextRequest) {
               SELECT 1
               FROM jsonb_array_elements(COALESCE(d.okveds, '[]'::jsonb)) AS elem(val)
               WHERE
-                -- элемент-строка: "18.12"
                 (
                   jsonb_typeof(elem.val) = 'string'
                   AND TRIM(BOTH '"' FROM elem.val::text) ~ ('^' || $${i} || '(\\.|$)')
                 )
                 OR
-                -- элемент-объект с любым полем кода
                 (
                   jsonb_typeof(elem.val) = 'object'
                   AND COALESCE(elem.val->>'okved', elem.val->>'code', elem.val->>'okved_code', '') ~ ('^' || $${i} || '(\\.|$)')
@@ -100,7 +97,6 @@ export async function GET(request: NextRequest) {
 
         where.push(`(${cond})`);
       } else {
-        // Точное совпадение выбранного кода
         let cond = `TRIM(d.main_okved) = $${i}`;
         args.push(base.okved);
         i++;
@@ -129,7 +125,7 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // ---------- Фильтр по индустрии (как было у тебя) ----------
+    // ---------- Фильтр по индустрии ----------
     if (industryId != null) {
       const roots = await getOkvedRootsForIndustry(industryId); // ['28','10','33',...]
       if (roots.length > 0) {
@@ -155,14 +151,30 @@ export async function GET(request: NextRequest) {
         ? `ORDER BY d.revenue ASC NULLS LAST, d.inn`
         : `ORDER BY d.revenue DESC NULLS LAST, d.inn`;
 
+    // COUNT: одна строка на компанию, можно просто посчитать
     const countSql = `
       SELECT COUNT(*)::int AS cnt
       FROM dadata_result d
       ${whereSql}
     `;
 
+    // Основной SELECT: алиасим колонки с дефисом
     const dataSql = `
-      SELECT d.inn, d.short_name, d.address, d.branch_count, d.year, d.revenue, d.employee_count
+      SELECT
+        d.inn,
+        d.short_name,
+        d.address,
+        d.branch_count,
+        d.year,
+        d.revenue,
+        d.income,
+        d.employee_count,
+        "revenue-1" AS revenue_1,
+        "revenue-2" AS revenue_2,
+        "revenue-3" AS revenue_3,
+        "income-1"  AS income_1,
+        "income-2"  AS income_2,
+        "income-3"  AS income_3
       FROM dadata_result d
       ${whereSql}
       ${orderSql}

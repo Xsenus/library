@@ -106,3 +106,9 @@
     scrollbar-width: thin; /* Firefox */
   }
 }
+
+/* mini-stacked-area.css */
+.recharts-tooltip-wrapper {
+  z-index: 2147483647 !important;
+  pointer-events: none;
+}

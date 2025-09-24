@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ArrowUpRight, X } from 'lucide-react';
+import { MiniStackedArea } from '@/components/library/mini-area';
 
 type OkvedMain = ReturnType<typeof okvedMainSchema.parse>;
 type SortKey = 'revenue_desc' | 'revenue_asc';
@@ -378,7 +379,7 @@ export default function OkvedTab() {
     }
 
     window.addEventListener('mousemove', onMove);
-    window.addEventListener('touchmove', onMove, { passive: false });
+    window.addEventListener('touchmove', onMove as any, { passive: false } as any);
     window.addEventListener('mouseup', onUp);
     window.addEventListener('touchend', onUp);
     return () => {
@@ -426,6 +427,8 @@ export default function OkvedTab() {
       if (typeof abortFn === 'function') abortFn();
     };
   }, [loadCompanies]);
+
+  const lastYear = new Date().getFullYear() - 1;
 
   return (
     <div ref={layoutRef} className="flex flex-col lg:flex-row gap-1 text-[13px] leading-snug">
@@ -728,37 +731,95 @@ export default function OkvedTab() {
                     </tr>
                   )}
                   {!loading &&
-                    companies.map((c) => (
-                      <tr key={`${c.inn}-${c.year}`} className="border-b hover:bg-muted/40">
-                        <td className="py-0.5 pr-2">
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7"
-                            title="Открыть карточку компании в Bitrix24"
-                            onClick={() =>
-                              window.open(
-                                `/api/b24/resolve-company?inn=${encodeURIComponent(
-                                  c.inn,
-                                )}&mode=pick`,
-                                '_blank',
-                                'noopener',
-                              )
-                            }>
-                            <ArrowUpRight className="h-4 w-4" />
-                          </Button>
-                        </td>
-                        <td className="py-0.5 pr-3 whitespace-nowrap">{c.inn}</td>
-                        <td className="py-0.5 pr-3">{c.short_name}</td>
-                        <td className="py-0.5 pr-3 text-right tabular-nums">
-                          {revenueMln(c.revenue)}
-                        </td>
-                        <td className="py-0.5 pr-3">{c.address ?? '—'}</td>
-                        <td className="py-0.5 pr-3">{formatEmployees(getEmployeeCount(c))}</td>
-                        <td className="py-0.5 pr-3">{c.branch_count ?? '—'}</td>
-                        <td className="py-0.5 pr-2">{c.year ?? '—'}</td>
-                      </tr>
-                    ))}
+                    companies.map((c) => {
+                      const seriesRevenue = [c.revenue_3, c.revenue_2, c.revenue_1, c.revenue];
+                      const seriesIncome = [c.income_3, c.income_2, c.income_1, c.income];
+
+                      const title = `Выручка (млн): ${seriesRevenue
+                        .map((v) =>
+                          Number.isFinite(v as number)
+                            ? Math.round((v as number) / 1_000_000)
+                            : '—',
+                        )
+                        .join(' · ')} | Прибыль (млн): ${seriesIncome
+                        .map((v) =>
+                          Number.isFinite(v as number)
+                            ? Math.round((v as number) / 1_000_000)
+                            : '—',
+                        )
+                        .join(' · ')}`;
+
+                      const isActual = (c.year ?? 0) === lastYear;
+
+                      const valueLabel = isLg()
+                        ? revenueMln(c.revenue)
+                        : revenueMln(c.income as number | null);
+
+                      const valueTitle = isLg() ? 'Выручка, млн' : 'Прибыль, млн';
+
+                      return (
+                        <tr key={`${c.inn}-${c.year}`} className="border-b hover:bg-muted/40">
+                          <td className="py-0.5 pr-2">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              className="h-7 w-7"
+                              title="Открыть карточку компании в Bitrix24"
+                              onClick={() =>
+                                window.open(
+                                  `/api/b24/resolve-company?inn=${encodeURIComponent(
+                                    c.inn,
+                                  )}&mode=pick`,
+                                  '_blank',
+                                  'noopener',
+                                )
+                              }>
+                              <ArrowUpRight className="h-4 w-4" />
+                            </Button>
+                          </td>
+                          <td className="py-0.5 pr-3 whitespace-nowrap">{c.inn}</td>
+                          <td className="py-0.5 pr-3">{c.short_name}</td>
+
+                          {/* мини-график + цифра рядом */}
+                          <td className="py-0.5 pr-3">
+                            <div className="flex items-center gap-2">
+                              {/* только график, строго 100×45 */}
+                              <div className="w-[100px] h-[45px] shrink-0 overflow-hidden">
+                                <MiniStackedArea
+                                  revenue={[c.revenue_3, c.revenue_2, c.revenue_1, c.revenue]}
+                                  income={[c.income_3, c.income_2, c.income_1, c.income]}
+                                  year={c.year}
+                                />
+                              </div>
+
+                              {/* цифра рядом (выручка на десктопе / прибыль на мобиле) */}
+                              <div className="text-right tabular-nums w-[56px]">
+                                {isLg()
+                                  ? revenueMln(c.revenue)
+                                  : revenueMln(c.income as number | null)}
+                              </div>
+                            </div>
+                          </td>
+
+                          <td className="py-0.5 pr-3">{c.address ?? '—'}</td>
+                          <td className="py-0.5 pr-3">{formatEmployees(getEmployeeCount(c))}</td>
+                          <td className="py-0.5 pr-3">{c.branch_count ?? '—'}</td>
+                          <td className="py-0.5 pr-2">
+                            <span
+                              className={`inline-block px-1.5 py-0.5 rounded border ${
+                                isActual
+                                  ? 'border-transparent text-foreground'
+                                  : 'border-red-400 text-red-600'
+                              }`}
+                              title={
+                                isActual ? 'Последний закрытый год' : 'Не последний закрытый год'
+                              }>
+                              {c.year ?? '—'}
+                            </span>
+                          </td>
+                        </tr>
+                      );
+                    })}
                 </tbody>
               </table>
             </div>
@@ -800,7 +861,7 @@ function isLg() {
 }
 function getPointerX(e: MouseEvent | TouchEvent): number | null {
   if (e instanceof MouseEvent) return e.clientX;
-  const t = e.touches[0] ?? e.changedTouches[0];
+  const t = (e as TouchEvent).touches[0] ?? (e as TouchEvent).changedTouches[0];
   return t ? t.clientX : null;
 }
 function dedupeById<T extends { id: number }>(arr: T[]): T[] {
@@ -819,7 +880,6 @@ function getEmployeeCount(c: OkvedCompany): number | null {
   const v = anyC?.dadata_result?.employee_count ?? anyC?.employee_count ?? null;
   return Number.isFinite(v) ? Number(v) : null;
 }
-
 function formatEmployees(n: number | null): string {
   if (!n || !Number.isFinite(n)) return '—';
   return n.toLocaleString('ru-RU');

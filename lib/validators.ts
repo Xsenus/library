@@ -55,12 +55,12 @@ export const equipmentListSchema = z.object({
 // Equipment (detail)
 export const equipmentDetailSchema = z.object({
   id: z.coerce.number(),
-  equipment_name: z.string().nullable(), // может быть NULL
-  workshop_id: z.coerce.number().nullable(), // в редких случаях тоже может отсутствовать
+  equipment_name: z.string().nullable(),
+  workshop_id: z.coerce.number().nullable(),
 
   // Оценки
   equipment_score: z.number().nullable(),
-  equipment_score_real: z.number().nullable(), // 0 = ещё не исследовано
+  equipment_score_real: z.number().nullable(),
   clean_score: z.number().nullable(),
 
   // Ссылки/описание
@@ -188,14 +188,27 @@ export const okvedMainSchema = z.object({
 });
 export type OkvedMain = z.infer<typeof okvedMainSchema>;
 
-// Companies by OKVED (from bitrix_data.dadata_result)
+// Companies by OKVED — ОДНА СТРОКА НА КОМПАНИЮ с историей в колонках
 export const okvedCompanySchema = z.object({
   inn: z.string(),
   short_name: z.string(),
   address: z.string().nullable(),
   branch_count: z.coerce.number().nullable(),
+
   year: z.coerce.number().nullable(),
+
+  // текущее
   revenue: z.coerce.number().nullable(),
+  income: z.coerce.number().nullable().optional(),
+
+  // история (из колонок "revenue-1…3"/"income-1…3")
+  revenue_1: z.coerce.number().nullable().optional(),
+  revenue_2: z.coerce.number().nullable().optional(),
+  revenue_3: z.coerce.number().nullable().optional(),
+  income_1: z.coerce.number().nullable().optional(),
+  income_2: z.coerce.number().nullable().optional(),
+  income_3: z.coerce.number().nullable().optional(),
+
   employee_count: z.coerce.number().nullable().optional(),
 });
 export type OkvedCompany = z.infer<typeof okvedCompanySchema>;
