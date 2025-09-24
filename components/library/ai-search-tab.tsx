@@ -3,7 +3,18 @@
 import { useCallback, useState } from 'react';
 import { ArrowUpRight } from 'lucide-react';
 
-type GoodRow = { id: number; name: string };
+type GoodRow = {
+  id: number;
+  name: string;
+  target_equipment_id?: number | null;
+  target_industry_id?: number | null;
+  target_industry?: string | null;
+  target_prodclass_id?: number | null;
+  target_prodclass?: string | null;
+  target_workshop_id?: number | null;
+  target_workshop_name?: string | null;
+  target_cs?: number | null;
+};
 type EquipRow = {
   id: number;
   equipment_name: string;
@@ -13,12 +24,14 @@ type EquipRow = {
   prodclass: string;
   workshop_id: number;
   workshop_name: string;
+  cs?: number | null;
 };
 type ProdclassRow = {
   id: number;
   prodclass: string;
   industry_id: number;
   industry: string;
+  cs?: number | null;
 };
 
 type AiResponse = {
@@ -43,12 +56,36 @@ function toLibraryLink(
   if (ids.equipment_id) qp.set('equipmentId', String(ids.equipment_id));
   return `/library?${qp.toString()}`;
 }
-
 function toLibraryLinkByGoods(goodsId: number) {
   const qp = new URLSearchParams();
   qp.set('tab', 'library');
   qp.set('goodsId', String(goodsId));
   return `/library?${qp.toString()}`;
+}
+function toLibraryLinkFromGood(g: GoodRow) {
+  if (
+    g.target_industry_id &&
+    g.target_prodclass_id &&
+    g.target_workshop_id &&
+    g.target_equipment_id
+  ) {
+    return toLibraryLink({
+      industry_id: g.target_industry_id,
+      prodclass_id: g.target_prodclass_id,
+      workshop_id: g.target_workshop_id,
+      equipment_id: g.target_equipment_id,
+    });
+  }
+  return toLibraryLinkByGoods(g.id);
+}
+
+function csColor(score: number) {
+  if (!Number.isFinite(score)) return 'text-muted-foreground';
+  if (score < 0.8) return 'text-muted-foreground';
+  if (score < 0.86) return 'text-zinc-500';
+  if (score < 0.9) return 'text-emerald-500';
+  if (score < 0.95) return 'text-emerald-600';
+  return 'text-emerald-700';
 }
 
 export default function AiSearchTab() {
@@ -64,12 +101,10 @@ export default function AiSearchTab() {
   const runSearch = useCallback(async () => {
     const query = q.trim();
     if (!query) return;
-
     setLoading(true);
     setGoods([]);
     setEquipment([]);
     setProdclasses([]);
-
     try {
       const res = await fetch('/api/ai-search', {
         method: 'POST',
@@ -91,15 +126,10 @@ export default function AiSearchTab() {
     }
   }, [q]);
 
-  // Высота рабочей области: отнимаем шапку/панель (примерно 220px).
-  // При желании подстрой: 200–260 в зависимости от макета.
-  const WRAP_HEIGHT = 'h-[calc(100vh-220px)]';
-
   const Column: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
     <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col">
       <div className="px-3 py-2 border-b bg-card text-sm font-semibold">{title}</div>
       <div className="p-2 flex-1 min-h-0 flex flex-col">
-        {/* min-h-0 ВАЖЕН: позволяет flex-детям с overflow корректно ужиматься */}
         <div className="flex-1 min-h-0 rounded-md border bg-background overflow-y-auto">
           {children}
         </div>
@@ -127,8 +157,7 @@ export default function AiSearchTab() {
         </button>
       </div>
 
-      {/* Рабочая область фиксированной высоты → внутри уже скроллятся таблицы */}
-      <div className={`${WRAP_HEIGHT} grid grid-cols-1 gap-2 lg:grid-cols-3 pb-2`}>
+      <div className="h-[calc(100vh-220px)] grid grid-cols-1 gap-2 lg:grid-cols-3 pb-2">
         {/* Типы продукции */}
         <Column title="Типы продукции">
           <table className="w-full text-xs">
@@ -141,14 +170,23 @@ export default function AiSearchTab() {
             <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-1.5">
               {goods.map((g) => (
                 <tr key={g.id} className="border-b">
-                  <td className="whitespace-normal break-words leading-5">{g.name}</td>
+                  <td className="whitespace-normal break-words leading-5">
+                    <span className="font-medium">{g.name}</span>
+                    {typeof g.target_cs === 'number' && (
+                      <span
+                        className={`ml-1 font-extrabold tabular-nums ${csColor(g.target_cs)}`}
+                        title="Clean Score (оборудование по ссылке)">
+                        {g.target_cs.toFixed(2)}
+                      </span>
+                    )}
+                  </td>
                   <td className="text-center">
                     <a
-                      href={toLibraryLinkByGoods(g.id)}
+                      href={toLibraryLinkFromGood(g)}
                       target="_blank"
                       rel="noopener noreferrer"
                       className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
-                      title="Открыть каталог: оборудование для этого продукта">
+                      title="Открыть каталог">
                       <ArrowUpRight className="h-4 w-4" />
                     </a>
                   </td>
@@ -180,7 +218,16 @@ export default function AiSearchTab() {
                 <tr key={r.id} className="border-b align-top">
                   <td className="whitespace-normal break-words leading-5">{r.industry || '—'}</td>
                   <td className="whitespace-normal break-words leading-5">
-                    <div className="font-medium">{r.equipment_name}</div>
+                    <div className="font-medium">
+                      {r.equipment_name}
+                      {typeof r.cs === 'number' && (
+                        <span
+                          className={`ml-1 font-extrabold tabular-nums ${csColor(r.cs)}`}
+                          title="Clean Score">
+                          {r.cs.toFixed(2)}
+                        </span>
+                      )}
+                    </div>
                     <div className="text-muted-foreground">
                       {r.prodclass} / {r.workshop_name}
                     </div>
@@ -227,7 +274,16 @@ export default function AiSearchTab() {
               {prodclasses.map((r) => (
                 <tr key={r.id} className="border-b">
                   <td className="whitespace-normal break-words leading-5">{r.industry || '—'}</td>
-                  <td className="whitespace-normal break-words leading-5">{r.prodclass}</td>
+                  <td className="whitespace-normal break-words leading-5">
+                    <span className="font-medium">{r.prodclass}</span>
+                    {typeof r.cs === 'number' && (
+                      <span
+                        className={`ml-1 font-extrabold tabular-nums ${csColor(r.cs)}`}
+                        title="Clean Score (best)">
+                        {r.cs.toFixed(2)}
+                      </span>
+                    )}
+                  </td>
                   <td className="text-center">
                     <a
                       href={toLibraryLink({ industry_id: r.industry_id, prodclass_id: r.id })}

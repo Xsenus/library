@@ -11,19 +11,44 @@ const OPENAI_EMBED_MODEL = process.env.OPENAI_EMBED_MODEL ?? 'text-embedding-3-l
 const AI_TIMEOUT_MS = 15000;
 
 type AnyRow = Record<string, any>;
+
+type GoodRow = {
+  id: number;
+  name: string;
+  target_equipment_id?: number | null;
+  target_industry_id?: number | null;
+  target_industry?: string | null;
+  target_prodclass_id?: number | null;
+  target_prodclass?: string | null;
+  target_workshop_id?: number | null;
+  target_workshop_name?: string | null;
+  target_cs?: number | null;
+};
+
+type EquipRow = {
+  id: number;
+  equipment_name: string;
+  industry_id: number;
+  industry: string;
+  prodclass_id: number;
+  prodclass: string;
+  workshop_id: number;
+  workshop_name: string;
+  cs?: number | null;
+};
+
+type ProdclassRow = {
+  id: number;
+  prodclass: string;
+  industry_id: number;
+  industry: string;
+  cs?: number | null;
+};
+
 type Payload = {
-  goods: { id: number; name: string }[];
-  equipment: {
-    id: number;
-    equipment_name: string;
-    industry_id: number;
-    industry: string;
-    prodclass_id: number;
-    prodclass: string;
-    workshop_id: number;
-    workshop_name: string;
-  }[];
-  prodclasses: { id: number; prodclass: string; industry_id: number; industry: string }[];
+  goods: GoodRow[];
+  equipment: EquipRow[];
+  prodclasses: ProdclassRow[];
 };
 
 function uniqById<T extends { id: number }>(rows: T[]): T[] {
@@ -43,15 +68,41 @@ function uniqById<T extends { id: number }>(rows: T[]): T[] {
 function hasAny(p: Payload) {
   return (p.goods?.length ?? 0) + (p.equipment?.length ?? 0) + (p.prodclasses?.length ?? 0) > 0;
 }
-function normGoods(rows: AnyRow[]) {
+
+/* ---------- normalizers ---------- */
+function normGoods(rows: AnyRow[]): GoodRow[] {
   return (rows ?? [])
     .map((r) => ({
       id: Number(r.id ?? r.goods_id ?? 0),
       name: String(r.name ?? r.goods_type_name ?? r.title ?? ''),
+      target_equipment_id: r.target_equipment_id != null ? Number(r.target_equipment_id) : null,
+      target_industry_id: r.target_industry_id != null ? Number(r.target_industry_id) : null,
+      target_industry:
+        r.target_industry != null
+          ? String(r.target_industry)
+          : r.industry != null
+          ? String(r.industry)
+          : null,
+      target_prodclass_id: r.target_prodclass_id != null ? Number(r.target_prodclass_id) : null,
+      target_prodclass:
+        r.target_prodclass != null
+          ? String(r.target_prodclass)
+          : r.prodclass != null
+          ? String(r.prodclass)
+          : null,
+      target_workshop_id: r.target_workshop_id != null ? Number(r.target_workshop_id) : null,
+      target_workshop_name:
+        r.target_workshop_name != null
+          ? String(r.target_workshop_name)
+          : r.workshop_name != null
+          ? String(r.workshop_name)
+          : null,
+      target_cs: r.target_cs == null ? (r.cs == null ? null : Number(r.cs)) : Number(r.target_cs),
     }))
     .filter((x) => x.id > 0);
 }
-function normEquipment(rows: AnyRow[]) {
+
+function normEquipment(rows: AnyRow[]): EquipRow[] {
   return (rows ?? [])
     .map((r) => ({
       id: Number(r.id ?? r.equipment_id ?? 0),
@@ -62,19 +113,23 @@ function normEquipment(rows: AnyRow[]) {
       prodclass: String(r.prodclass ?? r.prodclass_name ?? ''),
       workshop_id: Number(r.workshop_id ?? 0),
       workshop_name: String(r.workshop_name ?? r.workshop ?? ''),
+      cs: r.cs == null ? (r.clean_score == null ? null : Number(r.clean_score)) : Number(r.cs),
     }))
     .filter((x) => x.id > 0);
 }
-function normProdclasses(rows: AnyRow[]) {
+
+function normProdclasses(rows: AnyRow[]): ProdclassRow[] {
   return (rows ?? [])
     .map((r) => ({
       id: Number(r.id ?? r.prodclass_id ?? 0),
       prodclass: String(r.prodclass ?? r.name ?? ''),
       industry_id: Number(r.industry_id ?? 0),
       industry: String(r.industry ?? r.industry_name ?? ''),
+      cs: r.cs == null ? (r.best_cs == null ? null : Number(r.best_cs)) : Number(r.cs),
     }))
     .filter((x) => x.id > 0);
 }
+
 function pack(g: AnyRow[], e: AnyRow[], p: AnyRow[]): Payload {
   return {
     goods: uniqById(normGoods(g)),
@@ -83,7 +138,7 @@ function pack(g: AnyRow[], e: AnyRow[], p: AnyRow[]): Payload {
   };
 }
 
-/* ---------- SQL: быстрый локальный поиск (без эмбеддинга) ---------- */
+/* ---------- SQL: быстрый локальный поиск ---------- */
 const QF1_GOODS = `
 SELECT g.id::int AS id, g.goods_type_name::text AS name
 FROM ib_goods_types g
@@ -91,6 +146,7 @@ WHERE g.goods_type_name ILIKE '%' || $1 || '%'
 ORDER BY length(g.goods_type_name) ASC, g.id
 LIMIT 20;
 `;
+
 const QF1_EQUIPMENT = `
 SELECT
   e.id::int              AS id,
@@ -100,7 +156,8 @@ SELECT
   pc.id::int             AS prodclass_id,
   pc.prodclass::text     AS prodclass,
   w.id::int              AS workshop_id,
-  w.workshop_name::text  AS workshop_name
+  w.workshop_name::text  AS workshop_name,
+  e.clean_score::numeric AS cs
 FROM ib_equipment e
 LEFT JOIN ib_workshops w ON w.id = e.workshop_id
 LEFT JOIN ib_prodclass pc ON pc.id = w.prodclass_id
@@ -112,12 +169,14 @@ WHERE e.equipment_name ILIKE '%' || $1 || '%'
 ORDER BY length(e.equipment_name) ASC, e.id
 LIMIT 20;
 `;
+
 const QF1_PRODCLASS = `
 SELECT
-  pc.id::int         AS id,
-  pc.prodclass::text AS prodclass,
-  i.id::int          AS industry_id,
-  i.industry::text   AS industry
+  pc.id::int          AS id,
+  pc.prodclass::text  AS prodclass,
+  i.id::int           AS industry_id,
+  i.industry::text    AS industry,
+  pc.best_cs::numeric AS cs
 FROM ib_prodclass pc
 LEFT JOIN ib_industry i ON i.id = pc.industry_id
 WHERE pc.prodclass ILIKE '%' || $1 || '%'
@@ -142,7 +201,8 @@ SELECT
   pc.id::int             AS prodclass_id,
   pc.prodclass::text     AS prodclass,
   w.id::int              AS workshop_id,
-  w.workshop_name::text  AS workshop_name
+  w.workshop_name::text  AS workshop_name,
+  e.clean_score::numeric AS cs
 FROM ib_equipment e
 LEFT JOIN ib_workshops w ON w.id = e.workshop_id
 LEFT JOIN ib_prodclass pc ON pc.id = w.prodclass_id
@@ -152,17 +212,18 @@ LIMIT 20;
 `;
 const QV_PRODCLASS = `
 SELECT
-  pc.id::int         AS id,
-  pc.prodclass::text AS prodclass,
-  i.id::int          AS industry_id,
-  i.industry::text   AS industry
+  pc.id::int          AS id,
+  pc.prodclass::text  AS prodclass,
+  i.id::int           AS industry_id,
+  i.industry::text    AS industry,
+  pc.best_cs::numeric AS cs
 FROM ib_prodclass pc
 LEFT JOIN ib_industry i ON i.id = pc.industry_id
 ORDER BY pc.prodclass_vector <=> $1::vector
 LIMIT 20;
 `;
 
-/* ---------- SQL: выборка по ID (если сервис вернул списки id) ---------- */
+/* ---------- SQL: выборка по ID ---------- */
 const Q_BY_GOODS_IDS = `
 SELECT g.id::int AS id, g.goods_type_name::text AS name
 FROM ib_goods_types g
@@ -175,7 +236,8 @@ SELECT
   e.equipment_name::text AS equipment_name,
   i.id::int AS industry_id, i.industry::text AS industry,
   pc.id::int AS prodclass_id, pc.prodclass::text AS prodclass,
-  w.id::int  AS workshop_id, w.workshop_name::text AS workshop_name
+  w.id::int  AS workshop_id, w.workshop_name::text AS workshop_name,
+  e.clean_score::numeric AS cs
 FROM ib_equipment e
 LEFT JOIN ib_workshops w ON w.id = e.workshop_id
 LEFT JOIN ib_prodclass pc ON pc.id = w.prodclass_id
@@ -184,13 +246,71 @@ WHERE e.id = ANY($1::int[])
 LIMIT 50;
 `;
 const Q_BY_PRODCLASS_IDS = `
-SELECT pc.id::int AS id, pc.prodclass::text AS prodclass,
-       i.id::int AS industry_id, i.industry::text AS industry
+SELECT
+  pc.id::int AS id,
+  pc.prodclass::text AS prodclass,
+  i.id::int AS industry_id,
+  i.industry::text AS industry,
+  pc.best_cs::numeric AS cs
 FROM ib_prodclass pc
 LEFT JOIN ib_industry i ON i.id = pc.industry_id
 WHERE pc.id = ANY($1::int[])
 LIMIT 50;
 `;
+
+/* ---------- NEW: целевое оборудование для каждого товара ---------- */
+const Q_TARGET_EQUIPMENT_FOR_GOODS = `
+SELECT
+  g.id::int             AS goods_id,
+  e.id::int             AS target_equipment_id,
+  e.clean_score::numeric AS target_cs,
+  i.id::int             AS target_industry_id,
+  i.industry::text      AS target_industry,
+  pc.id::int            AS target_prodclass_id,
+  pc.prodclass::text    AS target_prodclass,
+  w.id::int             AS target_workshop_id,
+  w.workshop_name::text AS target_workshop_name
+FROM ib_goods_types g
+CROSS JOIN LATERAL (
+  SELECT e.id, e.clean_score, w.id AS w_id, pc.id AS pc_id, i.id AS i_id
+  FROM ib_equipment e
+  LEFT JOIN ib_workshops w ON w.id = e.workshop_id
+  LEFT JOIN ib_prodclass pc ON pc.id = w.prodclass_id
+  LEFT JOIN ib_industry  i  ON i.id  = pc.industry_id
+  ORDER BY e.equipment_vector <=> g.goods_type_vector
+  LIMIT 1
+) sel
+LEFT JOIN ib_equipment e ON e.id = sel.id
+LEFT JOIN ib_workshops w ON w.id = sel.w_id
+LEFT JOIN ib_prodclass pc ON pc.id = sel.pc_id
+LEFT JOIN ib_industry  i  ON i.id  = sel.i_id
+WHERE g.id = ANY($1::int[])
+`;
+
+async function enrichGoodsWithTargets(goods: GoodRow[]): Promise<GoodRow[]> {
+  if (!goods.length) return goods;
+  const ids = goods.map((g) => g.id);
+  const { rows } = await db
+    .query(Q_TARGET_EQUIPMENT_FOR_GOODS, [ids])
+    .catch(() => ({ rows: [] as AnyRow[] }));
+  const byGoods: Record<number, AnyRow> = Object.create(null);
+  for (const r of rows) byGoods[Number(r.goods_id)] = r;
+  return goods.map((g) => {
+    const t = byGoods[g.id];
+    if (!t) return g;
+    return {
+      ...g,
+      target_equipment_id: t.target_equipment_id ?? null,
+      target_cs: t.target_cs == null ? null : Number(t.target_cs),
+      target_industry_id: t.target_industry_id ?? null,
+      target_industry: t.target_industry ?? null,
+      target_prodclass_id: t.target_prodclass_id ?? null,
+      target_prodclass: t.target_prodclass ?? null,
+      target_workshop_id: t.target_workshop_id ?? null,
+      target_workshop_name: t.target_workshop_name ?? null,
+    };
+  });
+}
 
 /* ---------- helpers ---------- */
 async function queryDbFast(q: string): Promise<Payload> {
@@ -262,22 +382,19 @@ async function callUpstream(q: string, signal: AbortSignal): Promise<Payload> {
     body: JSON.stringify({ q }),
     signal,
   });
-
   if (!r.ok) {
     const msg = await r.text().catch(() => '');
     throw new Error(`Upstream ${r.status}: ${msg.slice(0, 400)}`);
   }
-
   const raw = await r.json();
 
-  // 1) Если сервис вернул вектор — делаем kNN
+  // vector
   const vec = raw?.embedding ?? raw?.vector;
   if (Array.isArray(vec) && vec.length) {
-    const payload = await queryDbVector(toVectorLiteral(vec));
-    return payload;
+    return await queryDbVector(toVectorLiteral(vec));
   }
 
-  // 2) Если вернул ids — добираем из БД
+  // ids
   if (
     raw?.ids &&
     (raw.ids.goods?.length || raw.ids.equipment?.length || raw.ids.prodclasses?.length)
@@ -285,7 +402,7 @@ async function callUpstream(q: string, signal: AbortSignal): Promise<Payload> {
     return await queryByIds(raw.ids);
   }
 
-  // 3) Если уже готовые массивы — нормализуем
+  // ready arrays
   const goods = normGoods(raw?.data?.goods ?? raw?.goods ?? []);
   const equipment = normEquipment(raw?.data?.equipment ?? raw?.equipment ?? []);
   const prodclasses = normProdclasses(raw?.data?.prodclasses ?? raw?.prodclasses ?? []);
@@ -305,10 +422,9 @@ export async function POST(req: NextRequest) {
     const query = String(q ?? '').trim();
     if (!query) return NextResponse.json({ goods: [], equipment: [], prodclasses: [] });
 
-    // step 1: быстрый локальный снимок
     const firstDb = await queryDbFast(query);
 
-    // step 2: пробуем свой сервис
+    let finalPayload: Payload | null = null;
     try {
       const aiFromUpstream = await callUpstream(query, ctrl.signal);
       const dedup = {
@@ -319,26 +435,34 @@ export async function POST(req: NextRequest) {
           ...(aiFromUpstream.prodclasses ?? []),
         ]),
       };
-      if (hasAny(dedup)) return NextResponse.json(dedup);
+      if (hasAny(dedup)) finalPayload = dedup;
     } catch {
-      // пойдём на шаг 3
+      /* continue */
     }
 
-    // step 3: если свой сервис не помог — сами считаем эмбеддинг и делаем kNN
-    try {
-      const vec = await embedQuery(query, ctrl.signal);
-      const fromVector = await queryDbVector(vec);
-      const dedup = {
-        goods: uniqById([...(firstDb.goods ?? []), ...(fromVector.goods ?? [])]),
-        equipment: uniqById([...(firstDb.equipment ?? []), ...(fromVector.equipment ?? [])]),
-        prodclasses: uniqById([...(firstDb.prodclasses ?? []), ...(fromVector.prodclasses ?? [])]),
-      };
-      return NextResponse.json(dedup);
-    } catch {
-      // ничего — вернём только первую БД
+    if (!finalPayload) {
+      try {
+        const vec = await embedQuery(query, ctrl.signal);
+        const fromVector = await queryDbVector(vec);
+        finalPayload = {
+          goods: uniqById([...(firstDb.goods ?? []), ...(fromVector.goods ?? [])]),
+          equipment: uniqById([...(firstDb.equipment ?? []), ...(fromVector.equipment ?? [])]),
+          prodclasses: uniqById([
+            ...(firstDb.prodclasses ?? []),
+            ...(fromVector.prodclasses ?? []),
+          ]),
+        };
+      } catch {
+        finalPayload = firstDb;
+      }
     }
 
-    return NextResponse.json(firstDb);
+    // enrich goods with target equipment
+    if (finalPayload.goods?.length) {
+      finalPayload.goods = await enrichGoodsWithTargets(finalPayload.goods);
+    }
+
+    return NextResponse.json(finalPayload);
   } catch (err: any) {
     const aborted = err?.name === 'AbortError';
     return NextResponse.json(
