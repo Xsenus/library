@@ -6,7 +6,7 @@ import { okvedMainSchema, type OkvedCompany } from '@/lib/validators';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { ArrowUpRight, X } from 'lucide-react';
+import { X } from 'lucide-react';
 import InlineDualArea from './inline-dual-area';
 import InlineRevenueStep from './inline-revenue-step';
 import InlineRevenueBars from './inline-revenue-bar';
@@ -32,6 +32,12 @@ type ListResponse<T> = {
 const ACTIVE_ROW =
   'bg-blue-100 text-blue-700 ring-1 ring-blue-300 dark:bg-blue-900/40 dark:text-blue-100 dark:ring-blue-700';
 const INACTIVE_ROW = 'hover:bg-muted';
+
+// очистка пояснения ОКВЭД: убираем ведущий код/цифры/точки и разделители
+function cleanOkvedPhrase(s: string | null | undefined) {
+  const t = (s ?? '').trim();
+  return t.replace(/^\s*[\d.]+\s*[-–—:]*\s*/, '').trim();
+}
 
 const OKVED_SECTION_BY_2DIGIT: Record<string, string> = {
   '01': 'Растениеводство и животноводство, охота и предоставление соответствующих услуг',
@@ -585,9 +591,12 @@ export default function OkvedTab() {
                   />
                   <SquareImgButton
                     icon="search"
-                    title="Доп. действие (позже переключим на нужную вкладку)"
+                    title="Открыть AI-поиск (введите фразу вручную)"
                     onClick={(e) => {
-                      e.stopPropagation(); /* TODO: навесим действие позже */
+                      e.stopPropagation();
+                      const qp = new URLSearchParams();
+                      qp.set('tab', 'aisearch');
+                      window.open(`/library?${qp.toString()}`, '_blank');
                     }}
                     className="my-[2px]"
                     sizeClassName="h-7 w-7"
@@ -641,9 +650,15 @@ export default function OkvedTab() {
                       />
                       <SquareImgButton
                         icon="search"
-                        title="Доп. действие (переключение на другую вкладку — добавим позже)"
+                        title="Открыть AI-поиск по этому ОКВЭД"
                         onClick={(e) => {
-                          e.stopPropagation(); /* TODO */
+                          e.stopPropagation();
+                          const phrase = cleanOkvedPhrase(x.okved_main);
+                          const qp = new URLSearchParams();
+                          qp.set('tab', 'aisearch');
+                          if (phrase) qp.set('q', phrase);
+                          qp.set('autorun', '1');
+                          window.open(`/library?${qp.toString()}`, '_blank');
                         }}
                         className="my-[2px]"
                         sizeClassName="h-7 w-7"
@@ -804,24 +819,6 @@ export default function OkvedTab() {
 
                           <td className="py-0.5 pr-3 whitespace-nowrap">{c.inn}</td>
                           <td className="py-0.5 pr-3">{c.short_name}</td>
-
-                          {/* мини-график + цифра рядом */}
-                          {/* <td className="py-0.5 pr-3 align-middle">
-                            <div className="flex items-center gap-2">
-                              <div className="w-[100px] h-[45px] shrink-0 overflow-hidden">
-                                <InlineDualArea
-                                  revenue={[c.revenue_3, c.revenue_2, c.revenue_1, c.revenue]}
-                                  income={[c.income_3, c.income_2, c.income_1, c.income]}
-                                  year={c.year}
-                                />
-                              </div>
-                              <div className="text-right tabular-nums w-[56px]">
-                                {isLg()
-                                  ? revenueMln(c.revenue)
-                                  : revenueMln(c.income as number | null)}
-                              </div>
-                            </div>
-                          </td> */}
 
                           {/* мини-график + цифра рядом */}
                           <td className="py-0.5 pr-3 align-middle">

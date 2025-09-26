@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { useSearchParams } from 'next/navigation';
 import SquareImgButton from './square-img-button';
 
 type GoodRow = {
@@ -89,6 +90,8 @@ function csColor(score: number) {
 }
 
 export default function AiSearchTab() {
+  const sp = useSearchParams();
+
   const [q, setQ] = useState('');
   const [loading, setLoading] = useState(false);
 
@@ -98,33 +101,45 @@ export default function AiSearchTab() {
 
   const hasAny = goods.length || equipment.length || prodclasses.length;
 
-  const runSearch = useCallback(async () => {
-    const query = q.trim();
-    if (!query) return;
-    setLoading(true);
-    setGoods([]);
-    setEquipment([]);
-    setProdclasses([]);
-    try {
-      const res = await fetch('/api/ai-search', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        cache: 'no-store',
-        body: JSON.stringify({ q: query }),
-      });
-      const data: Partial<AiResponse> = await res.json();
-      setGoods(Array.isArray(data.goods) ? data.goods : []);
-      setEquipment(Array.isArray(data.equipment) ? data.equipment : []);
-      setProdclasses(Array.isArray(data.prodclasses) ? data.prodclasses : []);
-    } catch (e) {
-      console.error('AI search failed:', e);
+  const runSearch = useCallback(
+    async (forcedQuery?: string) => {
+      const query = (forcedQuery ?? q).trim();
+      if (!query) return;
+      setLoading(true);
       setGoods([]);
       setEquipment([]);
       setProdclasses([]);
-    } finally {
-      setLoading(false);
-    }
-  }, [q]);
+      try {
+        const res = await fetch('/api/ai-search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          cache: 'no-store',
+          body: JSON.stringify({ q: query }),
+        });
+        const data: Partial<AiResponse> = await res.json();
+        setGoods(Array.isArray(data.goods) ? data.goods : []);
+        setEquipment(Array.isArray(data.equipment) ? data.equipment : []);
+        setProdclasses(Array.isArray(data.prodclasses) ? data.prodclasses : []);
+      } catch (e) {
+        console.error('AI search failed:', e);
+        setGoods([]);
+        setEquipment([]);
+        setProdclasses([]);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [q],
+  );
+
+  // Автозаполнение и автозапуск из query-параметров (?q=...&autorun=1)
+  useEffect(() => {
+    const qUrl = sp.get('q') ?? '';
+    const autorun = (sp.get('autorun') ?? '') === '1';
+    if (qUrl) setQ(qUrl);
+    if (qUrl && autorun) runSearch(qUrl);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   const Column: React.FC<{ title: string; children: React.ReactNode }> = ({ title, children }) => (
     <div className="rounded-xl border shadow-sm bg-card overflow-hidden flex flex-col">
@@ -151,7 +166,7 @@ export default function AiSearchTab() {
         />
         <button
           className="h-9 rounded-md border px-3 text-sm"
-          onClick={runSearch}
+          onClick={() => runSearch()}
           disabled={loading || !q.trim()}>
           {loading ? 'Идет поиск…' : 'Провести AI-поиск'}
         </button>
