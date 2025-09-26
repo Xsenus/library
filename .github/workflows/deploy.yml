@@ -2,7 +2,10 @@ name: Deploy to VPS (library)
 
 on:
   push:
-    branches: ["main"]   # если основная ветка называется иначе — поменяйте
+    branches: ["main"]
+
+permissions:
+  contents: read
 
 jobs:
   deploy:
@@ -11,33 +14,36 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      # Копируем код на сервер (без .git, node_modules, .next и т.п.)
       - name: Upload project to VPS
         uses: appleboy/scp-action@v0.1.7
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
           source: "."
           target: "/opt/library/app"
           overwrite: true
-          # Исключаем лишнее, чтобы ускорить копирование
-          exclude: ".git,.github,node_modules,.next,release.zip"
 
-      # Сборка и перезапуск сервиса на VPS
       - name: Build & restart service
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
+          # command_timeout можно увеличить при долгой сборке (например, 30m)
+          # command_timeout: 30m
           script: |
             set -euo pipefail
             cd /opt/library/app
-            # Подтянуть переменные окружения как в run.sh
+            # на всякий случай убедимся, что скрипт старта исполняемый
+            chmod +x /opt/library/app/run.sh || true
+
+            # подтянем переменные окружения, если есть
             if [ -f /etc/default/library ]; then set -a; . /etc/default/library; set +a; fi
 
-            echo "[deploy] node=$(node -v), npm=$(npm -v)"
+            echo "[deploy] node=$(node -v) npm=$(npm -v)"
             npm ci
             npm run build
 
