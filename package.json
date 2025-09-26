@@ -2,11 +2,17 @@
   "name": "library-postgresql-browser",
   "version": "0.1.0",
   "private": true,
+  "engines": {
+    "node": ">=20.11",
+    "npm": ">=9"
+  },
   "scripts": {
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "start:port": "next start -p ${PORT:-8090}",
+    "lint": "next lint",
+    "postinstall": "next telemetry disable"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
