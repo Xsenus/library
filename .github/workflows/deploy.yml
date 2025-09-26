@@ -7,9 +7,14 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: deploy-library
+  cancel-in-progress: true
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
+
     steps:
       - name: Checkout repo
         uses: actions/checkout@v4
@@ -32,20 +37,27 @@ jobs:
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
           passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
-          # command_timeout можно увеличить при долгой сборке (например, 30m)
-          # command_timeout: 30m
           script: |
             set -euo pipefail
             cd /opt/library/app
-            # на всякий случай убедимся, что скрипт старта исполняемый
+
+            # На всякий случай
             chmod +x /opt/library/app/run.sh || true
 
-            # подтянем переменные окружения, если есть
+            # Переменные окружения (если есть)
             if [ -f /etc/default/library ]; then set -a; . /etc/default/library; set +a; fi
 
             echo "[deploy] node=$(node -v) npm=$(npm -v)"
-            npm ci
+
+            # Установка dev-зависимостей для сборки (нужны типы и линтеры)
+            npm ci --include=dev
+
+            # Сборка
             npm run build
 
+            # Обрезаем dev-зависимости для прод-рантайма
+            npm prune --omit=dev
+
+            # Рестарт сервиса
             systemctl restart library
             systemctl --no-pager -l status library || true
