@@ -36,6 +36,7 @@ import {
   SelectItem,
 } from '@/components/ui/select';
 import AiSearchTab from '@/components/library/ai-search-tab';
+import SquareImgButton from '@/components/library/square-img-button';
 
 interface ListState<T> {
   items: T[];
@@ -1298,17 +1299,17 @@ export default function LibraryPage() {
                                 'align-top',
                                 confirmed && 'bg-blue-50 dark:bg-blue-900/10',
                               )}>
-                              {/* card-ссылка */}
-                              <td style={{ width: colW.card }}>
-                                <a
-                                  href={toLibraryLink(r)}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                  className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
+                              {/* 1) Карточка каталога (квадратная кнопка) */}
+                              <td style={{ width: colW.card }} className="text-center align-top">
+                                <SquareImgButton
+                                  icon="catalog"
                                   title="Открыть карточку в каталоге"
-                                  aria-label="Открыть карточку в каталоге">
-                                  <ArrowUpRight className="h-4 w-4" />
-                                </a>
+                                  onClick={() =>
+                                    window.open(toLibraryLink(r), '_blank', 'noopener')
+                                  }
+                                  className="mx-auto my-[2px]"
+                                  sizeClassName="h-7 w-7"
+                                />
                               </td>
 
                               {/* чекбокс подтверждения */}
@@ -1341,19 +1342,39 @@ export default function LibraryPage() {
                                 {r.industry}
                               </td>
 
-                              <td className="whitespace-normal break-words leading-4">
+                              {/* 2) Основной ОКВЭД: слева кнопка, текст без ссылки */}
+                              <td className="whitespace-normal break-words leading-4 align-top">
                                 {r.okved_code ? (
-                                  <a
-                                    href={`/library?tab=okved&okvedId=${encodeURIComponent(
-                                      String(r.okved_id ?? ''),
-                                    )}&okved=${encodeURIComponent(r.okved_code)}`}
-                                    className="text-blue-600 hover:underline"
-                                    title="Открыть вкладку «База компаний» и выбрать этот код"
-                                    target="_blank"
-                                    rel="noopener noreferrer">
-                                    {r.okved_code}
-                                    {r.okved_main ? ` — ${r.okved_main}` : ''}
-                                  </a>
+                                  <div className="flex items-start gap-2">
+                                    <SquareImgButton
+                                      icon="okved"
+                                      title="Открыть вкладку «База компаний» по этому коду"
+                                      onClick={() =>
+                                        window.open(
+                                          `/library?tab=okved${
+                                            r.okved_code
+                                              ? `&okved=${encodeURIComponent(r.okved_code)}`
+                                              : ''
+                                          }${
+                                            r.okved_id
+                                              ? `&okvedId=${encodeURIComponent(String(r.okved_id))}`
+                                              : ''
+                                          }`,
+                                          '_blank',
+                                          'noopener',
+                                        )
+                                      }
+                                      className="mt-[2px]" // чтобы быть на одном уровне с кнопкой в 1-й колонке
+                                      sizeClassName="h-7 w-7"
+                                    />
+
+                                    <div className="min-w-0">
+                                      <div className="font-medium">{r.okved_code}</div>
+                                      {r.okved_main && (
+                                        <div className="text-muted-foreground">{r.okved_main}</div>
+                                      )}
+                                    </div>
+                                  </div>
                                 ) : (
                                   '—'
                                 )}

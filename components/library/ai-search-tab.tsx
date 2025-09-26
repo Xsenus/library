@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useState } from 'react';
-import { ArrowUpRight } from 'lucide-react';
+import SquareImgButton from './square-img-button';
 
 type GoodRow = {
   id: number;
@@ -181,14 +181,11 @@ export default function AiSearchTab() {
                     )}
                   </td>
                   <td className="text-center">
-                    <a
+                    <SquareImgButton
+                      icon="catalog"
+                      title="Открыть каталог"
                       href={toLibraryLinkFromGood(g)}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
-                      title="Открыть каталог">
-                      <ArrowUpRight className="h-4 w-4" />
-                    </a>
+                    />
                   </td>
                 </tr>
               ))}
@@ -233,19 +230,16 @@ export default function AiSearchTab() {
                     </div>
                   </td>
                   <td className="text-center">
-                    <a
+                    <SquareImgButton
+                      icon="catalog"
+                      title="Открыть карточку в каталоге"
                       href={toLibraryLink({
                         industry_id: r.industry_id,
                         prodclass_id: r.prodclass_id,
                         workshop_id: r.workshop_id,
                         equipment_id: r.id,
                       })}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
-                      title="Открыть карточку в каталоге">
-                      <ArrowUpRight className="h-4 w-4" />
-                    </a>
+                    />
                   </td>
                 </tr>
               ))}
@@ -285,14 +279,11 @@ export default function AiSearchTab() {
                     )}
                   </td>
                   <td className="text-center">
-                    <a
+                    <SquareImgButton
+                      icon="catalog"
+                      title="Открыть класс в каталоге"
                       href={toLibraryLink({ industry_id: r.industry_id, prodclass_id: r.id })}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                      className="inline-flex items-center justify-center rounded-md border p-1 hover:bg-accent"
-                      title="Открыть класс в каталоге">
-                      <ArrowUpRight className="h-4 w-4" />
-                    </a>
+                    />
                   </td>
                 </tr>
               ))}

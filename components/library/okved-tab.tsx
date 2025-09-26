@@ -10,6 +10,7 @@ import { ArrowUpRight, X } from 'lucide-react';
 import InlineDualArea from './inline-dual-area';
 import InlineRevenueStep from './inline-revenue-step';
 import InlineRevenueBars from './inline-revenue-bar';
+import SquareImgButton from './square-img-button';
 
 type OkvedMain = ReturnType<typeof okvedMainSchema.parse>;
 type SortKey = 'revenue_desc' | 'revenue_asc';
@@ -571,17 +572,28 @@ export default function OkvedTab() {
                   setPage(1);
                 }}
                 title="Все компании — без фильтра">
-                <Button
-                  size="icon"
-                  variant="secondary"
-                  className="shrink-0 h-7 w-7"
-                  title="Открыть все компании в новой вкладке"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    window.open(`/library?tab=okved`, '_blank');
-                  }}>
-                  <ArrowUpRight className="h-4 w-4" />
-                </Button>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <SquareImgButton
+                    icon="okved"
+                    title="Открыть все компании в новой вкладке"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      window.open('/library?tab=okved', '_blank');
+                    }}
+                    className="my-[2px]"
+                    sizeClassName="h-7 w-7"
+                  />
+                  <SquareImgButton
+                    icon="search"
+                    title="Доп. действие (позже переключим на нужную вкладку)"
+                    onClick={(e) => {
+                      e.stopPropagation(); /* TODO: навесим действие позже */
+                    }}
+                    className="my-[2px]"
+                    sizeClassName="h-7 w-7"
+                  />
+                </div>
+
                 <div className="truncate">
                   <div
                     className={`font-medium text-xs ${
@@ -613,20 +625,31 @@ export default function OkvedTab() {
                       setOkved(active ? '' : x.okved_code);
                     }}
                     title={x.okved_main}>
-                    <Button
-                      size="icon"
-                      variant="secondary"
-                      className="shrink-0 h-7 w-7"
-                      title="Открыть в новой вкладке"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        const url = `/library?tab=okved${
-                          x.okved_code ? `&okved=${encodeURIComponent(x.okved_code)}` : ''
-                        }`;
-                        window.open(url, '_blank');
-                      }}>
-                      <ArrowUpRight className="h-4 w-4" />
-                    </Button>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <SquareImgButton
+                        icon="okved"
+                        title="Открыть в новой вкладке"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          const url = `/library?tab=okved${
+                            x.okved_code ? `&okved=${encodeURIComponent(x.okved_code)}` : ''
+                          }`;
+                          window.open(url, '_blank');
+                        }}
+                        className="my-[2px]"
+                        sizeClassName="h-7 w-7"
+                      />
+                      <SquareImgButton
+                        icon="search"
+                        title="Доп. действие (переключение на другую вкладку — добавим позже)"
+                        onClick={(e) => {
+                          e.stopPropagation(); /* TODO */
+                        }}
+                        className="my-[2px]"
+                        sizeClassName="h-7 w-7"
+                      />
+                    </div>
+
                     <div className="truncate">
                       <div
                         className={`font-medium text-xs ${
@@ -761,11 +784,9 @@ export default function OkvedTab() {
 
                       return (
                         <tr key={`${c.inn}-${c.year}`} className="border-b hover:bg-muted/40">
-                          <td className="py-0.5 pr-2">
-                            <Button
-                              size="icon"
-                              variant="ghost"
-                              className="h-7 w-7"
+                          <td className="py-0.5 pr-2 align-middle">
+                            <SquareImgButton
+                              icon="bitrix"
                               title="Открыть карточку компании в Bitrix24"
                               onClick={() =>
                                 window.open(
@@ -775,10 +796,12 @@ export default function OkvedTab() {
                                   '_blank',
                                   'noopener',
                                 )
-                              }>
-                              <ArrowUpRight className="h-4 w-4" />
-                            </Button>
+                              }
+                              className="mx-auto my-[2px]"
+                              sizeClassName="h-7 w-7"
+                            />
                           </td>
+
                           <td className="py-0.5 pr-3 whitespace-nowrap">{c.inn}</td>
                           <td className="py-0.5 pr-3">{c.short_name}</td>
 

@@ -15,6 +15,7 @@ import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
 import { GoogleImagesCarousel } from './google-images-carousel';
 import type { OkvedByEquipment } from '@/lib/validators';
+import SquareImgButton from './square-img-button';
 
 interface EquipmentCardProps {
   equipment: EquipmentDetail;
@@ -770,21 +771,19 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                   {!okvedLoading &&
                     okvedList.map((row) => (
                       <tr key={row.id} className="border-t hover:bg-muted/40 leading-4">
-                        <td className="px-0.5 py-0">
-                          {/* Переход на вкладку ОКВЭД с выбранным кодом */}
-                          <Button
-                            size="icon"
-                            variant="ghost"
-                            className="h-7 w-7"
-                            title="Открыть вкладку ОКВЭД"
+                        <td className="p-0 align-middle w-[30px]">
+                          <SquareImgButton
+                            icon="okved"
+                            title="Открыть ОКВЭД"
                             onClick={() =>
                               window.open(
                                 `/library?tab=okved&okved=${encodeURIComponent(row.okved_code)}`,
                                 '_blank',
                               )
-                            }>
-                            <ArrowUpRight className="h-3.5 w-3.5" />
-                          </Button>
+                            }
+                            className="mx-auto my-[2px]"
+                            sizeClassName="h-7 w-7"
+                          />
                         </td>
                         <td className="px-1 py-0.5 font-medium whitespace-nowrap">
                           {row.okved_code}
