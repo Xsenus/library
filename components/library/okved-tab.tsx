@@ -7,7 +7,8 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { ArrowUpRight, X } from 'lucide-react';
-import { MiniStackedArea } from '@/components/library/mini-area';
+import InlineDualArea from './inline-dual-area';
+import InlineRevenueStep from './inline-revenue-step';
 
 type OkvedMain = ReturnType<typeof okvedMainSchema.parse>;
 type SortKey = 'revenue_desc' | 'revenue_asc';
@@ -781,18 +782,32 @@ export default function OkvedTab() {
                           <td className="py-0.5 pr-3">{c.short_name}</td>
 
                           {/* мини-график + цифра рядом */}
-                          <td className="py-0.5 pr-3">
+                          {/* <td className="py-0.5 pr-3 align-middle">
                             <div className="flex items-center gap-2">
-                              {/* только график, строго 100×45 */}
                               <div className="w-[100px] h-[45px] shrink-0 overflow-hidden">
-                                <MiniStackedArea
+                                <InlineDualArea
                                   revenue={[c.revenue_3, c.revenue_2, c.revenue_1, c.revenue]}
                                   income={[c.income_3, c.income_2, c.income_1, c.income]}
                                   year={c.year}
                                 />
                               </div>
+                              <div className="text-right tabular-nums w-[56px]">
+                                {isLg()
+                                  ? revenueMln(c.revenue)
+                                  : revenueMln(c.income as number | null)}
+                              </div>
+                            </div>
+                          </td> */}
 
-                              {/* цифра рядом (выручка на десктопе / прибыль на мобиле) */}
+                          {/* мини-график + цифра рядом */}
+                          <td className="py-0.5 pr-3 align-middle">
+                            <div className="flex items-center gap-2">
+                              <div className="w-[100px] h-[45px] shrink-0 overflow-hidden">
+                                <InlineRevenueStep
+                                  revenue={[c.revenue_3, c.revenue_2, c.revenue_1, c.revenue]}
+                                  year={c.year}
+                                />
+                              </div>
                               <div className="text-right tabular-nums w-[56px]">
                                 {isLg()
                                   ? revenueMln(c.revenue)
