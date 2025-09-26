@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { ArrowUpRight, X } from 'lucide-react';
 import InlineDualArea from './inline-dual-area';
 import InlineRevenueStep from './inline-revenue-step';
+import InlineRevenueBars from './inline-revenue-bar';
 
 type OkvedMain = ReturnType<typeof okvedMainSchema.parse>;
 type SortKey = 'revenue_desc' | 'revenue_asc';
@@ -803,7 +804,7 @@ export default function OkvedTab() {
                           <td className="py-0.5 pr-3 align-middle">
                             <div className="flex items-center gap-2">
                               <div className="w-[100px] h-[45px] shrink-0 overflow-hidden">
-                                <InlineRevenueStep
+                                <InlineRevenueBars
                                   revenue={[c.revenue_3, c.revenue_2, c.revenue_1, c.revenue]}
                                   year={c.year}
                                 />
