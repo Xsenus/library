@@ -112,18 +112,33 @@ export default function InlineRevenueBars({
   }
 
   // Color scheme
-  const colors = {
-    revenue: {
-      positive: '#60A5FA', // light blue like in screenshots
-      negative: '#2563EB', // medium blue for negatives
-      light: '#BFDBFE', // very light blue
-    },
-    income: {
-      positive: '#1D4ED8', // darker blue for income
-      negative: '#1E3A8A', // very dark blue for negative income
-      light: '#93C5FD', // light blue for income
-    },
-  };
+  const isActual = typeof year === 'number' && year === actualYear;
+
+  const colors = isActual
+    ? {
+        revenue: {
+          positive: '#60A5FA',
+          negative: '#2563EB',
+          light: '#BFDBFE',
+        },
+        income: {
+          positive: '#1D4ED8',
+          negative: '#1E3A8A',
+          light: '#93C5FD',
+        },
+      }
+    : {
+        revenue: {
+          positive: '#D1D5DB',
+          negative: '#9CA3AF',
+          light: '#E5E7EB',
+        },
+        income: {
+          positive: '#D1D5DB',
+          negative: '#9CA3AF',
+          light: '#E5E7EB',
+        },
+      };
 
   const getBarColor = (value: number, type: 'revenue' | 'income') => {
     if (value >= 0) {
