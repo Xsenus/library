@@ -825,7 +825,9 @@ export default function OkvedTab() {
                             <div className="flex items-center gap-2">
                               <div className="w-[100px] h-[45px] shrink-0 overflow-hidden">
                                 <InlineRevenueBars
+                                  mode="stack"
                                   revenue={[c.revenue_3, c.revenue_2, c.revenue_1, c.revenue]}
+                                  income={[c.income_3, c.income_2, c.income_1, c.income]}
                                   year={c.year}
                                 />
                               </div>
