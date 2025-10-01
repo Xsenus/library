@@ -546,7 +546,17 @@ export default function OkvedTab() {
     if (key.includes('оранж') || key.includes('orange')) {
       return 'bg-orange-50 dark:bg-orange-950/20 ring-1 ring-orange-200 dark:ring-orange-800';
     }
-    return 'bg-muted/20';
+    // ——— СЕРЫЙ / NEUTRAL / DEFAULT — делаем заметнее (примерно gray-200)
+    if (
+      key.includes('сер') ||
+      key.includes('gray') ||
+      key.includes('grey') ||
+      key.includes('neutral') ||
+      key.includes('default')
+    ) {
+      return 'bg-gray-200 dark:bg-gray-900/30 ring-1 ring-gray-300 dark:ring-gray-700';
+    }
+    return 'bg-muted/30';
   }
 
   function colorRowBg(label?: string, xmlId?: string): string | undefined {
@@ -566,7 +576,17 @@ export default function OkvedTab() {
     if (key.includes('фиол') || key.includes('purple') || key.includes('violet')) return '#F3E8FF'; // purple-100
     if (key.includes('оранж') || key.includes('orange')) return '#FFEDD5'; // orange-100
 
-    return undefined; // пусть останется обычный hover muted
+    if (
+      key.includes('сер') ||
+      key.includes('gray') ||
+      key.includes('grey') ||
+      key.includes('neutral') ||
+      key.includes('default')
+    ) {
+      return '#E5E7EB'; // gray-200
+    }
+
+    return undefined;
   }
 
   return (
