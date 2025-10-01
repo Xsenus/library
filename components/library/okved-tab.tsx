@@ -771,7 +771,7 @@ export default function OkvedTab() {
             <div className="relative w-full overflow-auto">
               <table className="w-full text-[13px]">
                 <thead className="[&_tr]:border-b">
-                  <tr className="text-left">
+                  <tr className="text-center">
                     <th className="py-1 pr-2 w-[35px]"></th>
                     <th className="py-1 pr-2">ИНН</th>
                     <th className="py-1 pr-2">Название</th>
@@ -789,7 +789,7 @@ export default function OkvedTab() {
                     </th>
                     <th className="py-1 pr-2">Адрес</th>
                     <th className="py-1 pr-2">Штат</th>
-                    <th className="py-1 pr-2">Филиалов</th>
+                    <th className="py-1 pr-2">Филиалы</th>
                     <th className="py-1 pr-2">Год</th>
                     <th className="py-1 pr-2">Ответственный</th>
                   </tr>
@@ -818,7 +818,7 @@ export default function OkvedTab() {
 
                       return (
                         <tr key={`${c.inn}-${c.year}`} className="border-b hover:bg-muted/40">
-                          <td className="py-0.5 pr-2 align-middle">
+                          <td className="py-0.5 pr-2 align-middle text-center">
                             <SquareImgButton
                               icon="bitrix"
                               title="Открыть карточку компании в Bitrix24"
@@ -857,9 +857,12 @@ export default function OkvedTab() {
                           </td>
 
                           <td className="py-0.5 pr-3">{c.address ?? '—'}</td>
-                          <td className="py-0.5 pr-3">{formatEmployees(getEmployeeCount(c))}</td>
-                          <td className="py-0.5 pr-3">{c.branch_count ?? '—'}</td>
-                          <td className="py-0.5 pr-2">
+
+                          <td className="py-0.5 pr-3 text-center">
+                            {formatEmployees(getEmployeeCount(c))}
+                          </td>
+                          <td className="py-0.5 pr-3 text-center">{c.branch_count ?? '—'}</td>
+                          <td className="py-0.5 pr-2 text-center">
                             <span
                               className={`inline-block px-1.5 py-0.5 rounded border ${
                                 isActual
@@ -873,7 +876,7 @@ export default function OkvedTab() {
                             </span>
                           </td>
 
-                          <td className="py-0.5 pr-3 whitespace-nowrap">
+                          <td className="py-0.5 pr-3 whitespace-nowrap text-center">
                             {responsibles[c.inn]?.assignedName ?? (respLoading ? '…' : '—')}
                           </td>
                         </tr>
