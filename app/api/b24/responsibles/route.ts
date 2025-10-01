@@ -7,6 +7,9 @@ type RespItem = {
   companyId?: string;
   assignedById?: number;
   assignedName?: string;
+  colorId?: number;
+  colorLabel?: string;
+  colorXmlId?: string;
 };
 
 const UF_FIELDS = (process.env.B24_UF_INN_FIELDS || '')
@@ -18,9 +21,11 @@ const UF_FIELDS = (process.env.B24_UF_INN_FIELDS || '')
 const FALLBACK_UF = process.env.B24_UF_INN_FIELD || 'UF_CRM_1705778266246';
 const UF_LIST = UF_FIELDS.length ? UF_FIELDS : [FALLBACK_UF];
 
+const COLOR_FIELD = process.env.B24_COLOR_UF_FIELD || 'UF_CRM_1743187724272';
 const BATCH_LIMIT = 50;
 const TTL_MS = 60_000;
 const USERS_TTL_MS = 10 * 60_000;
+const ENUM_TTL_MS = 60 * 60_000;
 
 const cache: Map<string, { value: RespItem; exp: number }> =
   (globalThis as any).__RESP_CACHE__ ?? new Map<string, { value: RespItem; exp: number }>();
@@ -30,6 +35,13 @@ type UserCacheVal = { name: string; exp: number };
 const usersCache: Map<number, UserCacheVal> =
   (globalThis as any).__USERS_CACHE__ ?? new Map<number, UserCacheVal>();
 (globalThis as any).__USERS_CACHE__ = usersCache;
+
+type EnumMapVal = { id: number; value: string; xmlId?: string };
+type EnumMap = Map<number, EnumMapVal>;
+let enumCache: { field: string; map: EnumMap; exp: number } | null =
+  (globalThis as any).__ENUM_CACHE__ ?? null;
+(globalThis as any).__ENUM_CACHE__ = enumCache;
+// ───────────────────────────────────────────────────────────────────────────
 
 const notEmpty = (s: string) => !!s && s.trim().length > 0;
 const core = (r: any) => (r?.result?.result ?? {}) as Record<string, any>;
@@ -42,6 +54,48 @@ function makeFio(u: any): string {
   const fio = parts.join(' ').trim();
   if (fio) return fio;
   return u?.NAME || u?.LOGIN || String(u?.ID ?? '');
+}
+
+async function getEnumMapForColorField(debug: boolean): Promise<EnumMap> {
+  const now = Date.now();
+  if (enumCache && enumCache.field === COLOR_FIELD && enumCache.exp > now) {
+    return enumCache.map;
+  }
+
+  const cmd: Record<string, string> = {
+    uflist: `crm.company.userfield.list?filter[FIELD_NAME]=${encodeURIComponent(COLOR_FIELD)}`,
+  };
+
+  const r = await b24BatchJson(cmd, 0);
+  const buckets = core(r);
+  const arr = Array.isArray(buckets.uflist) ? buckets.uflist : [];
+  const field = arr[0];
+
+  const map: EnumMap = new Map();
+
+  const list: any[] = Array.isArray(field?.LIST) ? field.LIST : [];
+
+  for (const it of list) {
+    const idNum = Number(it?.ID);
+    if (Number.isFinite(idNum)) {
+      map.set(idNum, {
+        id: idNum,
+        value: String(it?.VALUE ?? '').trim(),
+        xmlId: it?.XML_ID ? String(it.XML_ID).trim() : undefined,
+      });
+    }
+  }
+
+  enumCache = { field: COLOR_FIELD, map, exp: now + ENUM_TTL_MS };
+  (globalThis as any).__ENUM_CACHE__ = enumCache;
+
+  if (debug) {
+    const values: EnumMapVal[] = [];
+    map.forEach((v) => values.push(v));
+    console.log('Color enum map loaded:', values);
+  }
+
+  return map;
 }
 
 export async function POST(req: NextRequest) {
@@ -63,7 +117,12 @@ export async function POST(req: NextRequest) {
       else toFind.push(inn);
     }
 
-    const innToCompany: Record<string, { ID: string; ASSIGNED_BY_ID?: number } | undefined> = {};
+    const enumMap = await getEnumMapForColorField(debug);
+
+    const innToCompany: Record<
+      string,
+      { ID: string; ASSIGNED_BY_ID?: number; COLOR_ID?: number | null }
+    > = {};
     const previewCmd: string[] = [];
 
     for (const pack of chunk(toFind, BATCH_LIMIT)) {
@@ -80,6 +139,7 @@ export async function POST(req: NextRequest) {
             `filter[${uf}]=${encodeURIComponent(inn)}` +
             `&select[]=ID` +
             `&select[]=ASSIGNED_BY_ID` +
+            `&select[]=${encodeURIComponent(COLOR_FIELD)}` +
             `&select[]=UF_*` +
             `&start=-1`;
           keys.push(k);
@@ -97,9 +157,16 @@ export async function POST(req: NextRequest) {
           const rows = buckets[k] as any[] | undefined;
           const first = Array.isArray(rows) && rows[0] ? rows[0] : null;
           if (first?.ID) {
+            const rawColor = first?.[COLOR_FIELD];
+            const colorIdNum =
+              typeof rawColor === 'string' || typeof rawColor === 'number'
+                ? Number(rawColor)
+                : null;
+
             innToCompany[inn] = {
               ID: String(first.ID),
               ASSIGNED_BY_ID: first.ASSIGNED_BY_ID ? Number(first.ASSIGNED_BY_ID) : undefined,
+              COLOR_ID: Number.isFinite(colorIdNum) ? colorIdNum! : null,
             };
             break;
           }
@@ -160,7 +227,29 @@ export async function POST(req: NextRequest) {
       const info = innToCompany[inn];
       const assignedById = info?.ASSIGNED_BY_ID;
       const assignedName = assignedById ? userIdToName[assignedById] : undefined;
-      const item: RespItem = { inn, companyId: info?.ID, assignedById, assignedName };
+
+      let colorId: number | undefined = undefined;
+      let colorLabel: string | undefined = undefined;
+      let colorXmlId: string | undefined = undefined;
+
+      if (Number.isFinite(info?.COLOR_ID as number)) {
+        const row = enumMap.get(info!.COLOR_ID!);
+        if (row) {
+          colorId = row.id;
+          colorLabel = row.value;
+          colorXmlId = row.xmlId;
+        }
+      }
+
+      const item: RespItem = {
+        inn,
+        companyId: info?.ID,
+        assignedById,
+        assignedName,
+        colorId,
+        colorLabel,
+        colorXmlId,
+      };
       cache.set(inn, { value: item, exp: Date.now() + TTL_MS });
       return item;
     });
@@ -168,7 +257,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({
       ok: true,
       items,
-      debug: debug ? { ufFieldsTried: UF_LIST, previewCmd, userCmd: userCmdPreview } : undefined,
+      debug: debug
+        ? { ufFieldsTried: UF_LIST, previewCmd, userCmd: userCmdPreview, colorField: COLOR_FIELD }
+        : undefined,
     });
   } catch (e: any) {
     console.error('responsibles (JSON batch) failed:', e);

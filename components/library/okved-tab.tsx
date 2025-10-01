@@ -133,6 +133,14 @@ function getOkvedSectionTitle(two: string | null): string | null {
   return OKVED_SECTION_BY_2DIGIT[two] ?? null;
 }
 
+type RespInfo = {
+  assignedById?: number;
+  assignedName?: string;
+  colorId?: number;
+  colorLabel?: string;
+  colorXmlId?: string;
+};
+
 export default function OkvedTab() {
   const sp = useSearchParams();
   const router = useRouter();
@@ -164,9 +172,7 @@ export default function OkvedTab() {
   const [searchName, setSearchName] = useState<string>(initialQ);
   const [sortKey, setSortKey] = useState<SortKey>(initialSort);
 
-  const [responsibles, setResponsibles] = useState<
-    Record<string, { assignedById?: number; assignedName?: string }>
-  >({});
+  const [responsibles, setResponsibles] = useState<Record<string, RespInfo>>({});
   const [respLoading, setRespLoading] = useState(false);
 
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
@@ -339,7 +345,7 @@ export default function OkvedTab() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [okved, page, searchName, includeExtra, includeParent, sortKey, csOkvedEnabled, industryId]);
 
-  const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total]);
+  const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
   const isAll = okved === '';
 
   const activeOkved = useMemo(
@@ -458,9 +464,16 @@ export default function OkvedTab() {
         });
         const j = await r.json();
         if (!j?.ok) throw new Error(j?.error || 'b24 responsibles error');
-        const map: Record<string, { assignedById?: number; assignedName?: string }> = {};
+
+        const map: Record<string, RespInfo> = {};
         for (const it of j.items || []) {
-          map[it.inn] = { assignedById: it.assignedById, assignedName: it.assignedName };
+          map[it.inn] = {
+            assignedById: it.assignedById,
+            assignedName: it.assignedName,
+            colorId: it.colorId,
+            colorLabel: it.colorLabel,
+            colorXmlId: it.colorXmlId,
+          };
         }
         setResponsibles(map);
       } catch (e: any) {
@@ -476,6 +489,56 @@ export default function OkvedTab() {
   }, [companies]);
 
   const lastYear = new Date().getFullYear() - 1;
+
+  function colorRowClass(label?: string, xmlId?: string): string | undefined {
+    const key = (label || xmlId || '').toString().trim().toLowerCase();
+    if (!key) return undefined;
+
+    if (key.includes('красн') || key.includes('red')) {
+      return 'bg-red-50 dark:bg-red-950/20 ring-1 ring-red-200 dark:ring-red-800';
+    }
+    if (
+      key.includes('жёлт') ||
+      key.includes('желт') ||
+      key.includes('yellow') ||
+      key.includes('amber')
+    ) {
+      return 'bg-yellow-50 dark:bg-yellow-950/20 ring-1 ring-yellow-200 dark:ring-yellow-800';
+    }
+    if (key.includes('зел') || key.includes('green')) {
+      return 'bg-green-50 dark:bg-green-950/20 ring-1 ring-green-200 dark:ring-green-800';
+    }
+    if (key.includes('син') || key.includes('blue')) {
+      return 'bg-blue-50 dark:bg-blue-950/20 ring-1 ring-blue-200 dark:ring-blue-800';
+    }
+    if (key.includes('фиол') || key.includes('purple') || key.includes('violet')) {
+      return 'bg-purple-50 dark:bg-purple-950/20 ring-1 ring-purple-200 dark:ring-purple-800';
+    }
+    if (key.includes('оранж') || key.includes('orange')) {
+      return 'bg-orange-50 dark:bg-orange-950/20 ring-1 ring-orange-200 dark:ring-orange-800';
+    }
+    return 'bg-muted/20';
+  }
+
+  function colorRowBg(label?: string, xmlId?: string): string | undefined {
+    const key = (label || xmlId || '').toString().trim().toLowerCase();
+    if (!key) return undefined;
+
+    if (key.includes('красн') || key.includes('red')) return '#FEE2E2'; // red-100
+    if (
+      key.includes('жёлт') ||
+      key.includes('желт') ||
+      key.includes('yellow') ||
+      key.includes('amber')
+    )
+      return '#FEF9C3'; // yellow-100
+    if (key.includes('зел') || key.includes('green')) return '#DCFCE7'; // green-100
+    if (key.includes('син') || key.includes('blue')) return '#DBEAFE'; // blue-100
+    if (key.includes('фиол') || key.includes('purple') || key.includes('violet')) return '#F3E8FF'; // purple-100
+    if (key.includes('оранж') || key.includes('orange')) return '#FFEDD5'; // orange-100
+
+    return undefined; // пусть останется обычный hover muted
+  }
 
   return (
     <div ref={layoutRef} className="flex flex-col lg:flex-row gap-1 text-[13px] leading-snug">
@@ -797,14 +860,14 @@ export default function OkvedTab() {
                 <tbody>
                   {loading && (
                     <tr>
-                      <td colSpan={9} className="py-6 text-center text-muted-foreground text-xs">
+                      <td colSpan={10} className="py-6 text-center text-muted-foreground text-xs">
                         Загрузка…
                       </td>
                     </tr>
                   )}
                   {!loading && companies.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="py-6 text-center text-muted-foreground text-xs">
+                      <td colSpan={10} className="py-6 text-center text-muted-foreground text-xs">
                         Нет данных
                       </td>
                     </tr>
@@ -816,8 +879,23 @@ export default function OkvedTab() {
 
                       const isActual = (c.year ?? 0) === lastYear;
 
+                      const resp = responsibles[c.inn];
+                      const rowColorClass = colorRowClass(resp?.colorLabel, resp?.colorXmlId);
+                      const rowBg = colorRowBg(resp?.colorLabel, resp?.colorXmlId);
+                      const hasColor = !!rowBg;
+
                       return (
-                        <tr key={`${c.inn}-${c.year}`} className="border-b hover:bg-muted/40">
+                        <tr
+                          key={`${c.inn}-${c.year}`}
+                          className={[
+                            'border-b',
+                            hasColor
+                              ? 'transition-[filter] hover:brightness-95 dark:hover:brightness-110'
+                              : 'hover:bg-muted/40',
+                            rowColorClass ?? '',
+                          ].join(' ')}
+                          style={hasColor ? { backgroundColor: rowBg } : undefined}
+                          title={resp?.colorLabel ? `Цвет: ${resp.colorLabel}` : undefined}>
                           <td className="py-0.5 pr-2 align-middle text-center">
                             <SquareImgButton
                               icon="bitrix"
@@ -836,7 +914,7 @@ export default function OkvedTab() {
                             />
                           </td>
 
-                          <td className="py-0.5 pr-3 whitespace-nowrap">{c.inn}</td>
+                          <td className="py-0.5 pr-2 whitespace-nowrap">{c.inn}</td>
                           <td className="py-0.5 pr-3">{c.short_name}</td>
 
                           {/* мини-график + цифра рядом */}
@@ -877,7 +955,7 @@ export default function OkvedTab() {
                           </td>
 
                           <td className="py-0.5 pr-3 whitespace-nowrap text-center">
-                            {responsibles[c.inn]?.assignedName ?? (respLoading ? '…' : '—')}
+                            {resp?.assignedName ?? (respLoading ? '…' : '—')}
                           </td>
                         </tr>
                       );
