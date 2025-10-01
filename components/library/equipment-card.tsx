@@ -288,21 +288,24 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     };
   }, [equipment?.id]);
 
-  /** Реакция на изменение доступности GPT */
+  // Реакция на изменение доступности GPT — ВСЕГДА открываем, если картинки есть
   useEffect(() => {
-    if (!openSections) return;
+    // ждём гидратацию состояния аккордеона
+    if (openSections === null) return;
+
     if (gptAvailable === true && !autoOpenedGPT) {
-      if (!openSections.includes('gpt-images') && wantGptFromMemoryRef.current) {
-        setOpenSections((prev) => [...(prev || []), 'gpt-images']);
+      // при наличии картинок раскрываем секцию независимо от памяти
+      if (!openSections.includes('gpt-images')) {
+        setOpenSections((prev) => [...(prev ?? []), 'gpt-images']);
       }
       setAutoOpenedGPT(true);
     }
-    if (gptAvailable === false) {
-      if (openSections.includes('gpt-images')) {
-        setOpenSections((prev) => (prev || []).filter((x) => x !== 'gpt-images'));
-      }
+
+    if (gptAvailable === false && openSections.includes('gpt-images')) {
+      // при отсутствии картинок секция закрыта и остаётся закрытой
+      setOpenSections((prev) => (prev ?? []).filter((x) => x !== 'gpt-images'));
     }
-  }, [gptAvailable, autoOpenedGPT, openSections, setOpenSections]);
+  }, [gptAvailable, openSections, autoOpenedGPT, setOpenSections]);
 
   /** Значение для аккордеона */
   const accordionValue = openSections ?? [];
