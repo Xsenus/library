@@ -20,17 +20,29 @@ const UF_LIST = UF_FIELDS.length ? UF_FIELDS : [FALLBACK_UF];
 
 const BATCH_LIMIT = 50;
 const TTL_MS = 60_000;
+const USERS_TTL_MS = 10 * 60_000;
 
-// простой кэш в пределах воркера
-const cache =
+const cache: Map<string, { value: RespItem; exp: number }> =
   (globalThis as any).__RESP_CACHE__ ?? new Map<string, { value: RespItem; exp: number }>();
 (globalThis as any).__RESP_CACHE__ = cache;
+
+type UserCacheVal = { name: string; exp: number };
+const usersCache: Map<number, UserCacheVal> =
+  (globalThis as any).__USERS_CACHE__ ?? new Map<number, UserCacheVal>();
+(globalThis as any).__USERS_CACHE__ = usersCache;
 
 const notEmpty = (s: string) => !!s && s.trim().length > 0;
 const core = (r: any) => (r?.result?.result ?? {}) as Record<string, any>;
 
 let seq = 0;
 const nextKey = (p: string) => `${p}${++seq}`;
+
+function makeFio(u: any): string {
+  const parts = [u?.LAST_NAME, u?.NAME, u?.SECOND_NAME].filter(Boolean);
+  const fio = parts.join(' ').trim();
+  if (fio) return fio;
+  return u?.NAME || u?.LOGIN || String(u?.ID ?? '');
+}
 
 export async function POST(req: NextRequest) {
   try {
@@ -51,7 +63,6 @@ export async function POST(req: NextRequest) {
       else toFind.push(inn);
     }
 
-    // 1) batch: crm.company.list по каждому UF-полю
     const innToCompany: Record<string, { ID: string; ASSIGNED_BY_ID?: number } | undefined> = {};
     const previewCmd: string[] = [];
 
@@ -96,8 +107,7 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 2) user.get по всем уникальным ASSIGNED_BY_ID
-    const userIds = Array.from(
+    const allUserIds = Array.from(
       new Set(
         Object.values(innToCompany)
           .map((v) => v?.ASSIGNED_BY_ID)
@@ -108,7 +118,18 @@ export async function POST(req: NextRequest) {
     const userIdToName: Record<number, string> = {};
     const userCmdPreview: string[] = [];
 
-    for (const pack of chunk(userIds, BATCH_LIMIT)) {
+    const now2 = Date.now();
+    const missing: number[] = [];
+    for (const uid of allUserIds) {
+      const c = usersCache.get(uid);
+      if (c && c.exp > now2) {
+        userIdToName[uid] = c.name;
+      } else {
+        missing.push(uid);
+      }
+    }
+
+    for (const pack of chunk(missing, BATCH_LIMIT)) {
       if (!pack.length) break;
       const cmd: Record<string, string> = {};
       const keys: Array<{ key: string; uid: number }> = [];
@@ -127,13 +148,13 @@ export async function POST(req: NextRequest) {
         const arr = buckets[k] as any[];
         const u = Array.isArray(arr) && arr[0] ? arr[0] : null;
         if (u?.ID) {
-          const name = [u.LAST_NAME, u.NAME, u.SECOND_NAME].filter(Boolean).join(' ').trim();
-          userIdToName[uid] = name || u.NAME || String(uid);
+          const name = makeFio(u);
+          userIdToName[uid] = name;
+          usersCache.set(uid, { name, exp: Date.now() + USERS_TTL_MS });
         }
       }
     }
 
-    // 3) ответ + кэш
     const items: RespItem[] = inns.map((inn) => {
       if (cached[inn]) return cached[inn];
       const info = innToCompany[inn];
