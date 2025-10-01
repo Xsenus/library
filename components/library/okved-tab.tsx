@@ -150,7 +150,7 @@ export default function OkvedTab() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(initialPage);
   const [loading, setLoading] = useState(false);
-  const pageSize = 50;
+  const pageSize = 20;
 
   const [industryList, setIndustryList] = useState<IndustryItem[]>([]);
   const [industriesLoading, setIndustriesLoading] = useState<boolean>(true);
