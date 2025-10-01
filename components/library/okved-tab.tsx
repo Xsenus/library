@@ -158,7 +158,11 @@ export default function OkvedTab() {
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(initialPage);
   const [loading, setLoading] = useState(false);
-  const pageSize = 20;
+
+  const initialPageSize = Number(sp.get('pageSize')) || 20;
+  const [pageSize, setPageSize] = useState<number>(
+    [5, 10, 20, 25, 50, 75, 100].includes(initialPageSize) ? initialPageSize : 20,
+  );
 
   const [industryList, setIndustryList] = useState<IndustryItem[]>([]);
   const [industriesLoading, setIndustriesLoading] = useState<boolean>(true);
@@ -344,6 +348,7 @@ export default function OkvedTab() {
     else qs.delete('industryId');
 
     qs.set('page', String(page));
+    qs.set('pageSize', String(pageSize));
     router.replace(`/library?${qs.toString()}`);
 
     return () => ac.abort();
@@ -357,6 +362,7 @@ export default function OkvedTab() {
     sortKey,
     csOkvedEnabled,
     industryId,
+    pageSize,
   ]);
 
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
@@ -459,6 +465,7 @@ export default function OkvedTab() {
     sortKey,
     csOkvedEnabled,
     industryId,
+    pageSize,
   ]);
 
   useEffect(() => {
@@ -995,25 +1002,50 @@ export default function OkvedTab() {
               </table>
             </div>
 
-            {pages > 1 && (
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <Button
-                  variant="secondary"
-                  className="h-8 px-2 text-xs"
-                  disabled={page <= 1}
-                  onClick={() => setPage((p) => Math.max(1, p - 1))}>
-                  Назад
-                </Button>
-                <div className="text-[11px] text-muted-foreground">
-                  страница {page} / {pages}
+            {pages > 0 && (
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2">
+                {/* Выбор размера страницы */}
+                <div className="flex items-center gap-2">
+                  <label htmlFor="page-size" className="text-[11px] text-muted-foreground">
+                    На странице:
+                  </label>
+                  <select
+                    id="page-size"
+                    className="h-8 border rounded-md px-2 text-xs"
+                    value={pageSize}
+                    onChange={(e) => {
+                      const v = Number(e.target.value) || 20;
+                      setPageSize(v);
+                      setPage(1);
+                    }}>
+                    {[5, 10, 20, 25, 50, 75, 100].map((n) => (
+                      <option key={n} value={n}>
+                        {n}
+                      </option>
+                    ))}
+                  </select>
                 </div>
-                <Button
-                  variant="secondary"
-                  className="h-8 px-2 text-xs"
-                  disabled={page >= pages}
-                  onClick={() => setPage((p) => Math.min(pages, p + 1))}>
-                  Вперёд
-                </Button>
+
+                {/* Пагинация */}
+                <div className="flex items-center justify-end gap-2">
+                  <Button
+                    variant="secondary"
+                    className="h-8 px-2 text-xs"
+                    disabled={page <= 1}
+                    onClick={() => setPage((p) => Math.max(1, p - 1))}>
+                    Назад
+                  </Button>
+                  <div className="text-[11px] text-muted-foreground">
+                    страница {page} / {pages}
+                  </div>
+                  <Button
+                    variant="secondary"
+                    className="h-8 px-2 text-xs"
+                    disabled={page >= pages}
+                    onClick={() => setPage((p) => Math.min(pages, p + 1))}>
+                    Вперёд
+                  </Button>
+                </div>
               </div>
             )}
           </CardContent>
