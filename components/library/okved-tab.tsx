@@ -7,8 +7,6 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { X } from 'lucide-react';
-import InlineDualArea from './inline-dual-area';
-import InlineRevenueStep from './inline-revenue-step';
 import InlineRevenueBars from './inline-revenue-bar';
 import SquareImgButton from './square-img-button';
 
@@ -165,6 +163,11 @@ export default function OkvedTab() {
 
   const [searchName, setSearchName] = useState<string>(initialQ);
   const [sortKey, setSortKey] = useState<SortKey>(initialSort);
+
+  const [responsibles, setResponsibles] = useState<
+    Record<string, { assignedById?: number; assignedName?: string }>
+  >({});
+  const [respLoading, setRespLoading] = useState(false);
 
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     if (typeof window === 'undefined') return DEFAULT_SIDEBAR;
@@ -436,6 +439,41 @@ export default function OkvedTab() {
       if (typeof abortFn === 'function') abortFn();
     };
   }, [loadCompanies]);
+
+  useEffect(() => {
+    const inns = companies.map((c) => c.inn).filter(Boolean);
+    if (inns.length === 0) {
+      setResponsibles({});
+      return;
+    }
+    const ac = new AbortController();
+    (async () => {
+      try {
+        setRespLoading(true);
+        const r = await fetch('/api/b24/responsibles', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ inns }),
+          signal: ac.signal,
+        });
+        const j = await r.json();
+        if (!j?.ok) throw new Error(j?.error || 'b24 responsibles error');
+        const map: Record<string, { assignedById?: number; assignedName?: string }> = {};
+        for (const it of j.items || []) {
+          map[it.inn] = { assignedById: it.assignedById, assignedName: it.assignedName };
+        }
+        setResponsibles(map);
+      } catch (e: any) {
+        if (e?.name !== 'AbortError') {
+          console.error('load responsibles failed', e);
+          setResponsibles({});
+        }
+      } finally {
+        setRespLoading(false);
+      }
+    })();
+    return () => ac.abort();
+  }, [companies]);
 
   const lastYear = new Date().getFullYear() - 1;
 
@@ -735,8 +773,8 @@ export default function OkvedTab() {
                 <thead className="[&_tr]:border-b">
                   <tr className="text-left">
                     <th className="py-1 pr-2 w-[35px]"></th>
-                    <th className="py-1 pr-3">ИНН</th>
-                    <th className="py-1 pr-3">Название</th>
+                    <th className="py-1 pr-2">ИНН</th>
+                    <th className="py-1 pr-2">Название</th>
                     <th
                       className="py-1 pr-3 cursor-pointer select-none"
                       title="Сортировать по выручке"
@@ -749,23 +787,24 @@ export default function OkvedTab() {
                         {sortKey === 'revenue_desc' ? '↓' : '↑'}
                       </span>
                     </th>
-                    <th className="py-1 pr-3">Адрес</th>
-                    <th className="py-1 pr-3">Штат</th>
-                    <th className="py-1 pr-3">Филиалов</th>
+                    <th className="py-1 pr-2">Адрес</th>
+                    <th className="py-1 pr-2">Штат</th>
+                    <th className="py-1 pr-2">Филиалов</th>
                     <th className="py-1 pr-2">Год</th>
+                    <th className="py-1 pr-2">Ответственный</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading && (
                     <tr>
-                      <td colSpan={8} className="py-6 text-center text-muted-foreground text-xs">
+                      <td colSpan={9} className="py-6 text-center text-muted-foreground text-xs">
                         Загрузка…
                       </td>
                     </tr>
                   )}
                   {!loading && companies.length === 0 && (
                     <tr>
-                      <td colSpan={8} className="py-6 text-center text-muted-foreground text-xs">
+                      <td colSpan={9} className="py-6 text-center text-muted-foreground text-xs">
                         Нет данных
                       </td>
                     </tr>
@@ -775,27 +814,7 @@ export default function OkvedTab() {
                       const seriesRevenue = [c.revenue_3, c.revenue_2, c.revenue_1, c.revenue];
                       const seriesIncome = [c.income_3, c.income_2, c.income_1, c.income];
 
-                      const title = `Выручка (млн): ${seriesRevenue
-                        .map((v) =>
-                          Number.isFinite(v as number)
-                            ? Math.round((v as number) / 1_000_000)
-                            : '—',
-                        )
-                        .join(' · ')} | Прибыль (млн): ${seriesIncome
-                        .map((v) =>
-                          Number.isFinite(v as number)
-                            ? Math.round((v as number) / 1_000_000)
-                            : '—',
-                        )
-                        .join(' · ')}`;
-
                       const isActual = (c.year ?? 0) === lastYear;
-
-                      const valueLabel = isLg()
-                        ? revenueMln(c.revenue)
-                        : revenueMln(c.income as number | null);
-
-                      const valueTitle = isLg() ? 'Выручка, млн' : 'Прибыль, млн';
 
                       return (
                         <tr key={`${c.inn}-${c.year}`} className="border-b hover:bg-muted/40">
@@ -852,6 +871,10 @@ export default function OkvedTab() {
                               }>
                               {c.year ?? '—'}
                             </span>
+                          </td>
+
+                          <td className="py-0.5 pr-3 whitespace-nowrap">
+                            {responsibles[c.inn]?.assignedName ?? (respLoading ? '…' : '—')}
                           </td>
                         </tr>
                       );

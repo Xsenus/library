@@ -28,11 +28,25 @@ export async function b24Call<T = unknown>(
     cache: 'no-store',
   });
   const data = (await r.json()) as B24Response<T>;
-  if (data.error) throw new Error(`${data.error}: ${data.error_description ?? ''}`);
+  if ((data as any)?.error)
+    throw new Error(`${(data as any).error}: ${(data as any).error_description ?? ''}`);
   return data.result as T;
 }
 
-// --- ВАЖНО: массив объектов разворачиваем как filter[0][...], а не JSON
+/** JSON-вариант batch */
+export async function b24BatchJson(cmd: Record<string, string>, halt = 0): Promise<any> {
+  if (!WEBHOOK) throw new Error('B24 webhook not configured');
+  const r = await fetch(`${WEBHOOK}batch.json`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ halt, cmd }),
+    cache: 'no-store',
+  });
+  const data = await r.json();
+  if (data?.error) throw new Error(`${data.error}: ${data.error_description ?? ''}`);
+  return data;
+}
+
 function toFormUrlEncoded(obj: any): string {
   const sp = new URLSearchParams();
 
@@ -40,12 +54,10 @@ function toFormUrlEncoded(obj: any): string {
     if (val === undefined || val === null) return;
 
     if (Array.isArray(val)) {
-      // массив примитивов → key[]=a&key[]=b
       const allPrimitive = val.every((v) => typeof v !== 'object' || v === null);
       if (allPrimitive) {
         for (const v of val) sp.append(`${prefix}[]`, String(v));
       } else {
-        // массив объектов → key[0][field]=...&key[1][field]=...
         val.forEach((item, i) => walk(`${prefix}[${i}]`, item));
       }
       return;
@@ -61,4 +73,12 @@ function toFormUrlEncoded(obj: any): string {
 
   for (const [k, v] of Object.entries(obj)) walk(k, v);
   return sp.toString();
+}
+
+/** разбиение на чанки */
+export function chunk<T>(arr: T[], n: number): T[][] {
+  if (!Array.isArray(arr) || n <= 0) return [arr || []];
+  const out: T[][] = [];
+  for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
+  return out;
 }
