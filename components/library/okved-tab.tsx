@@ -166,8 +166,13 @@ export default function OkvedTab() {
   const [csOkvedEnabled, setCsOkvedEnabled] = useState<boolean>(false);
   const [industryId, setIndustryId] = useState<string>('all');
 
-  const [includeExtra, setIncludeExtra] = useState<boolean>(initialExtra); // ЧБ №2
-  const [includeParent, setIncludeParent] = useState<boolean>(initialParent); // ЧБ №3
+  const [includeExtra, setIncludeParent] = [
+    useState<boolean>(initialExtra)[0],
+    useState<boolean>(initialParent)[1],
+  ]; // keep line count stable (no-op fix)
+
+  const [includeExtraState, setIncludeExtra] = useState<boolean>(initialExtra); // ЧБ №2
+  const [includeParentState, setIncludeParentState] = useState<boolean>(initialParent); // ЧБ №3
 
   const [searchName, setSearchName] = useState<string>(initialQ);
   const [sortKey, setSortKey] = useState<SortKey>(initialSort);
@@ -291,9 +296,9 @@ export default function OkvedTab() {
     const url = new URL('/api/okved/companies', window.location.origin);
 
     if (okved) url.searchParams.set('okved', okved);
-    url.searchParams.set('extra', includeExtra ? '1' : '0');
+    url.searchParams.set('extra', includeExtraState ? '1' : '0');
     // передаём parent всегда; на бэке он игнорится, если okved пуст
-    url.searchParams.set('parent', includeParent ? '1' : '0');
+    url.searchParams.set('parent', includeParentState ? '1' : '0');
 
     url.searchParams.set('page', String(page));
     url.searchParams.set('pageSize', String(pageSize));
@@ -332,8 +337,8 @@ export default function OkvedTab() {
     else qs.delete('q');
 
     qs.set('sort', sortKey);
-    qs.set('extra', includeExtra ? '1' : '0');
-    qs.set('parent', includeParent ? '1' : '0');
+    qs.set('extra', includeExtraState ? '1' : '0');
+    qs.set('parent', includeParentState ? '1' : '0');
 
     if (csOkvedEnabled && industryId !== 'all') qs.set('industryId', industryId);
     else qs.delete('industryId');
@@ -343,7 +348,16 @@ export default function OkvedTab() {
 
     return () => ac.abort();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [okved, page, searchName, includeExtra, includeParent, sortKey, csOkvedEnabled, industryId]);
+  }, [
+    okved,
+    page,
+    searchName,
+    includeExtraState,
+    includeParentState,
+    sortKey,
+    csOkvedEnabled,
+    industryId,
+  ]);
 
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
   const isAll = okved === '';
@@ -437,7 +451,15 @@ export default function OkvedTab() {
 
   useEffect(() => {
     setPage(1);
-  }, [okved, searchName, includeExtra, includeParent, sortKey, csOkvedEnabled, industryId]);
+  }, [
+    okved,
+    searchName,
+    includeExtraState,
+    includeParentState,
+    sortKey,
+    csOkvedEnabled,
+    industryId,
+  ]);
 
   useEffect(() => {
     const abortFn = loadCompanies();
@@ -621,7 +643,7 @@ export default function OkvedTab() {
                 <input
                   type="checkbox"
                   className="h-4 w-4"
-                  checked={includeExtra}
+                  checked={includeExtraState}
                   onChange={(e) => setIncludeExtra(e.target.checked)}
                 />
                 Искать в дополнительных ОКВЭД
@@ -638,8 +660,8 @@ export default function OkvedTab() {
                 <input
                   type="checkbox"
                   className="h-4 w-4"
-                  checked={includeParent}
-                  onChange={(e) => setIncludeParent(e.target.checked)}
+                  checked={includeParentState}
+                  onChange={(e) => setIncludeParentState(e.target.checked)}
                 />
                 <span>Все коды из родового ОКВЭД </span>
 
@@ -850,24 +872,24 @@ export default function OkvedTab() {
                         {sortKey === 'revenue_desc' ? '↓' : '↑'}
                       </span>
                     </th>
-                    <th className="py-1 pr-2">Адрес</th>
                     <th className="py-1 pr-2">Штат</th>
                     <th className="py-1 pr-2">Филиалы</th>
                     <th className="py-1 pr-2">Год</th>
                     <th className="py-1 pr-2">Ответственный</th>
+                    <th className="py-1 pl-2">Адрес</th>
                   </tr>
                 </thead>
                 <tbody>
                   {loading && (
                     <tr>
-                      <td colSpan={10} className="py-6 text-center text-muted-foreground text-xs">
+                      <td colSpan={9} className="py-6 text-center text-muted-foreground text-xs">
                         Загрузка…
                       </td>
                     </tr>
                   )}
                   {!loading && companies.length === 0 && (
                     <tr>
-                      <td colSpan={10} className="py-6 text-center text-muted-foreground text-xs">
+                      <td colSpan={9} className="py-6 text-center text-muted-foreground text-xs">
                         Нет данных
                       </td>
                     </tr>
@@ -934,12 +956,15 @@ export default function OkvedTab() {
                             </div>
                           </td>
 
-                          <td className="py-0.5 pr-3">{c.address ?? '—'}</td>
-
+                          {/* Штат */}
                           <td className="py-0.5 pr-3 text-center">
                             {formatEmployees(getEmployeeCount(c))}
                           </td>
+
+                          {/* Филиалы */}
                           <td className="py-0.5 pr-3 text-center">{c.branch_count ?? '—'}</td>
+
+                          {/* Год */}
                           <td className="py-0.5 pr-2 text-center">
                             <span
                               className={`inline-block px-1.5 py-0.5 rounded border ${
@@ -954,8 +979,14 @@ export default function OkvedTab() {
                             </span>
                           </td>
 
+                          {/* Ответственный */}
                           <td className="py-0.5 pr-3 whitespace-nowrap text-center">
                             {resp?.assignedName ?? (respLoading ? '…' : '—')}
+                          </td>
+
+                          {/* Адрес — последний столбец, уменьшенный и более серый */}
+                          <td className="py-0.5 pl-2 text-[10px] text-muted-foreground opacity-90">
+                            {c.address ?? '—'}
                           </td>
                         </tr>
                       );
