@@ -66,11 +66,16 @@ function GoodsList({ items }: { items?: string[] | null }) {
     .filter((item) => item.length > 0);
   if (normalized.length === 0) return null;
   return (
-    <ul className="list-disc space-y-1 pl-5 text-sm text-slate-600">
+    <div className="flex flex-wrap gap-1.5">
       {normalized.map((item, idx) => (
-        <li key={`${item}-${idx}`}>{item}</li>
+        <span
+          key={`${item}-${idx}`}
+          className="inline-flex items-center rounded-full border px-2 py-0.5 text-[11px] leading-4 text-muted-foreground bg-background"
+        >
+          {item}
+        </span>
       ))}
-    </ul>
+    </div>
   );
 }
 
@@ -204,6 +209,10 @@ export default async function EquipmentEmbedPage({
               </div>
             </Section>
 
+            <Section title="Примеры основных ОКВЭД в исследуемой отрасли">
+              <OkvedList items={okvedItems} />
+            </Section>
+
             <Section title="Примеры товаров">
               <GoodsList items={equipment.goods_examples ?? undefined} />
             </Section>
@@ -213,10 +222,6 @@ export default async function EquipmentEmbedPage({
                 {equipment.company_name && <div className="font-medium text-slate-900">{equipment.company_name}</div>}
                 <TextBlock value={equipment.site_description} />
               </div>
-            </Section>
-
-            <Section title="Примеры основных ОКВЭД в отрасли">
-              <OkvedList items={okvedItems} />
             </Section>
           </CardContent>
         </Card>
