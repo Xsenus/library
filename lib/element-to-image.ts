@@ -17,6 +17,23 @@ function isSVGElement(node: Element): node is SVGElement {
   return node instanceof SVGElement;
 }
 
+function getImageSource(image: HTMLImageElement): string | null {
+  const current = image.currentSrc || image.src || image.getAttribute('src');
+  return current || null;
+}
+
+function requiresCrossOrigin(url: string): boolean {
+  if (!url) return false;
+  if (url.startsWith('data:') || url.startsWith('blob:')) return false;
+
+  try {
+    const absolute = new URL(url, window.location.href);
+    return absolute.origin !== window.location.origin;
+  } catch {
+    return false;
+  }
+}
+
 function cloneNodeDeep(node: Element, filter?: (node: HTMLElement) => boolean): Element | null {
   if (filter && isHTMLElement(node) && !filter(node)) {
     return null;
@@ -25,8 +42,16 @@ function cloneNodeDeep(node: Element, filter?: (node: HTMLElement) => boolean): 
   const clone = node.cloneNode(false) as Element;
 
   if (clone instanceof HTMLImageElement) {
-    clone.crossOrigin = 'anonymous';
-    clone.referrerPolicy = 'no-referrer';
+    if (node instanceof HTMLImageElement) {
+      const source = getImageSource(node);
+      if (source && requiresCrossOrigin(source)) {
+        clone.crossOrigin = 'anonymous';
+        clone.referrerPolicy = 'no-referrer';
+      } else {
+        clone.removeAttribute('crossorigin');
+        clone.removeAttribute('referrerpolicy');
+      }
+    }
   }
 
   inlineStyles(node, clone);
