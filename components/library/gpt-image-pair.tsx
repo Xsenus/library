@@ -50,19 +50,15 @@ export function GptImagePair({
 
     async function probe(url: string): Promise<boolean> {
       try {
-        const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-        if (r.ok) return true;
-        if (r.status === 404) return false;
+        const target = new URL(url, window.location.href);
+        const response = await fetch(target.toString(), {
+          method: 'HEAD',
+          cache: 'no-store',
+        });
+        return response.ok;
       } catch {
-        /* ignore */
+        return false;
       }
-      return new Promise<boolean>((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
-        img.onerror = () => resolve(false);
-        const sep = url.includes('?') ? '&' : '?';
-        img.src = `${url}${sep}cb=${Date.now()}`;
-      });
     }
 
     (async () => {
@@ -98,11 +94,6 @@ export function GptImagePair({
     );
 
     const wrapperCls = 'relative h-[300px] w-full rounded-md overflow-hidden bg-muted';
-    const content = (
-      <div className={wrapperCls}>
-        <NextImage src={url} alt={alt} fill sizes="50vw" className="object-contain" unoptimized />
-      </div>
-    );
 
     if (status === null) {
       return (
@@ -133,10 +124,21 @@ export function GptImagePair({
             className="w-full transition hover:ring-1 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             onClick={() => onSelect(url)}
             title={label}>
-            {content}
+            <div className={wrapperCls}>
+              <NextImage
+                src={url}
+                alt={alt}
+                fill
+                sizes="50vw"
+                className="object-contain"
+                unoptimized
+              />
+            </div>
           </button>
         ) : (
-          content
+          <div className={wrapperCls}>
+            <NextImage src={url} alt={alt} fill sizes="50vw" className="object-contain" unoptimized />
+          </div>
         )}
       </div>
     );
