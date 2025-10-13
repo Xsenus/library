@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { getEquipmentDetail, getOkvedForEquipment } from '@/lib/equipment';
 import { equipmentIdSchema } from '@/lib/validators';
 import { cn } from '@/lib/utils';
-import { GptImagePair } from '@/components/library/gpt-image-pair';
+import { EmbedImagesSection } from '@/components/library/embed-images-section';
 import Link from 'next/link';
 import type { ReactNode } from 'react';
 
@@ -82,18 +82,18 @@ function OkvedList({
   if (!Array.isArray(items) || items.length === 0) return null;
   return (
     <div className="overflow-hidden rounded-md border border-slate-200">
-      <table className="w-full text-left text-[13px] leading-5 text-slate-700">
-        <thead className="bg-slate-100 text-[12px] uppercase tracking-wide text-slate-500">
+      <table className="w-full text-[11px] leading-4">
+        <thead className="bg-muted/50 text-left text-[11px] uppercase tracking-wide text-muted-foreground">
           <tr>
-            <th className="px-3 py-2 w-24">Код</th>
-            <th className="px-3 py-2">Наименование</th>
+            <th className="px-2 py-1 w-[70px] font-medium">Код</th>
+            <th className="px-2 py-1 font-medium">Наименование</th>
           </tr>
         </thead>
         <tbody>
           {items.map((row) => (
-            <tr key={row.id} className="border-t border-slate-100">
-              <td className="px-3 py-2 font-medium text-slate-800">{row.okved_code}</td>
-              <td className="px-3 py-2 text-slate-700">{row.okved_main}</td>
+            <tr key={row.id} className="border-t border-slate-200/80 hover:bg-muted/40">
+              <td className="px-2 py-1 font-medium text-slate-900 whitespace-nowrap">{row.okved_code}</td>
+              <td className="px-2 py-1 text-slate-700">{row.okved_main}</td>
             </tr>
           ))}
         </tbody>
@@ -177,26 +177,7 @@ export default async function EquipmentEmbedPage({
             </Section>
             */}
 
-            <Section title="Картинки">
-              <div className="space-y-4">
-                <GptImagePair equipmentId={equipment.id ?? undefined} />
-
-                {imagesFromDb.length > 0 && (
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {imagesFromDb.map((url, idx) => (
-                      // eslint-disable-next-line @next/next/no-img-element
-                      <img
-                        key={`${url}-${idx}`}
-                        src={url}
-                        alt={`Изображение оборудования ${idx + 1}`}
-                        className="h-40 w-full rounded-md border border-slate-200 object-cover"
-                        loading="lazy"
-                      />
-                    ))}
-                  </div>
-                )}
-              </div>
-            </Section>
+            <EmbedImagesSection equipmentId={equipment.id ?? undefined} imagesFromDb={imagesFromDb} />
 
             <Section title="Проблемы оборудования">
               <div className="grid grid-cols-1 gap-2 md:grid-cols-3">

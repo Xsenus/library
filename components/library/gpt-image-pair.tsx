@@ -6,6 +6,8 @@ import { cn } from '@/lib/utils';
 
 type Key = 'old' | 'cryo';
 
+type StatusMap = Record<Key, boolean>;
+
 const GPT_IMAGES_BASE = process.env.NEXT_PUBLIC_GPT_IMAGES_BASE ?? '/static/';
 
 const LABELS: Record<Key, string> = {
@@ -22,9 +24,17 @@ type Props = {
   equipmentId?: number | null;
   onSelect?: (url: string) => void;
   className?: string;
+  labelTone?: Partial<Record<Key, string>>;
+  onStatusChange?: (status: StatusMap) => void;
 };
 
-export function GptImagePair({ equipmentId, onSelect, className }: Props) {
+export function GptImagePair({
+  equipmentId,
+  onSelect,
+  className,
+  labelTone,
+  onStatusChange,
+}: Props) {
   const id = equipmentId ? String(equipmentId) : null;
   const [exists, setExists] = useState<Record<Key, boolean | null>>({ old: null, cryo: null });
 
@@ -70,10 +80,22 @@ export function GptImagePair({ equipmentId, onSelect, className }: Props) {
     };
   }, [id]);
 
+  useEffect(() => {
+    if (!onStatusChange) return;
+    const { old, cryo } = exists;
+    if (old === null || cryo === null) return;
+    onStatusChange({ old, cryo });
+  }, [exists, onStatusChange]);
+
   const renderTile = (key: Key, url: string) => {
     const status = exists[key];
     const label = LABELS[key];
     const alt = ALTS[key];
+    const tone = labelTone?.[key];
+    const labelClassName = cn(
+      'text-xs font-semibold uppercase tracking-wide',
+      tone ?? 'text-muted-foreground',
+    );
 
     const wrapperCls = 'relative h-[300px] w-full rounded-md overflow-hidden bg-muted';
     const content = (
@@ -85,7 +107,7 @@ export function GptImagePair({ equipmentId, onSelect, className }: Props) {
     if (status === null) {
       return (
         <div className="space-y-2" key={key}>
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{label}</div>
+          <div className={labelClassName}>{label}</div>
           <div className={cn(wrapperCls, 'animate-pulse')} />
         </div>
       );
@@ -94,7 +116,7 @@ export function GptImagePair({ equipmentId, onSelect, className }: Props) {
     if (status === false) {
       return (
         <div className="space-y-2" key={key}>
-          <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{label}</div>
+          <div className={labelClassName}>{label}</div>
           <div className="grid h-[150px] place-items-center rounded-md border bg-muted/60 text-xs text-muted-foreground">
             Нет изображения
           </div>
@@ -104,7 +126,7 @@ export function GptImagePair({ equipmentId, onSelect, className }: Props) {
 
     return (
       <div className="space-y-2" key={key}>
-        <div className="text-xs font-semibold text-muted-foreground uppercase tracking-wide">{label}</div>
+        <div className={labelClassName}>{label}</div>
         {onSelect ? (
           <button
             type="button"
