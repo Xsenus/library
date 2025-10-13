@@ -43,6 +43,7 @@ export default function SquareImgButton({
   const wrapper = cn(wrapperBase, wrapperClassName);
 
   const frame = cn(
+    'relative',
     sizeClassName,
     radiusClassName,
     bordered ? 'border' : 'border-0',

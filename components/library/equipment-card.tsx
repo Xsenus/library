@@ -306,16 +306,17 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
     const urls = [`${GPT_IMAGES_BASE}${id}_old.jpg`, `${GPT_IMAGES_BASE}${id}_cryo.jpg`];
 
-    function probe(url: string): Promise<boolean> {
-      return new Promise<boolean>((resolve) => {
-        const img = new Image();
-        img.crossOrigin = 'anonymous';
-        img.referrerPolicy = 'no-referrer';
-        img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
-        img.onerror = () => resolve(false);
-        const sep = url.includes('?') ? '&' : '?';
-        img.src = `${url}${sep}cb=${Date.now()}`;
-      });
+    async function probe(url: string): Promise<boolean> {
+      try {
+        const target = new URL(url, window.location.href);
+        const response = await fetch(target.toString(), {
+          method: 'HEAD',
+          cache: 'no-store',
+        });
+        return response.ok;
+      } catch {
+        return false;
+      }
     }
 
     (async () => {

@@ -2,13 +2,18 @@ const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 const TRANSPARENT_PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+type StylableElement = Element & { style?: CSSStyleDeclaration };
+
 const CSS_URL_PROPERTIES = [
+  'background',
   'background-image',
   'mask-image',
   'mask',
   'border-image-source',
+  'border-image',
   'list-style-image',
   'cursor',
+  'content',
 ];
 
 type SnapshotOptions = {
@@ -87,6 +92,8 @@ async function inlineExternalResources(pairs: ElementPair[], root: Element) {
   }
 
   await Promise.all(tasks);
+
+  await inlineInlineStyleResources(root, cache);
 
   sanitizeClonedTree(root);
 }
@@ -313,7 +320,7 @@ async function inlineCssResourceReferences(
 }
 
 async function inlineCssUrls(
-  target: HTMLElement,
+  target: StylableElement,
   property: string,
   value: string,
   priority: string,
@@ -358,9 +365,35 @@ async function inlineCssUrls(
 
   result += value.slice(lastIndex);
 
-  if (changed) {
+  if (changed && target.style) {
     target.style.setProperty(property, result, prioritySafe);
   }
+}
+
+async function inlineInlineStyleResources(root: Element, cache: Map<string, Promise<string>>): Promise<void> {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null);
+  const tasks: Promise<void>[] = [];
+
+  let current = walker.currentNode as Element | null;
+  while (current) {
+    const stylable = current as StylableElement;
+    const style = stylable.style;
+    if (style) {
+      for (let i = 0; i < style.length; i += 1) {
+        const property = style.item(i);
+        if (!property) continue;
+        const value = style.getPropertyValue(property);
+        if (!value || !value.includes('url(')) continue;
+        tasks.push(
+          inlineCssUrls(stylable, property, value, style.getPropertyPriority(property), cache),
+        );
+      }
+    }
+
+    current = walker.nextNode() as Element | null;
+  }
+
+  await Promise.all(tasks);
 }
 
 function toAbsoluteUrl(url: string): string | null {
