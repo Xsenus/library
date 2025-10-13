@@ -200,6 +200,11 @@ export default async function EquipmentEmbedPage({
               </div>
             </Section>
 
+            {/**
+             * Дополнительные секции временно скрыты из встраиваемой версии.
+             * При необходимости можно вернуть, раскомментировав блоки ниже.
+             */}
+            {/**
             <Section title="Центр принятия решений">
               <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
                 <DecisionRow label="ЛПР" value={equipment.decision_pr} />
@@ -223,6 +228,7 @@ export default async function EquipmentEmbedPage({
                 <TextBlock value={equipment.site_description} />
               </div>
             </Section>
+            */}
           </CardContent>
         </Card>
       </div>
