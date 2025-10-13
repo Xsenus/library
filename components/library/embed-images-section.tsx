@@ -11,8 +11,8 @@ import { cn } from '@/lib/utils';
 import { GptImagePair } from './gpt-image-pair';
 
 const TONES = {
-  old: 'text-red-600',
-  cryo: 'text-emerald-600',
+  old: 'text-[#ef944d]',
+  cryo: 'text-[#ef944d]',
 } as const;
 
 type Props = {
@@ -54,7 +54,7 @@ export function EmbedImagesSection({ equipmentId, imagesFromDb }: Props) {
             onClick={gptAvailable === false ? (event) => event.preventDefault() : undefined}
             aria-disabled={gptAvailable === false}
           >
-            Картинки GPT
+            Картинки
           </AccordionTrigger>
           <AccordionContent className="px-4">
             <div className="space-y-4 pt-2">

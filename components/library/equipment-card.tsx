@@ -614,7 +614,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                   )}
                   onClick={gptAvailable === false ? (e) => e.preventDefault() : undefined}
                   aria-disabled={gptAvailable === false}>
-                  Картинки GPT
+                  Картинки GTP
                 </AccordionTrigger>
 
                 <AccordionContent
