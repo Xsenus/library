@@ -10,7 +10,7 @@ import {
 } from '@/components/ui/accordion';
 import { ExternalLink, X, Copy, ArrowUpRight, Check, Loader2, AlertCircle } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { copyElementAsImageToClipboard } from '@/lib/capture-to-clipboard';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
@@ -24,7 +24,6 @@ interface EquipmentCardProps {
   onEsConfirmChange?: (equipmentId: number, confirmed: boolean) => void;
 }
 
-const GPT_IMAGES_BASE = process.env.NEXT_PUBLIC_GPT_IMAGES_BASE ?? '/static/';
 type ImgSection = 'google-images' | 'gpt-images';
 const OPEN_KEY = 'lib:img-accordion-open';
 const IMG_SECTIONS: ImgSection[] = ['google-images', 'gpt-images'];
@@ -154,6 +153,12 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const [gptAvailable, setGptAvailable] = useState<boolean | null>(null);
   /** Флаг «мы уже один раз авто-раскрыли GPT» для этой карточки */
   const [autoOpenedGPT, setAutoOpenedGPT] = useState(false);
+  const handleGptStatusChange = useCallback(
+    (status: Record<'old' | 'cryo', boolean>) => {
+      setGptAvailable(status.old || status.cryo);
+    },
+    [],
+  );
 
   /** Держим GPT открытой с первого рендера, если в памяти была открыта */
   const wantGptFromMemoryRef = useRef(false);
@@ -292,47 +297,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
   const blueBtn =
     'border border-blue-500 text-blue-600 bg-blue-50 hover:bg-blue-100 active:scale-[.98] transition justify-center';
-
-  /** ===== Проверка наличия GPT-картинок — до открытия секции ===== */
-  useEffect(() => {
-    let cancelled = false;
-    setGptAvailable(null);
-
-    const id = equipment?.id ? String(equipment.id) : null;
-    if (!id) {
-      setGptAvailable(false);
-      return;
-    }
-
-    const urls = [`${GPT_IMAGES_BASE}${id}_old.jpg`, `${GPT_IMAGES_BASE}${id}_cryo.jpg`];
-
-    async function probe(url: string): Promise<boolean> {
-      try {
-        const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-        if (r.ok) return true;
-        if (r.status === 404) return false;
-      } catch {
-        /* ignore */
-      }
-      return new Promise<boolean>((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
-        img.onerror = () => resolve(false);
-        const sep = url.includes('?') ? '&' : '?';
-        img.src = `${url}${sep}cb=${Date.now()}`;
-      });
-    }
-
-    (async () => {
-      const [a, b] = await Promise.all(urls.map((u) => probe(u)));
-      if (cancelled) return;
-      setGptAvailable(!!(a || b));
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [equipment?.id]);
 
   // Реакция на изменение доступности GPT — ВСЕГДА открываем, если картинки есть
   useEffect(() => {
@@ -701,6 +665,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                         equipmentId={equipment.id}
                         onSelect={(url) => setSelectedImage(url)}
                         labelTone={{ old: 'text-[#ef944d]', cryo: 'text-[#ef944d]' }}
+                        onStatusChange={handleGptStatusChange}
                       />
                     ) : (
                       <div className="text-xs text-muted-foreground">ID оборудования не задан.</div>

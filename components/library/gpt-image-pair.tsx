@@ -6,7 +6,9 @@ import { cn } from '@/lib/utils';
 
 type Key = 'old' | 'cryo';
 
-type StatusMap = Record<Key, boolean>;
+type StatusValue = boolean | null;
+type StatusMap = Record<Key, StatusValue>;
+type StatusSnapshot = Record<Key, boolean>;
 
 const GPT_IMAGES_BASE = process.env.NEXT_PUBLIC_GPT_IMAGES_BASE ?? '/static/';
 
@@ -25,7 +27,7 @@ type Props = {
   onSelect?: (url: string) => void;
   className?: string;
   labelTone?: Partial<Record<Key, string>>;
-  onStatusChange?: (status: StatusMap) => void;
+  onStatusChange?: (status: StatusSnapshot) => void;
 };
 
 export function GptImagePair({
@@ -36,7 +38,7 @@ export function GptImagePair({
   onStatusChange,
 }: Props) {
   const id = equipmentId ? String(equipmentId) : null;
-  const [exists, setExists] = useState<Record<Key, boolean | null>>({ old: null, cryo: null });
+  const [exists, setExists] = useState<StatusMap>({ old: null, cryo: null });
 
   const items: Array<{ key: Key; url: string }> = id
     ? [
@@ -48,31 +50,24 @@ export function GptImagePair({
   useEffect(() => {
     let cancelled = false;
 
-    async function probe(url: string): Promise<boolean> {
-      try {
-        const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-        if (r.ok) return true;
-        if (r.status === 404) return false;
-      } catch {
-        /* ignore */
-      }
-      return new Promise<boolean>((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
-        img.onerror = () => resolve(false);
-        const sep = url.includes('?') ? '&' : '?';
-        img.src = `${url}${sep}cb=${Date.now()}`;
-      });
-    }
-
     (async () => {
       if (!id) {
         if (!cancelled) setExists({ old: false, cryo: false });
         return;
       }
-      const [oldUrl, cryoUrl] = [`${GPT_IMAGES_BASE}${id}_old.jpg`, `${GPT_IMAGES_BASE}${id}_cryo.jpg`];
-      const [oldOk, cryoOk] = await Promise.all([probe(oldUrl), probe(cryoUrl)]);
-      if (!cancelled) setExists({ old: oldOk, cryo: cryoOk });
+      try {
+        const response = await fetch(`/api/gpt-images/${id}/status`, { cache: 'no-store' });
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const data = (await response.json()) as Partial<Record<Key, unknown>>;
+        const old = data.old === true;
+        const cryo = data.cryo === true;
+        if (!cancelled) setExists({ old, cryo });
+      } catch (error) {
+        console.error('Failed to load GPT image status', error);
+        if (!cancelled) setExists({ old: false, cryo: false });
+      }
     })();
 
     return () => {

@@ -81,6 +81,10 @@ async function inlineExternalResources(pairs: ElementPair[], root: Element) {
       tasks.push(inlineImageElement(source, target, cache));
     }
 
+    if (source instanceof HTMLSourceElement && target instanceof HTMLSourceElement) {
+      tasks.push(inlineSourceElement(source, target, cache));
+    }
+
     if (source instanceof HTMLElement && target instanceof HTMLElement) {
       tasks.push(inlineCssResourceReferences(source, target, cache));
     }
@@ -155,6 +159,7 @@ async function elementToBlob(element: HTMLElement, options: SnapshotOptions = {}
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = reject;
     img.src = url;
@@ -207,6 +212,91 @@ async function inlineImageElement(
     target.setAttribute('src', TRANSPARENT_PIXEL);
     target.loading = 'eager';
   }
+}
+
+async function inlineSourceElement(
+  source: HTMLSourceElement,
+  target: HTMLSourceElement,
+  cache: Map<string, Promise<string>>,
+): Promise<void> {
+  const tasks: Promise<void>[] = [];
+
+  const rawSrc = source.getAttribute('src');
+  if (rawSrc) {
+    tasks.push(
+      (async () => {
+        const absolute = toAbsoluteUrl(rawSrc);
+        if (!absolute) return;
+
+        if (absolute.startsWith('data:')) {
+          target.setAttribute('src', absolute);
+          return;
+        }
+
+        if (!cache.has(absolute)) {
+          cache.set(absolute, fetchAsDataUrl(absolute));
+        }
+
+        try {
+          const dataUrl = await cache.get(absolute)!;
+          target.setAttribute('src', dataUrl);
+        } catch (error) {
+          console.error('Failed to inline <source> src for snapshot', error);
+          target.setAttribute('src', TRANSPARENT_PIXEL);
+        }
+      })(),
+    );
+  }
+
+  const rawSrcset = source.getAttribute('srcset');
+  if (rawSrcset) {
+    tasks.push(
+      (async () => {
+        const entries = parseSrcset(rawSrcset);
+        if (!entries.length) {
+          target.removeAttribute('srcset');
+          return;
+        }
+
+        const rewritten = await Promise.all(
+          entries.map(async ({ url, descriptor }) => {
+            const absolute = toAbsoluteUrl(url);
+            if (!absolute) {
+              return { url, descriptor };
+            }
+
+            if (absolute.startsWith('data:')) {
+              return { url: absolute, descriptor };
+            }
+
+            if (!cache.has(absolute)) {
+              cache.set(absolute, fetchAsDataUrl(absolute));
+            }
+
+            try {
+              const dataUrl = await cache.get(absolute)!;
+              return { url: dataUrl, descriptor };
+            } catch (error) {
+              console.error('Failed to inline <source> srcset for snapshot', error);
+              return { url: TRANSPARENT_PIXEL, descriptor };
+            }
+          }),
+        );
+
+        const value = rewritten
+          .map(({ url, descriptor }) => (descriptor ? `${url} ${descriptor}` : url))
+          .join(', ');
+
+        if (value) {
+          target.setAttribute('srcset', value);
+        } else {
+          target.removeAttribute('srcset');
+        }
+      })(),
+    );
+  }
+
+  await Promise.all(tasks);
 }
 
 async function inlineCssResourceReferences(
@@ -283,6 +373,20 @@ function toAbsoluteUrl(url: string): string | null {
   } catch {
     return null;
   }
+}
+
+type SrcsetEntry = { url: string; descriptor: string };
+
+function parseSrcset(value: string): SrcsetEntry[] {
+  return value
+    .split(',')
+    .map((candidate) => candidate.trim())
+    .filter(Boolean)
+    .map((candidate) => {
+      const [url, ...descriptorParts] = candidate.split(/\s+/).filter(Boolean);
+      return { url, descriptor: descriptorParts.join(' ') } as SrcsetEntry;
+    })
+    .filter((entry) => !!entry.url);
 }
 
 function isSameOrigin(url: string): boolean {
