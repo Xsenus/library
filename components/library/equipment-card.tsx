@@ -8,15 +8,16 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { ExternalLink, X, Copy, ArrowUpRight } from 'lucide-react';
+import { ExternalLink, X, Copy, ArrowUpRight, Camera, Check, Loader2 } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
 // import { GoogleImagesCarousel } from './google-images-carousel';
 import type { OkvedByEquipment } from '@/lib/validators';
 import SquareImgButton from './square-img-button';
 import { GptImagePair } from './gpt-image-pair';
+import { captureElementToBlob, blobToDataUrl } from '@/lib/capture-element';
 
 interface EquipmentCardProps {
   equipment: EquipmentDetail;
@@ -142,6 +143,12 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showUtp, setShowUtp] = useState(false);
   const [showMail, setShowMail] = useState(false);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const captureResetTimerRef = useRef<number | null>(null);
+  const [captureState, setCaptureState] = useState<
+    'idle' | 'loading' | 'copied' | 'downloaded' | 'error'
+  >('idle');
+  const [captureAnnouncement, setCaptureAnnouncement] = useState('');
 
   // Храним/восстанавливаем массив открытых секций для каждой записи
   const [openSections, setOpenSections] = useImgAccordionState(equipment?.id);
@@ -157,10 +164,25 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     wantGptFromMemoryRef.current = !!openSections?.includes('gpt-images');
   }, [openSections, equipment?.id]);
 
+  useEffect(() => {
+    return () => {
+      if (captureResetTimerRef.current != null) {
+        window.clearTimeout(captureResetTimerRef.current);
+        captureResetTimerRef.current = null;
+      }
+    };
+  }, []);
+
   // Сброс на смену карточки
   useEffect(() => {
     setGptAvailable(null);
     setAutoOpenedGPT(false);
+    if (captureResetTimerRef.current != null) {
+      window.clearTimeout(captureResetTimerRef.current);
+      captureResetTimerRef.current = null;
+    }
+    setCaptureState('idle');
+    setCaptureAnnouncement('');
   }, [equipment?.id]);
 
   const imageUrls = equipment.images_url
@@ -241,12 +263,101 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   // Заголовок окрашиваем по CS (новая шкала 0.80–1.00)
   const titleToneCls = scoreToneClass(cs);
 
+  const scheduleCaptureReset = useCallback(() => {
+    if (captureResetTimerRef.current != null) {
+      window.clearTimeout(captureResetTimerRef.current);
+    }
+    captureResetTimerRef.current = window.setTimeout(() => {
+      setCaptureState('idle');
+      setCaptureAnnouncement('');
+      captureResetTimerRef.current = null;
+    }, 2200);
+  }, []);
+
+  const handleCaptureCard = useCallback(async () => {
+    if (typeof window === 'undefined') return;
+    const cardEl = cardRef.current;
+    if (!cardEl) return;
+
+    if (captureResetTimerRef.current != null) {
+      window.clearTimeout(captureResetTimerRef.current);
+      captureResetTimerRef.current = null;
+    }
+
+    const cardStyle = window.getComputedStyle(cardEl);
+    const fallbackBg = window.getComputedStyle(document.body).backgroundColor || '#ffffff';
+    const backgroundColor =
+      cardStyle.backgroundColor && cardStyle.backgroundColor !== 'rgba(0, 0, 0, 0)'
+        ? cardStyle.backgroundColor
+        : fallbackBg || '#ffffff';
+
+    setCaptureState('loading');
+    setCaptureAnnouncement('Подготавливаем изображение карточки оборудования');
+
+    try {
+      const pixelRatio = Math.min(window.devicePixelRatio || 1.5, 2.5);
+      const blob = await captureElementToBlob(cardEl, {
+        pixelRatio,
+        backgroundColor,
+        exclude: (element) =>
+          element instanceof HTMLElement && element.dataset.noCapture === 'true',
+      });
+
+      const clipboardSupported =
+        typeof navigator !== 'undefined' &&
+        !!navigator.clipboard &&
+        typeof navigator.clipboard.write === 'function' &&
+        'ClipboardItem' in window;
+
+      if (clipboardSupported) {
+        const ClipboardItemCtor = (window as typeof window & {
+          ClipboardItem: typeof ClipboardItem;
+        }).ClipboardItem;
+        const item = new ClipboardItemCtor({ [blob.type]: blob });
+        await navigator.clipboard.write([item]);
+        setCaptureState('copied');
+        setCaptureAnnouncement('Карточка скопирована в буфер обмена');
+      } else {
+        const dataUrl = await blobToDataUrl(blob);
+        const link = document.createElement('a');
+        link.href = dataUrl;
+        const fileBase = equipment?.id != null ? `equipment-${equipment.id}` : 'equipment-card';
+        link.download = `${fileBase}.png`;
+        link.rel = 'noopener';
+        link.style.position = 'fixed';
+        link.style.left = '-9999px';
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        setCaptureState('downloaded');
+        setCaptureAnnouncement('PNG-файл карточки сохранён на устройство');
+      }
+    } catch (error) {
+      console.error('Failed to capture equipment card', error);
+      setCaptureState('error');
+      setCaptureAnnouncement('Не удалось сохранить карточку оборудования');
+    } finally {
+      scheduleCaptureReset();
+    }
+  }, [equipment?.id, scheduleCaptureReset]);
+
   const q = equipment.equipment_name?.trim() ?? '';
   const googleImagesUrl = `https://www.google.com/search?tbm=isch&q=${encodeURIComponent(q)}`;
   const googleTextUrl = `https://www.google.com/search?q=${encodeURIComponent(q)}`;
 
   const blueBtn =
     'border border-blue-500 text-blue-600 bg-blue-50 hover:bg-blue-100 active:scale-[.98] transition justify-center';
+
+  const captureButtonTitle =
+    captureState === 'loading'
+      ? 'Создаём изображение карточки'
+      : captureState === 'copied'
+        ? 'Карточка скопирована в буфер обмена'
+        : captureState === 'downloaded'
+          ? 'PNG карточки скачан'
+          : captureState === 'error'
+            ? 'Не удалось сохранить карточку — попробуйте ещё раз'
+            : 'Сохранить карточку в буфер обмена';
 
   /** ===== Проверка наличия GPT-картинок — до открытия секции ===== */
   useEffect(() => {
@@ -520,8 +631,34 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
   return (
     <div className="space-y-4 pb-[1cm]">
-      <Card>
-        <CardHeader className="p-3 sm:p-4 pb-2">
+      <Card ref={cardRef}>
+        <CardHeader className="relative p-3 sm:p-4 pb-2 pr-12 sm:pr-14">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="absolute right-2 top-2 h-8 w-8 text-muted-foreground hover:text-foreground"
+            onClick={handleCaptureCard}
+            disabled={captureState === 'loading'}
+            title={captureButtonTitle}
+            aria-label={captureButtonTitle}
+            data-no-capture="true">
+            {captureState === 'loading' ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : captureState === 'copied' ? (
+              <Check className="h-4 w-4 text-emerald-500" />
+            ) : captureState === 'downloaded' ? (
+              <Check className="h-4 w-4 text-sky-500" />
+            ) : captureState === 'error' ? (
+              <X className="h-4 w-4 text-destructive" />
+            ) : (
+              <Camera className="h-4 w-4" />
+            )}
+            <span className="sr-only">{captureButtonTitle}</span>
+          </Button>
+          <span aria-live="polite" role="status" className="sr-only" data-no-capture="true">
+            {captureAnnouncement}
+          </span>
           <CardTitle
             className={cn('text-base font-semibold leading-6 transition-colors', titleToneCls)}>
             {equipment.equipment_name}
