@@ -7,7 +7,9 @@ type SnapshotOptions = {
   filter?: (element: Element) => boolean;
 };
 
-function cloneNodeWithInlineStyles(source: Element): Element {
+type ElementPair = [Element, Element];
+
+function cloneNodeWithInlineStyles(source: Element): { clone: Element; pairs: ElementPair[] } {
   const clone = source.cloneNode(true) as Element;
 
   const walker = document.createTreeWalker(source, NodeFilter.SHOW_ELEMENT, null);
@@ -16,14 +18,17 @@ function cloneNodeWithInlineStyles(source: Element): Element {
   let currentSource: Element | null = source;
   let currentClone: Element | null = clone;
 
+  const pairs: ElementPair[] = [];
+
   while (currentSource && currentClone) {
     inlineComputedStyles(currentSource, currentClone);
+    pairs.push([currentSource, currentClone]);
 
     currentSource = walker.nextNode() as Element | null;
     currentClone = cloneWalker.nextNode() as Element | null;
   }
 
-  return clone;
+  return { clone, pairs };
 }
 
 function inlineComputedStyles(source: Element, target: Element) {
@@ -54,6 +59,22 @@ function pruneNodes(root: Element, filter?: (element: Element) => boolean) {
   }
 }
 
+async function inlineImageElements(pairs: ElementPair[], root: Element) {
+  const cache = new Map<string, Promise<string>>();
+
+  const tasks: Promise<void>[] = [];
+
+  for (const [source, target] of pairs) {
+    if (!root.contains(target)) continue;
+
+    if (source instanceof HTMLImageElement && target instanceof HTMLImageElement) {
+      tasks.push(inlineImageElement(source, target, cache));
+    }
+  }
+
+  await Promise.all(tasks);
+}
+
 async function elementToBlob(element: HTMLElement, options: SnapshotOptions = {}): Promise<Blob> {
   const { backgroundColor = '#ffffff', pixelRatio = Math.min(window.devicePixelRatio || 1, 2), filter } = options;
 
@@ -61,13 +82,16 @@ async function elementToBlob(element: HTMLElement, options: SnapshotOptions = {}
   const width = Math.max(Math.ceil(rect.width), 1);
   const height = Math.max(Math.ceil(rect.height), 1);
 
-  const cloned = cloneNodeWithInlineStyles(element) as HTMLElement;
-  pruneNodes(cloned, filter);
+  const { clone: cloned, pairs } = cloneNodeWithInlineStyles(element);
+  const clonedElement = cloned as HTMLElement;
+  pruneNodes(clonedElement, filter);
 
-  cloned.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
-  cloned.style.width = `${width}px`;
-  cloned.style.height = `${height}px`;
-  cloned.style.boxSizing = 'border-box';
+  await inlineImageElements(pairs, clonedElement);
+
+  clonedElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+  clonedElement.style.width = `${width}px`;
+  clonedElement.style.height = `${height}px`;
+  clonedElement.style.boxSizing = 'border-box';
 
   const svg = document.createElementNS(SVG_NS, 'svg');
   svg.setAttribute('xmlns', SVG_NS);
@@ -82,7 +106,7 @@ async function elementToBlob(element: HTMLElement, options: SnapshotOptions = {}
   foreignObject.setAttribute('x', '0');
   foreignObject.setAttribute('y', '0');
 
-  foreignObject.appendChild(cloned);
+  foreignObject.appendChild(clonedElement);
   svg.appendChild(foreignObject);
 
   const svgData = new XMLSerializer().serializeToString(svg);
@@ -120,6 +144,82 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     img.onload = () => resolve(img);
     img.onerror = reject;
     img.src = url;
+  });
+}
+
+async function inlineImageElement(
+  source: HTMLImageElement,
+  target: HTMLImageElement,
+  cache: Map<string, Promise<string>>,
+) {
+  const resolved = source.currentSrc || source.src;
+  if (!resolved) return;
+
+  target.crossOrigin = 'anonymous';
+  target.setAttribute('crossorigin', 'anonymous');
+
+  if (resolved.startsWith('data:')) {
+    target.removeAttribute('srcset');
+    target.removeAttribute('sizes');
+    target.src = resolved;
+    target.loading = 'eager';
+    return;
+  }
+
+  const absoluteUrl = toAbsoluteUrl(resolved);
+  if (!absoluteUrl) return;
+
+  if (!cache.has(absoluteUrl)) {
+    cache.set(absoluteUrl, fetchAsDataUrl(absoluteUrl));
+  }
+
+  try {
+    const dataUrl = await cache.get(absoluteUrl)!;
+    target.removeAttribute('srcset');
+    target.removeAttribute('sizes');
+    target.setAttribute('src', dataUrl);
+    target.loading = 'eager';
+    if (typeof target.decode === 'function') {
+      try {
+        await target.decode();
+      } catch {
+        /* ignore */
+      }
+    }
+  } catch (error) {
+    console.error('Failed to inline image for snapshot', error);
+  }
+}
+
+function toAbsoluteUrl(url: string): string | null {
+  try {
+    return new URL(url, window.location.href).toString();
+  } catch {
+    return null;
+  }
+}
+
+async function fetchAsDataUrl(url: string): Promise<string> {
+  const response = await fetch(url, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Failed to fetch image: ${response.status}`);
+  }
+  const blob = await response.blob();
+  return blobToDataUrl(blob);
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        reject(new Error('Failed to convert blob to data URL'));
+      }
+    };
+    reader.onerror = () => reject(reader.error ?? new Error('Failed to read blob'));
+    reader.readAsDataURL(blob);
   });
 }
 

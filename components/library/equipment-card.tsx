@@ -8,7 +8,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { ExternalLink, X, Copy, ArrowUpRight, Camera, Check, Loader2, AlertCircle } from 'lucide-react';
+import { ExternalLink, X, Copy, ArrowUpRight, Check, Loader2, AlertCircle } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { copyElementAsImageToClipboard } from '@/lib/capture-to-clipboard';
@@ -585,7 +585,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
               ) : snapshotState === 'error' ? (
                 <AlertCircle className="h-4 w-4 text-destructive" />
               ) : (
-                <Camera className="h-4 w-4" />
+                <Copy className="h-4 w-4" />
               )}
               <span className="sr-only">{snapshotButtonTitle}</span>
             </Button>
