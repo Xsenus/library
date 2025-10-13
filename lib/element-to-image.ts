@@ -8,6 +8,8 @@ export interface ElementToImageOptions {
 
 const DEFAULT_BACKGROUND = '#ffffff';
 const URL_REGEX = /url\(("|')?(.*?)(\1)?\)/g;
+const TRANSPARENT_PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 
 function isHTMLElement(node: Element): node is HTMLElement {
   return node instanceof HTMLElement;
@@ -78,6 +80,14 @@ function copySpecialValues(source: Element, target: Element) {
   }
 }
 
+function isInlineableUrl(raw?: string | null): raw is string {
+  if (!raw) return false;
+  const trimmed = raw.trim();
+  if (!trimmed) return false;
+  if (/^(data:|blob:|#|about:|javascript:)/i.test(trimmed)) return false;
+  return true;
+}
+
 async function readBlobAsDataUrl(blob: Blob): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -144,12 +154,56 @@ async function inlineImageSource(img: HTMLImageElement) {
   } catch (error) {
     console.warn('Не удалось встроить изображение', src, error);
     img.removeAttribute('srcset');
-    img.setAttribute(
-      'src',
-      'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
-    );
+    img.setAttribute('src', TRANSPARENT_PIXEL);
     img.style.visibility = 'hidden';
   }
+}
+
+async function inlineSvgImageSource(img: SVGImageElement) {
+  const href =
+    img.getAttribute('href') ||
+    img.getAttribute('xlink:href') ||
+    img.getAttributeNS('http://www.w3.org/1999/xlink', 'href');
+  if (!href || href.startsWith('data:') || href.startsWith('blob:')) return;
+
+  try {
+    const absolute = new URL(href, window.location.href).toString();
+    const dataUrl = await resourceToDataUrl(absolute);
+    img.setAttribute('href', dataUrl);
+    img.setAttributeNS('http://www.w3.org/1999/xlink', 'href', dataUrl);
+  } catch (error) {
+    console.warn('Не удалось встроить SVG-изображение', href, error);
+    img.setAttribute('href', TRANSPARENT_PIXEL);
+    img.setAttributeNS('http://www.w3.org/1999/xlink', 'href', TRANSPARENT_PIXEL);
+    img.style.setProperty('visibility', 'hidden');
+  }
+}
+
+async function inlineStyleUrls(element: Element) {
+  if (!(isHTMLElement(element) || isSVGElement(element))) return;
+
+  const styleAttr = element.getAttribute('style');
+  if (!styleAttr || !styleAttr.includes('url(')) return;
+
+  URL_REGEX.lastIndex = 0;
+  const matches = Array.from(styleAttr.matchAll(URL_REGEX));
+  if (matches.length === 0) return;
+
+  let result = styleAttr;
+  for (const match of matches) {
+    const raw = match[2];
+    if (!isInlineableUrl(raw)) continue;
+    try {
+      const absolute = new URL(raw, window.location.href).toString();
+      const dataUrl = await resourceToDataUrl(absolute);
+      result = result.replaceAll(match[0], `url("${dataUrl}")`);
+    } catch (error) {
+      console.warn('Не удалось встроить стиль с изображением', raw, error);
+      result = result.replaceAll(match[0], 'none');
+    }
+  }
+
+  element.setAttribute('style', result);
 }
 
 async function inlineBackgroundImages(element: HTMLElement) {
@@ -163,7 +217,7 @@ async function inlineBackgroundImages(element: HTMLElement) {
   let result = value;
   for (const match of matches) {
     const raw = match[2];
-    if (!raw || raw.startsWith('data:') || raw.startsWith('#')) continue;
+    if (!isInlineableUrl(raw)) continue;
     try {
       const absolute = new URL(raw, window.location.href).toString();
       const dataUrl = await resourceToDataUrl(absolute);
@@ -180,6 +234,7 @@ async function inlineBackgroundImages(element: HTMLElement) {
 async function embedImages(root: Element): Promise<void> {
   const imageTasks: Promise<void>[] = [];
   const visitedImages = new Set<HTMLImageElement>();
+  const visitedSvgImages = new Set<SVGImageElement>();
 
   if (root instanceof HTMLImageElement) {
     visitedImages.add(root);
@@ -191,8 +246,22 @@ async function embedImages(root: Element): Promise<void> {
     }
   });
 
+  if (root instanceof SVGImageElement) {
+    visitedSvgImages.add(root);
+  }
+
+  root.querySelectorAll('image').forEach((img) => {
+    if (img instanceof SVGImageElement) {
+      visitedSvgImages.add(img);
+    }
+  });
+
   visitedImages.forEach((img) => {
     imageTasks.push(inlineImageSource(img));
+  });
+
+  visitedSvgImages.forEach((img) => {
+    imageTasks.push(inlineSvgImageSource(img));
   });
 
   const backgroundElements: HTMLElement[] = [];
@@ -207,6 +276,21 @@ async function embedImages(root: Element): Promise<void> {
 
   for (const element of backgroundElements) {
     imageTasks.push(inlineBackgroundImages(element));
+  }
+
+  const styleElements: Element[] = [];
+  if (root instanceof HTMLElement || root instanceof SVGElement) {
+    styleElements.push(root);
+  }
+
+  root.querySelectorAll('*').forEach((node) => {
+    if (node instanceof HTMLElement || node instanceof SVGElement) {
+      styleElements.push(node);
+    }
+  });
+
+  for (const element of styleElements) {
+    imageTasks.push(inlineStyleUrls(element));
   }
 
   await Promise.all(imageTasks);
