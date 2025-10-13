@@ -199,13 +199,37 @@ function toAbsoluteUrl(url: string): string | null {
   }
 }
 
-async function fetchAsDataUrl(url: string): Promise<string> {
-  const response = await fetch(url, { cache: 'no-store' });
-  if (!response.ok) {
-    throw new Error(`Failed to fetch image: ${response.status}`);
+function isSameOrigin(url: string): boolean {
+  try {
+    const target = new URL(url, window.location.href);
+    return target.origin === window.location.origin;
+  } catch {
+    return false;
   }
-  const blob = await response.blob();
-  return blobToDataUrl(blob);
+}
+
+async function fetchAsDataUrl(url: string): Promise<string> {
+  if (isSameOrigin(url)) {
+    const response = await fetch(url, { cache: 'no-store' });
+    if (!response.ok) {
+      throw new Error(`Failed to fetch image: ${response.status}`);
+    }
+    const blob = await response.blob();
+    return blobToDataUrl(blob);
+  }
+
+  const proxied = `/api/snapshot-proxy?url=${encodeURIComponent(url)}`;
+  const response = await fetch(proxied, { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error(`Failed to proxy image: ${response.status}`);
+  }
+
+  const payload = (await response.json()) as { dataUrl?: unknown };
+  if (typeof payload?.dataUrl !== 'string') {
+    throw new Error('Proxy response is malformed');
+  }
+
+  return payload.dataUrl;
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
