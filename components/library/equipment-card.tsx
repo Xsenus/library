@@ -8,7 +8,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { ExternalLink, X, Copy, ArrowUpRight } from 'lucide-react';
+import { ExternalLink, X, Copy, ArrowUpRight, Camera, Check, Loader2 } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import NextImage from 'next/image';
@@ -17,6 +17,8 @@ import { cn } from '@/lib/utils';
 import type { OkvedByEquipment } from '@/lib/validators';
 import SquareImgButton from './square-img-button';
 import { GptImagePair } from './gpt-image-pair';
+import { toast } from '@/hooks/use-toast';
+import { elementToBlob, elementToPng, type ElementToImageOptions } from '@/lib/element-to-image';
 
 interface EquipmentCardProps {
   equipment: EquipmentDetail;
@@ -36,6 +38,18 @@ function scoreToneClass(score?: number | null) {
   if (score < 0.9) return 'text-emerald-500';
   if (score < 0.95) return 'text-emerald-600';
   return 'text-emerald-700';
+}
+
+function downloadDataUrl(dataUrl: string, fileName: string) {
+  const link = document.createElement('a');
+  link.href = dataUrl;
+  link.download = fileName;
+  link.rel = 'noopener noreferrer';
+  link.style.position = 'fixed';
+  link.style.left = '-9999px';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
 }
 
 /** Единая логика хранения/восстановления состояния аккордеона */
@@ -142,9 +156,30 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showUtp, setShowUtp] = useState(false);
   const [showMail, setShowMail] = useState(false);
+  const cardRef = useRef<HTMLDivElement | null>(null);
+  const copyCardStatusTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const [isCopyingCard, setIsCopyingCard] = useState(false);
+  const [copyCardStatus, setCopyCardStatus] = useState<'idle' | 'success' | 'error'>('idle');
 
   // Храним/восстанавливаем массив открытых секций для каждой записи
   const [openSections, setOpenSections] = useImgAccordionState(equipment?.id);
+
+  useEffect(() => {
+    return () => {
+      if (copyCardStatusTimerRef.current) {
+        clearTimeout(copyCardStatusTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (copyCardStatusTimerRef.current) {
+      clearTimeout(copyCardStatusTimerRef.current);
+      copyCardStatusTimerRef.current = null;
+    }
+    setCopyCardStatus('idle');
+    setIsCopyingCard(false);
+  }, [equipment?.id]);
 
   /** Доступность GPT-картинок: null = проверяем, false = нет, true = есть */
   const [gptAvailable, setGptAvailable] = useState<boolean | null>(null);
@@ -199,6 +234,86 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     };
   }, []);
 
+  async function handleCopyCard() {
+    if (isCopyingCard) return;
+    if (!cardRef.current) return;
+
+    setIsCopyingCard(true);
+
+    try {
+      const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
+      if (fonts?.ready) {
+        try {
+          await fonts.ready;
+        } catch {
+          /* ignore font readiness errors */
+        }
+      }
+
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+      const node = cardRef.current;
+      if (!node) throw new Error('Карточка недоступна для копирования.');
+
+      const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+      const captureOptions: ElementToImageOptions = {
+        pixelRatio,
+        backgroundColor: '#ffffff',
+        filter: (el) => el.dataset?.screenshotIgnore !== 'true',
+      };
+
+      const blob = await elementToBlob(node, captureOptions);
+
+      const clipboardItemCtor =
+        typeof window !== 'undefined' && 'ClipboardItem' in window
+          ? (window as typeof window & { ClipboardItem: typeof ClipboardItem }).ClipboardItem
+          : undefined;
+
+      const canWriteImageToClipboard =
+        !!clipboardItemCtor && !!navigator.clipboard && 'write' in navigator.clipboard;
+
+      const fileName = `equipment-${equipment?.id ?? 'card'}.png`;
+
+      if (canWriteImageToClipboard) {
+        const item = new clipboardItemCtor({ 'image/png': blob });
+        await navigator.clipboard.write([item]);
+        setCopyCardStatus('success');
+        toast({
+          title: 'Карточка скопирована',
+          description: 'Изображение сохранено в буфер обмена.',
+        });
+      } else {
+        const dataUrl = await elementToPng(node, captureOptions);
+        downloadDataUrl(dataUrl, fileName);
+        setCopyCardStatus('success');
+        toast({
+          title: 'Изображение сохранено файлом',
+          description: 'Браузер не поддерживает копирование изображений в буфер обмена.',
+        });
+      }
+    } catch (error) {
+      console.error('Failed to copy equipment card', error);
+      setCopyCardStatus('error');
+      toast({
+        variant: 'destructive',
+        title: 'Не удалось скопировать карточку',
+        description:
+          error instanceof Error && error.message
+            ? error.message
+            : 'Проверьте разрешения браузера и попробуйте ещё раз.',
+      });
+    } finally {
+      setIsCopyingCard(false);
+      if (copyCardStatusTimerRef.current) {
+        clearTimeout(copyCardStatusTimerRef.current);
+      }
+      copyCardStatusTimerRef.current = setTimeout(() => {
+        setCopyCardStatus('idle');
+        copyCardStatusTimerRef.current = null;
+      }, 2200);
+    }
+  }
+
   const { onEsConfirmChange } = arguments[0] as EquipmentCardProps;
   // Оптимистичный тоггл + подстраховка ответом
   const [savingEs, setSavingEs] = useState(false);
@@ -234,6 +349,28 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       setSavingEs(false);
     }
   };
+
+  const copyCardButtonTitle =
+    copyCardStatus === 'success'
+      ? 'Карточка скопирована в буфер обмена.'
+      : copyCardStatus === 'error'
+        ? 'Не удалось скопировать карточку. Нажмите, чтобы попробовать ещё раз.'
+        : 'Скопировать карточку в буфер обмена (PNG).';
+
+  const copyCardButtonSrText =
+    copyCardStatus === 'success'
+      ? 'Карточка скопирована в буфер обмена'
+      : 'Скопировать карточку в буфер обмена';
+
+  const copyCardButtonIcon = isCopyingCard ? (
+    <Loader2 className="h-4 w-4 animate-spin" />
+  ) : copyCardStatus === 'success' ? (
+    <Check className="h-4 w-4" />
+  ) : copyCardStatus === 'error' ? (
+    <X className="h-4 w-4" />
+  ) : (
+    <Camera className="h-4 w-4" />
+  );
 
   const fmt = (v: number | null) => (v == null ? 'N/A' : v.toFixed(2));
   const Sep = () => <div className="h-px bg-border my-2" />;
@@ -520,8 +657,20 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
   return (
     <div className="space-y-4 pb-[1cm]">
-      <Card>
-        <CardHeader className="p-3 sm:p-4 pb-2">
+      <Card ref={cardRef}>
+        <CardHeader className="relative p-3 sm:p-4 pb-2 pr-14">
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon"
+            className="absolute right-2 top-2 h-8 w-8 text-muted-foreground hover:text-foreground"
+            onClick={handleCopyCard}
+            disabled={isCopyingCard}
+            title={copyCardButtonTitle}
+            data-screenshot-ignore="true">
+            {copyCardButtonIcon}
+            <span className="sr-only">{copyCardButtonSrText}</span>
+          </Button>
           <CardTitle
             className={cn('text-base font-semibold leading-6 transition-colors', titleToneCls)}>
             {equipment.equipment_name}
