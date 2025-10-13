@@ -1,6 +1,9 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { getEquipmentDetail, getOkvedForEquipment } from '@/lib/equipment';
-import { equipmentIdSchema } from '@/lib/validators';
+import {
+  getEquipmentDetailByPublicHash,
+  getOkvedForEquipment,
+} from '@/lib/equipment';
+import { equipmentPublicHashSchema, type EquipmentDetail } from '@/lib/validators';
 import { cn } from '@/lib/utils';
 import { EmbedImagesSection } from '@/components/library/embed-images-section';
 import Link from 'next/link';
@@ -132,20 +135,27 @@ export default async function EquipmentEmbedPage({
 }: {
   searchParams?: Record<string, string | string[] | undefined>;
 }) {
-  const idParam =
-    toParam(searchParams?.id_equipment) ?? toParam(searchParams?.equipment_id) ?? toParam(searchParams?.id);
+  const hashParam =
+    toParam(searchParams?.hash_equipment) ??
+    toParam(searchParams?.equipment_hash) ??
+    toParam(searchParams?.hash);
 
-  const parsed = equipmentIdSchema.safeParse({ id: idParam ?? '' });
-  if (!parsed.success) {
+  if (!hashParam) {
+    return <SimpleMessage>Укажите параметр hash_equipment в запросе.</SimpleMessage>;
+  }
+
+  const parsedHash = equipmentPublicHashSchema.safeParse({ hash: hashParam });
+  if (!parsedHash.success) {
     return <SimpleMessage>Некорректный идентификатор оборудования.</SimpleMessage>;
   }
 
-  const equipment = await getEquipmentDetail(parsed.data.id);
+  const equipment: EquipmentDetail | null = await getEquipmentDetailByPublicHash(parsedHash.data.hash);
+
   if (!equipment) {
     return <SimpleMessage>Оборудование не найдено.</SimpleMessage>;
   }
 
-  const okvedItems = await getOkvedForEquipment(parsed.data.id);
+  const okvedItems = await getOkvedForEquipment(equipment.id);
   const imagesFromDb = formatImages(equipment.images_url);
 
   return (

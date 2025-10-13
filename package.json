@@ -12,7 +12,8 @@
     "start": "next start",
     "start:port": "next start -p ${PORT:-8090}",
     "lint": "next lint",
-    "postinstall": "next telemetry disable"
+    "postinstall": "next telemetry disable",
+    "backfill:equipment-hash": "node scripts/backfill-equipment-hashes.js"
   },
   "dependencies": {
     "@hookform/resolvers": "^3.9.0",
