@@ -73,18 +73,64 @@ function copySpecialValues(source: Element, target: Element) {
   }
 }
 
-async function resourceToDataUrl(url: string): Promise<string> {
-  const response = await fetch(url, { cache: 'no-store', mode: 'cors' });
-  if (!response.ok) {
-    throw new Error(`Не удалось загрузить ресурс ${url}: ${response.status}`);
-  }
-  const blob = await response.blob();
-  return await new Promise((resolve, reject) => {
+const TRANSPARENT_PIXEL = 'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+const IMAGE_PROXY_PATH = '/api/image-proxy';
+const IMAGE_PROXY_ENDPOINT = `${IMAGE_PROXY_PATH}?url=`;
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
     reader.onerror = () => reject(reader.error ?? new Error('Не удалось прочитать blob.'));
     reader.readAsDataURL(blob);
   });
+}
+
+function isHttpOrHttps(url: string) {
+  try {
+    const { protocol } = new URL(url, window.location.href);
+    return protocol === 'http:' || protocol === 'https:';
+  } catch {
+    return false;
+  }
+}
+
+function isLikelyCorsError(error: unknown) {
+  return error instanceof TypeError ||
+    (error instanceof DOMException && error.name === 'SecurityError');
+}
+
+async function fetchResource(url: string, allowProxy = true): Promise<Blob> {
+  const response = await fetch(url, { cache: 'no-store', mode: 'cors' }).catch((error) => {
+    if (!allowProxy || !isLikelyCorsError(error)) {
+      throw error;
+    }
+    if (!isHttpOrHttps(url)) {
+      throw error;
+    }
+    const absolute = new URL(url, window.location.href);
+    if (absolute.pathname.startsWith(IMAGE_PROXY_PATH)) {
+      throw error;
+    }
+    const proxyUrl = `${IMAGE_PROXY_ENDPOINT}${encodeURIComponent(absolute.toString())}`;
+    return fetch(proxyUrl, { cache: 'no-store', mode: 'cors' });
+  });
+
+  if (!response) {
+    throw new Error(`Не удалось загрузить ресурс ${url}: пустой ответ`);
+  }
+
+  if (!response.ok) {
+    throw new Error(`Не удалось загрузить ресурс ${url}: ${response.status}`);
+  }
+
+  return response.blob();
+}
+
+async function resourceToDataUrl(url: string): Promise<string> {
+  const absolute = new URL(url, window.location.href).toString();
+  const blob = await fetchResource(absolute);
+  return blobToDataUrl(blob);
 }
 
 async function inlineImageSource(img: HTMLImageElement) {
@@ -98,10 +144,7 @@ async function inlineImageSource(img: HTMLImageElement) {
   } catch (error) {
     console.warn('Не удалось встроить изображение', src, error);
     img.removeAttribute('srcset');
-    img.setAttribute(
-      'src',
-      'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
-    );
+    img.setAttribute('src', TRANSPARENT_PIXEL);
     img.style.visibility = 'hidden';
   }
 }
@@ -124,7 +167,7 @@ async function inlineBackgroundImages(element: HTMLElement) {
       result = result.replace(match[0], `url("${dataUrl}")`);
     } catch (error) {
       console.warn('Не удалось встроить фон', raw, error);
-      result = result.replace(match[0], 'none');
+      result = result.replace(match[0], `url("${TRANSPARENT_PIXEL}")`);
     }
   }
 
