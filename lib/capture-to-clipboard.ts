@@ -94,6 +94,7 @@ async function inlineExternalResources(pairs: ElementPair[], root: Element) {
   await Promise.all(tasks);
 
   await inlineInlineStyleResources(root, cache);
+  await inlineFontFaceRules(root, cache);
 
   sanitizeClonedTree(root);
 }
@@ -127,6 +128,7 @@ async function elementToBlob(element: HTMLElement, options: SnapshotOptions = {}
     if (isSecurityError(error)) {
       console.warn('Snapshot rasterization hit a security error, retrying with stripped assets.', error);
       purgeExternalResources(clonedElement);
+      enforceSystemFontFallback(clonedElement);
       return rasterizeClonedElement(clonedElement, {
         width,
         height,
@@ -347,6 +349,51 @@ async function inlineCssUrls(
   }
 }
 
+async function inlineCssTextUrls(
+  cssText: string,
+  cache: Map<string, Promise<string>>,
+): Promise<string> {
+  const regex = /url\((['"]?)(.*?)\1\)/gi;
+  let match: RegExpExecArray | null;
+  let lastIndex = 0;
+  let result = '';
+  let changed = false;
+
+  while ((match = regex.exec(cssText)) !== null) {
+    const [, , rawUrl] = match;
+    const original = rawUrl.trim();
+    result += cssText.slice(lastIndex, match.index);
+
+    const absolute = toAbsoluteUrl(original);
+    if (!absolute || absolute.startsWith('#')) {
+      result += match[0];
+    } else if (absolute.startsWith('data:')) {
+      result += `url("${absolute}")`;
+      changed = true;
+    } else {
+      if (!cache.has(absolute)) {
+        cache.set(absolute, fetchAsDataUrl(absolute));
+      }
+
+      try {
+        const dataUrl = await cache.get(absolute)!;
+        result += `url("${dataUrl}")`;
+        changed = true;
+      } catch (error) {
+        console.error('Failed to inline CSS text resource for snapshot', error);
+        result += `url("${TRANSPARENT_PIXEL}")`;
+        changed = true;
+      }
+    }
+
+    lastIndex = regex.lastIndex;
+  }
+
+  result += cssText.slice(lastIndex);
+
+  return changed ? result : cssText;
+}
+
 async function inlineInlineStyleResources(root: Element, cache: Map<string, Promise<string>>): Promise<void> {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null);
   const tasks: Promise<void>[] = [];
@@ -371,6 +418,40 @@ async function inlineInlineStyleResources(root: Element, cache: Map<string, Prom
   }
 
   await Promise.all(tasks);
+}
+
+async function inlineFontFaceRules(root: Element, cache: Map<string, Promise<string>>): Promise<void> {
+  if (!(root instanceof HTMLElement)) return;
+
+  const cssBlocks: string[] = [];
+  const seen = new Set<string>();
+
+  for (const sheet of Array.from(document.styleSheets)) {
+    let rules: CSSRuleList;
+    try {
+      rules = sheet.cssRules;
+    } catch (error) {
+      // Доступ к правилам запрещён (чужой origin) — пропускаем.
+      continue;
+    }
+
+    for (const rule of Array.from(rules)) {
+      if (rule.type !== CSSRule.FONT_FACE_RULE) continue;
+      const fontRule = rule as CSSFontFaceRule;
+      const text = fontRule.cssText;
+      if (seen.has(text)) continue;
+      seen.add(text);
+
+      cssBlocks.push(await inlineCssTextUrls(text, cache));
+    }
+  }
+
+  if (!cssBlocks.length) return;
+
+  const style = document.createElement('style');
+  style.setAttribute('data-snapshot-fonts', 'true');
+  style.textContent = cssBlocks.join('\n');
+  root.insertBefore(style, root.firstChild);
 }
 
 function toAbsoluteUrl(url: string): string | null {
@@ -559,6 +640,19 @@ function purgeExternalResources(root: Element) {
 
     if (current instanceof SVGElement) {
       scrubSvgAttributes(current);
+    }
+
+    current = walker.nextNode() as Element | null;
+  }
+}
+
+function enforceSystemFontFallback(root: Element) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null);
+  let current = walker.currentNode as Element | null;
+
+  while (current) {
+    if (current instanceof HTMLElement) {
+      current.style.setProperty('font-family', 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif', 'important');
     }
 
     current = walker.nextNode() as Element | null;
