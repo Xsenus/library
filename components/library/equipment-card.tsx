@@ -13,9 +13,10 @@ import { EquipmentDetail } from '@/lib/validators';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
-import { GoogleImagesCarousel } from './google-images-carousel';
+// import { GoogleImagesCarousel } from './google-images-carousel';
 import type { OkvedByEquipment } from '@/lib/validators';
 import SquareImgButton from './square-img-button';
+import { GptImagePair } from './gpt-image-pair';
 
 interface EquipmentCardProps {
   equipment: EquipmentDetail;
@@ -585,6 +586,11 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                 setOpenSections(filtered);
               }}
               className="w-full">
+              {/**
+               * Аккордеон с Google-картинками временно отключен.
+               * Чтобы вернуть, раскомментируйте блок ниже и импортируйте GoogleImagesCarousel.
+               */}
+              {/**
               <AccordionItem value="google-images">
                 <AccordionTrigger className="text-sm font-medium">Картинки Google</AccordionTrigger>
                 <AccordionContent>
@@ -598,6 +604,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                   )}
                 </AccordionContent>
               </AccordionItem>
+              */}
 
               <AccordionItem value="gpt-images">
                 <AccordionTrigger
@@ -615,22 +622,18 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                     (gptAvailable === null || autoOpenedGPT) &&
                       'data-[state=open]:!animate-none data-[state=closed]:!animate-none',
                   )}>
-                  <div className="pt-2">
+                  <div className="pt-2 space-y-2">
                     {gptAvailable === null && wantGptFromMemoryRef.current && (
                       <div className="h-[300px] rounded-md border bg-muted/50 animate-pulse" />
                     )}
 
-                    {gptAvailable === true && (
-                      <GptImages
+                    {equipment?.id ? (
+                      <GptImagePair
                         equipmentId={equipment.id}
                         onSelect={(url) => setSelectedImage(url)}
                       />
-                    )}
-
-                    {gptAvailable === false && (
-                      <div className="rounded-md border bg-muted/50 grid place-items-center h-[120px]">
-                        <span className="text-xs text-muted-foreground">Нет картинки</span>
-                      </div>
+                    ) : (
+                      <div className="text-xs text-muted-foreground">ID оборудования не задан.</div>
                     )}
                   </div>
                 </AccordionContent>
@@ -887,109 +890,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           <TextModalBody />
         </BigModal>
       )}
-    </div>
-  );
-}
-
-function GptImages({
-  equipmentId,
-  onSelect,
-}: {
-  equipmentId?: number | null;
-  onSelect: (url: string) => void;
-}) {
-  const id = equipmentId?.toString() ?? null;
-
-  const [exists, setExists] = useState<Record<'old' | 'cryo', boolean | null>>({
-    old: null,
-    cryo: null,
-  });
-
-  const items: Array<{ key: 'old' | 'cryo'; url: string; alt: string }> = id
-    ? [
-        { key: 'old', url: `${GPT_IMAGES_BASE}${id}_old.jpg`, alt: 'GPT image (old)' },
-        { key: 'cryo', url: `${GPT_IMAGES_BASE}${id}_cryo.jpg`, alt: 'GPT image (cryo)' },
-      ]
-    : [];
-
-  useEffect(() => {
-    let cancelled = false;
-
-    async function probe(url: string): Promise<boolean> {
-      try {
-        const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-        if (r.ok) return true;
-        if (r.status === 404) return false;
-      } catch {
-        /* ignore */
-      }
-      return new Promise<boolean>((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
-        img.onerror = () => resolve(false);
-        const sep = url.includes('?') ? '&' : '?';
-        img.src = `${url}${sep}cb=${Date.now()}`;
-      });
-    }
-
-    (async () => {
-      if (!id || items.length === 0) {
-        if (!cancelled) setExists({ old: false, cryo: false });
-        return;
-      }
-      const [oldOk, cryoOk] = await Promise.all([probe(items[0].url), probe(items[1].url)]);
-      if (!cancelled) setExists({ old: oldOk, cryo: cryoOk });
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
-
-  const tileBase =
-    'relative h-[300px] w-full rounded-md overflow-hidden text-left border bg-muted/50 grid place-items-center';
-
-  if (!id) {
-    return <div className="text-xs text-muted-foreground">ID оборудования не задан.</div>;
-  }
-
-  return (
-    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-      {items.map(({ key, url, alt }) => {
-        const ok = exists[key];
-        if (ok === null) {
-          return (
-            <div key={key} className={cn(tileBase, 'animate-pulse')}>
-              <div className="h-5 w-5 rounded-full border-2 border-muted-foreground/30 border-t-transparent animate-spin" />
-            </div>
-          );
-        }
-        if (ok) {
-          return (
-            <button
-              type="button"
-              key={key}
-              className="relative h-[300px] w-full rounded-md overflow-hidden bg-muted hover:ring-1 hover:ring-primary/40"
-              onClick={() => onSelect(url)}
-              title={alt}>
-              <NextImage
-                src={url}
-                alt={alt}
-                fill
-                sizes="50vw"
-                className="object-contain"
-                unoptimized
-              />
-            </button>
-          );
-        }
-        return (
-          <div key={key} className={tileBase}>
-            <div className="text-xs text-muted-foreground">Нет картинки</div>
-          </div>
-        );
-      })}
     </div>
   );
 }
