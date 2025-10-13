@@ -94,11 +94,6 @@ export function GptImagePair({
     );
 
     const wrapperCls = 'relative h-[300px] w-full rounded-md overflow-hidden bg-muted';
-    const content = (
-      <div className={wrapperCls}>
-        <NextImage src={url} alt={alt} fill sizes="50vw" className="object-contain" unoptimized />
-      </div>
-    );
 
     if (status === null) {
       return (
@@ -129,10 +124,21 @@ export function GptImagePair({
             className="w-full transition hover:ring-1 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             onClick={() => onSelect(url)}
             title={label}>
-            {content}
+            <div className={wrapperCls}>
+              <NextImage
+                src={url}
+                alt={alt}
+                fill
+                sizes="50vw"
+                className="object-contain"
+                unoptimized
+              />
+            </div>
           </button>
         ) : (
-          content
+          <div className={wrapperCls}>
+            <NextImage src={url} alt={alt} fill sizes="50vw" className="object-contain" unoptimized />
+          </div>
         )}
       </div>
     );

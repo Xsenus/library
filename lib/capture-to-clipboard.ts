@@ -116,48 +116,25 @@ async function elementToBlob(element: HTMLElement, options: SnapshotOptions = {}
   clonedElement.style.height = `${height}px`;
   clonedElement.style.boxSizing = 'border-box';
 
-  const svg = document.createElementNS(SVG_NS, 'svg');
-  svg.setAttribute('xmlns', SVG_NS);
-  svg.setAttribute('xmlns:xlink', XLINK_NS);
-  svg.setAttribute('width', `${width}`);
-  svg.setAttribute('height', `${height}`);
-  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
-
-  const foreignObject = document.createElementNS(SVG_NS, 'foreignObject');
-  foreignObject.setAttribute('width', '100%');
-  foreignObject.setAttribute('height', '100%');
-  foreignObject.setAttribute('x', '0');
-  foreignObject.setAttribute('y', '0');
-
-  foreignObject.appendChild(clonedElement);
-  svg.appendChild(foreignObject);
-
-  const svgData = new XMLSerializer().serializeToString(svg);
-  const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(svgBlob);
-
   try {
-    const image = await loadImage(url);
-
-    const canvas = document.createElement('canvas');
-    const ratio = Math.max(pixelRatio, 1);
-    canvas.width = width * ratio;
-    canvas.height = height * ratio;
-
-    const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Canvas context unavailable');
-
-    ctx.fillStyle = backgroundColor;
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
-    ctx.scale(ratio, ratio);
-    ctx.drawImage(image, 0, 0);
-
-    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve));
-    if (!blob) throw new Error('Canvas is empty');
-
-    return blob;
-  } finally {
-    URL.revokeObjectURL(url);
+    return await rasterizeClonedElement(clonedElement, {
+      width,
+      height,
+      backgroundColor,
+      pixelRatio,
+    });
+  } catch (error) {
+    if (isSecurityError(error)) {
+      console.warn('Snapshot rasterization hit a security error, retrying with stripped assets.', error);
+      purgeExternalResources(clonedElement);
+      return rasterizeClonedElement(clonedElement, {
+        width,
+        height,
+        backgroundColor,
+        pixelRatio,
+      });
+    }
+    throw error;
   }
 }
 
@@ -465,3 +442,125 @@ export async function copyElementAsImageToClipboard(
 }
 
 export type { SnapshotOptions };
+
+type RasterizeOptions = {
+  width: number;
+  height: number;
+  backgroundColor: string;
+  pixelRatio: number;
+};
+
+async function rasterizeClonedElement(
+  clonedElement: HTMLElement,
+  { width, height, backgroundColor, pixelRatio }: RasterizeOptions,
+): Promise<Blob> {
+  const svg = document.createElementNS(SVG_NS, 'svg');
+  svg.setAttribute('xmlns', SVG_NS);
+  svg.setAttribute('xmlns:xlink', XLINK_NS);
+  svg.setAttribute('width', `${width}`);
+  svg.setAttribute('height', `${height}`);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
+
+  const foreignObject = document.createElementNS(SVG_NS, 'foreignObject');
+  foreignObject.setAttribute('width', '100%');
+  foreignObject.setAttribute('height', '100%');
+  foreignObject.setAttribute('x', '0');
+  foreignObject.setAttribute('y', '0');
+
+  foreignObject.appendChild(clonedElement);
+  svg.appendChild(foreignObject);
+
+  const svgData = new XMLSerializer().serializeToString(svg);
+  const svgBlob = new Blob([svgData], { type: 'image/svg+xml;charset=utf-8' });
+  const url = URL.createObjectURL(svgBlob);
+
+  try {
+    const image = await loadImage(url);
+
+    const canvas = document.createElement('canvas');
+    const ratio = Math.max(pixelRatio, 1);
+    canvas.width = width * ratio;
+    canvas.height = height * ratio;
+
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas context unavailable');
+
+    ctx.fillStyle = backgroundColor;
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.scale(ratio, ratio);
+    ctx.drawImage(image, 0, 0);
+
+    const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve));
+    if (!blob) throw new Error('Canvas is empty');
+
+    return blob;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function isSecurityError(error: unknown): error is DOMException {
+  return error instanceof DOMException && error.name === 'SecurityError';
+}
+
+function purgeExternalResources(root: Element) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_ELEMENT, null);
+  let current = walker.currentNode as Element | null;
+
+  while (current) {
+    if (current instanceof HTMLImageElement) {
+      current.removeAttribute('srcset');
+      current.removeAttribute('sizes');
+      current.setAttribute('crossorigin', 'anonymous');
+      if (!current.src.startsWith('data:')) {
+        current.src = TRANSPARENT_PIXEL;
+      }
+    } else if (current instanceof HTMLPictureElement) {
+      current.querySelectorAll('source').forEach((source) => {
+        source.removeAttribute('srcset');
+        source.removeAttribute('sizes');
+      });
+    } else if (current instanceof HTMLVideoElement) {
+      current.removeAttribute('poster');
+      current.removeAttribute('src');
+      const sources = current.querySelectorAll('source');
+      sources.forEach((source) => {
+        source.removeAttribute('src');
+        source.removeAttribute('srcset');
+      });
+    } else if (current instanceof HTMLSourceElement) {
+      current.removeAttribute('src');
+      current.removeAttribute('srcset');
+    }
+
+    if (current instanceof HTMLElement) {
+      const styleAttr = current.getAttribute('style');
+      if (styleAttr?.includes('url(')) {
+        const sanitized = styleAttr.replace(
+          /url\((['"]?)(?!data:)(?!#)([^'"\)]+)\1\)/gi,
+          `url("${TRANSPARENT_PIXEL}")`,
+        );
+        current.setAttribute('style', sanitized);
+      }
+
+      const background = current.getAttribute('background');
+      if (background && !background.startsWith('data:')) {
+        current.setAttribute('background', TRANSPARENT_PIXEL);
+      }
+    }
+
+    if (current instanceof SVGImageElement) {
+      const href = current.getAttribute('href') ?? current.getAttribute('xlink:href');
+      if (href && !href.startsWith('data:')) {
+        current.setAttribute('href', TRANSPARENT_PIXEL);
+        current.setAttribute('xlink:href', TRANSPARENT_PIXEL);
+      }
+    }
+
+    if (current instanceof SVGElement) {
+      scrubSvgAttributes(current);
+    }
+
+    current = walker.nextNode() as Element | null;
+  }
+}
