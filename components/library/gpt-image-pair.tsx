@@ -48,16 +48,11 @@ export function GptImagePair({
   useEffect(() => {
     let cancelled = false;
 
-    async function probe(url: string): Promise<boolean> {
-      try {
-        const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-        if (r.ok) return true;
-        if (r.status === 404) return false;
-      } catch {
-        /* ignore */
-      }
+    function probe(url: string): Promise<boolean> {
       return new Promise<boolean>((resolve) => {
         const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.referrerPolicy = 'no-referrer';
         img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
         img.onerror = () => resolve(false);
         const sep = url.includes('?') ? '&' : '?';

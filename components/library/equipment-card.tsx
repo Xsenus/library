@@ -8,9 +8,10 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { ExternalLink, X, Copy, ArrowUpRight } from 'lucide-react';
+import { ExternalLink, X, Copy, ArrowUpRight, Check, Loader2, AlertCircle } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { copyElementAsImageToClipboard } from '@/lib/capture-to-clipboard';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
 // import { GoogleImagesCarousel } from './google-images-carousel';
@@ -142,9 +143,12 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showUtp, setShowUtp] = useState(false);
   const [showMail, setShowMail] = useState(false);
+  const [snapshotState, setSnapshotState] = useState<'idle' | 'loading' | 'copied' | 'error'>('idle');
 
   // Храним/восстанавливаем массив открытых секций для каждой записи
   const [openSections, setOpenSections] = useImgAccordionState(equipment?.id);
+
+  const cardRef = useRef<HTMLDivElement | null>(null);
 
   /** Доступность GPT-картинок: null = проверяем, false = нет, true = есть */
   const [gptAvailable, setGptAvailable] = useState<boolean | null>(null);
@@ -162,6 +166,47 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     setGptAvailable(null);
     setAutoOpenedGPT(false);
   }, [equipment?.id]);
+
+  useEffect(() => {
+    if (snapshotState === 'copied' || snapshotState === 'error') {
+      const timeout = window.setTimeout(() => setSnapshotState('idle'), 2000);
+      return () => window.clearTimeout(timeout);
+    }
+    return undefined;
+  }, [snapshotState]);
+
+  const handleSnapshotCopy = async () => {
+    if (snapshotState === 'loading') return;
+
+    const node = cardRef.current;
+    if (!node) return;
+
+    setSnapshotState('loading');
+
+    try {
+      await copyElementAsImageToClipboard(node, {
+        backgroundColor: '#ffffff',
+        filter: (element) => {
+          if (element instanceof HTMLElement) {
+            return element.dataset?.skipSnapshot !== 'true';
+          }
+          return true;
+        },
+        pixelRatio: Math.min(window.devicePixelRatio || 1, 2),
+      });
+      setSnapshotState('copied');
+    } catch (error) {
+      console.error('Failed to copy equipment card snapshot', error);
+      setSnapshotState('error');
+    }
+  };
+
+  const snapshotButtonTitle =
+    snapshotState === 'copied'
+      ? 'Изображение карточки скопировано'
+      : snapshotState === 'error'
+        ? 'Не удалось скопировать карточку'
+        : 'Скопировать карточку в буфер как изображение';
 
   const imageUrls = equipment.images_url
     ? equipment.images_url
@@ -261,16 +306,11 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
     const urls = [`${GPT_IMAGES_BASE}${id}_old.jpg`, `${GPT_IMAGES_BASE}${id}_cryo.jpg`];
 
-    async function probe(url: string): Promise<boolean> {
-      try {
-        const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-        if (r.ok) return true;
-        if (r.status === 404) return false;
-      } catch {
-        /* ignore */
-      }
+    function probe(url: string): Promise<boolean> {
       return new Promise<boolean>((resolve) => {
         const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.referrerPolicy = 'no-referrer';
         img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
         img.onerror = () => resolve(false);
         const sep = url.includes('?') ? '&' : '?';
@@ -520,10 +560,34 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
   return (
     <div className="space-y-4 pb-[1cm]">
-      <Card>
-        <CardHeader className="p-3 sm:p-4 pb-2">
+      <Card ref={cardRef}>
+        <CardHeader className="relative p-3 sm:p-4 pb-2">
+          <div
+            className="absolute right-2 top-2 flex items-center"
+            data-skip-snapshot="true">
+            <Button
+              type="button"
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-foreground"
+              onClick={handleSnapshotCopy}
+              disabled={snapshotState === 'loading'}
+              title={snapshotButtonTitle}>
+              {snapshotState === 'loading' ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : snapshotState === 'copied' ? (
+                <Check className="h-4 w-4 text-emerald-600" />
+              ) : snapshotState === 'error' ? (
+                <AlertCircle className="h-4 w-4 text-destructive" />
+              ) : (
+                <Copy className="h-4 w-4" />
+              )}
+              <span className="sr-only">{snapshotButtonTitle}</span>
+            </Button>
+          </div>
+
           <CardTitle
-            className={cn('text-base font-semibold leading-6 transition-colors', titleToneCls)}>
+            className={cn('pr-12 text-base font-semibold leading-6 transition-colors', titleToneCls)}>
             {equipment.equipment_name}
           </CardTitle>
 
