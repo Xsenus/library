@@ -150,6 +150,73 @@ docker compose up --build
 - `npm run build` — продакшн сборка.
 - `npm run start` — запуск собранного приложения.
 - `npm run lint` — ESLint (`next/core-web-vitals`).
+- `npm run backfill:equipment-hash` — генерация `hash_equipment` для существующих записей в таблице `ib_equipment`.
+
+---
+
+## 🔒 Подготовка hash_equipment в базе данных
+
+Страница встраиваемой карточки оборудования (`/embed/equipment`) теперь работает **только** по публичному хэшу. Чтобы закрыть доступ по последовательным ID и обеспечить корректную работу приложения, подготовьте таблицу `ib_equipment`.
+
+1. **Создайте колонку и включите расширение для генерации случайных значений.**
+
+   ```sql
+   CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
+   ALTER TABLE ib_equipment
+     ADD COLUMN IF NOT EXISTS hash_equipment TEXT;
+   ```
+
+2. **Заполните пустые значения (можно SQL-скриптом либо готовым Node-скриптом).**
+
+   Вариант на SQL:
+
+   ```sql
+   UPDATE ib_equipment
+      SET hash_equipment = encode(gen_random_bytes(16), 'hex')
+    WHERE hash_equipment IS NULL OR length(trim(hash_equipment)) = 0;
+   ```
+
+   Либо выполните Node-скрипт, который заполнит только отсутствующие хэши и гарантирует уникальность:
+
+   ```bash
+   PGHOST=... PGUSER=... PGPASSWORD=... PGDATABASE=... npm run backfill:equipment-hash
+   ```
+
+3. **Зафиксируйте ограничения для новых строк.**
+
+   ```sql
+   ALTER TABLE ib_equipment
+     ALTER COLUMN hash_equipment SET NOT NULL;
+
+   ALTER TABLE ib_equipment
+     ADD CONSTRAINT ib_equipment_hash_equipment_unique UNIQUE (hash_equipment);
+
+   CREATE INDEX IF NOT EXISTS idx_ib_equipment_hash_equipment ON ib_equipment (hash_equipment);
+   ```
+
+4. **Автоматически выдавайте хэш при вставке.**
+
+   ```sql
+   CREATE OR REPLACE FUNCTION set_equipment_hash()
+   RETURNS TRIGGER AS $$
+   BEGIN
+     IF NEW.hash_equipment IS NULL OR length(trim(NEW.hash_equipment)) = 0 THEN
+       NEW.hash_equipment := encode(gen_random_bytes(16), 'hex');
+     END IF;
+     RETURN NEW;
+   END;
+   $$ LANGUAGE plpgsql;
+
+   DROP TRIGGER IF EXISTS trg_set_equipment_hash ON ib_equipment;
+
+   CREATE TRIGGER trg_set_equipment_hash
+   BEFORE INSERT ON ib_equipment
+   FOR EACH ROW
+   EXECUTE FUNCTION set_equipment_hash();
+   ```
+
+После выполнения шагов новые записи автоматически получают безопасный публичный идентификатор, а существующие карточки становятся доступны только по `hash_equipment`.
 
 ---
 

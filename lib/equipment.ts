@@ -2,12 +2,13 @@ import { db } from './db';
 import {
   equipmentDetailSchema,
   equipmentIdSchema,
+  equipmentPublicHashSchema,
   okvedByEquipmentSchema,
   type EquipmentDetail,
   type OkvedByEquipment,
 } from './validators';
 
-const equipmentDetailSql = `
+const equipmentDetailSelectSql = `
       SELECT
         e.id::int                                  AS id,
         e.equipment_name,
@@ -78,8 +79,15 @@ const equipmentDetailSql = `
         WHERE c.id = e.company_id
         LIMIT 1
       ) co ON TRUE
+    `;
 
+const equipmentDetailByIdSql = `${equipmentDetailSelectSql}
       WHERE e.id = $1
+      LIMIT 1
+    `;
+
+const equipmentDetailByHashSql = `${equipmentDetailSelectSql}
+      WHERE e.hash_equipment = $1
       LIMIT 1
     `;
 
@@ -106,7 +114,16 @@ export async function getEquipmentDetail(id: number): Promise<EquipmentDetail | 
   const parsed = equipmentIdSchema.safeParse({ id });
   if (!parsed.success) return null;
 
-  const result = await db.query(equipmentDetailSql, [parsed.data.id]);
+  const result = await db.query(equipmentDetailByIdSql, [parsed.data.id]);
+  if (result.rows.length === 0) return null;
+  return equipmentDetailSchema.parse(result.rows[0]);
+}
+
+export async function getEquipmentDetailByPublicHash(hash: string): Promise<EquipmentDetail | null> {
+  const parsed = equipmentPublicHashSchema.safeParse({ hash });
+  if (!parsed.success) return null;
+
+  const result = await db.query(equipmentDetailByHashSql, [parsed.data.hash]);
   if (result.rows.length === 0) return null;
   return equipmentDetailSchema.parse(result.rows[0]);
 }

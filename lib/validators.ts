@@ -117,6 +117,15 @@ export const equipmentIdSchema = z.object({
   id: z.coerce.number().int().min(1),
 });
 
+export const equipmentPublicHashSchema = z.object({
+  hash: z
+    .string()
+    .trim()
+    .min(10)
+    .max(128)
+    .regex(/^[A-Za-z0-9_-]+$/, 'Invalid equipment hash format'),
+});
+
 // Generic list response
 export const listResponseSchema = <T>(itemSchema: z.ZodSchema<T>) =>
   z.object({
