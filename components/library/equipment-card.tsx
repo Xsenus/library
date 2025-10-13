@@ -631,6 +631,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                       <GptImagePair
                         equipmentId={equipment.id}
                         onSelect={(url) => setSelectedImage(url)}
+                        labelTone={{ old: 'text-[#ef944d]', cryo: 'text-[#ef944d]' }}
                       />
                     ) : (
                       <div className="text-xs text-muted-foreground">ID оборудования не задан.</div>
