@@ -1,5 +1,15 @@
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
+const TRANSPARENT_PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+const CSS_URL_PROPERTIES = [
+  'background-image',
+  'mask-image',
+  'mask',
+  'border-image-source',
+  'list-style-image',
+  'cursor',
+];
 
 type SnapshotOptions = {
   backgroundColor?: string;
@@ -59,7 +69,7 @@ function pruneNodes(root: Element, filter?: (element: Element) => boolean) {
   }
 }
 
-async function inlineImageElements(pairs: ElementPair[], root: Element) {
+async function inlineExternalResources(pairs: ElementPair[], root: Element) {
   const cache = new Map<string, Promise<string>>();
 
   const tasks: Promise<void>[] = [];
@@ -69,6 +79,10 @@ async function inlineImageElements(pairs: ElementPair[], root: Element) {
 
     if (source instanceof HTMLImageElement && target instanceof HTMLImageElement) {
       tasks.push(inlineImageElement(source, target, cache));
+    }
+
+    if (source instanceof HTMLElement && target instanceof HTMLElement) {
+      tasks.push(inlineCssResourceReferences(source, target, cache));
     }
   }
 
@@ -86,7 +100,7 @@ async function elementToBlob(element: HTMLElement, options: SnapshotOptions = {}
   const clonedElement = cloned as HTMLElement;
   pruneNodes(clonedElement, filter);
 
-  await inlineImageElements(pairs, clonedElement);
+  await inlineExternalResources(pairs, clonedElement);
 
   clonedElement.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
   clonedElement.style.width = `${width}px`;
@@ -188,6 +202,78 @@ async function inlineImageElement(
     }
   } catch (error) {
     console.error('Failed to inline image for snapshot', error);
+    target.removeAttribute('srcset');
+    target.removeAttribute('sizes');
+    target.setAttribute('src', TRANSPARENT_PIXEL);
+    target.loading = 'eager';
+  }
+}
+
+async function inlineCssResourceReferences(
+  source: HTMLElement,
+  target: HTMLElement,
+  cache: Map<string, Promise<string>>,
+): Promise<void> {
+  const computed = window.getComputedStyle(source);
+
+  await Promise.all(
+    CSS_URL_PROPERTIES.map(async (property) => {
+      const value = computed.getPropertyValue(property);
+      if (!value || value === 'none') return;
+
+      await inlineCssUrls(target, property, value, computed.getPropertyPriority(property), cache);
+    }),
+  );
+}
+
+async function inlineCssUrls(
+  target: HTMLElement,
+  property: string,
+  value: string,
+  priority: string,
+  cache: Map<string, Promise<string>>,
+): Promise<void> {
+  const regex = /url\((['"]?)(.*?)\1\)/gi;
+  let match: RegExpExecArray | null;
+  let lastIndex = 0;
+  let result = '';
+  let changed = false;
+  const prioritySafe = priority ?? '';
+
+  while ((match = regex.exec(value)) !== null) {
+    const [, , rawUrl] = match;
+    const original = rawUrl.trim();
+    result += value.slice(lastIndex, match.index);
+
+    const absolute = toAbsoluteUrl(original);
+    if (!absolute) {
+      result += match[0];
+    } else if (absolute.startsWith('data:')) {
+      result += `url("${absolute}")`;
+      changed = true;
+    } else {
+      if (!cache.has(absolute)) {
+        cache.set(absolute, fetchAsDataUrl(absolute));
+      }
+
+      try {
+        const dataUrl = await cache.get(absolute)!;
+        result += `url("${dataUrl}")`;
+        changed = true;
+      } catch (error) {
+        console.error('Failed to inline CSS image for snapshot', error);
+        result += `url("${TRANSPARENT_PIXEL}")`;
+        changed = true;
+      }
+    }
+
+    lastIndex = regex.lastIndex;
+  }
+
+  result += value.slice(lastIndex);
+
+  if (changed) {
+    target.style.setProperty(property, result, prioritySafe);
   }
 }
 
@@ -210,7 +296,7 @@ function isSameOrigin(url: string): boolean {
 
 async function fetchAsDataUrl(url: string): Promise<string> {
   if (isSameOrigin(url)) {
-    const response = await fetch(url, { cache: 'no-store' });
+    const response = await fetch(url, { cache: 'no-store', credentials: 'include' });
     if (!response.ok) {
       throw new Error(`Failed to fetch image: ${response.status}`);
     }
