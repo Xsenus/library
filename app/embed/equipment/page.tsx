@@ -163,82 +163,76 @@ export default async function EquipmentEmbedPage({
           </CardHeader>
 
           <CardContent className="space-y-8">
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,1.1fr)_minmax(0,0.9fr)]">
-              <div className="space-y-6">
-                <Section title="Описание устройства">
-                  <TextBlock value={equipment.description} />
-                </Section>
+            <Section title="Описание устройства">
+              <TextBlock value={equipment.description} />
+            </Section>
 
-                <Section title="Проблемы оборудования">
-                  <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-                    <ColoredTile title="Загрязнения" text={equipment.contamination} />
-                    <ColoredTile title="Поверхности" text={equipment.surface} />
-                    <ColoredTile title="Проблемы от загрязнений" text={equipment.problems} />
-                  </div>
-                </Section>
+            {/*
+              В оригинальной карточке здесь есть аккордеон с картинками Google.
+              Для встраиваемого фрейма его временно отключаем, чтобы отличаться от основной версии.
+              При необходимости вернуть можно раскомментировать секцию ниже и подключить тот же компонент.
 
-                <Section title="Традиционная очистка vs крио-очистка">
-                  <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
-                    <ColoredTile title="Традиционная очистка" text={equipment.old_method} />
-                    <ColoredTile title="Недостатки традиционной очистки" text={equipment.old_problem} />
-                    <ColoredTile title="Преимущества крио-очистки" text={equipment.benefit} emphasize />
-                  </div>
-                </Section>
+            <Section title="Картинки Google">
+              <GoogleImagesAccordion equipment={equipment} />
+            </Section>
+            */}
 
-                <Section title="Центр принятия решений">
-                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
-                    <DecisionRow label="ЛПР" value={equipment.decision_pr} />
-                    <DecisionRow label="Прескриптор" value={equipment.decision_prs} />
-                    <DecisionRow label="Эксплуатация" value={equipment.decision_operator} />
-                    <DecisionRow label="Закупка" value={equipment.decision_proc} />
-                  </div>
-                </Section>
-
-                <Section title="Примеры товаров">
-                  <GoodsList items={equipment.goods_examples ?? undefined} />
-                </Section>
-
-                <Section title="Пример компании">
-                  <div className="space-y-1 text-sm text-slate-700">
-                    {equipment.company_name && <div className="font-medium text-slate-900">{equipment.company_name}</div>}
-                    <TextBlock value={equipment.site_description} />
-                  </div>
-                </Section>
-              </div>
-
-              <div className="space-y-6">
-                {/*
-                  В оригинальной карточке здесь есть аккордеон с картинками Google.
-                  Для встраиваемого фрейма его временно отключаем, чтобы отличаться от основной версии.
-                  При необходимости вернуть можно раскомментировать секцию ниже и подключить тот же компонент.
-
-                <Section title="Картинки Google">
-                  <GoogleImagesAccordion equipment={equipment} />
-                </Section>
-                */}
-
-                <Section title="Картинки">
-                  <GptImagePair equipmentId={equipment.id ?? undefined} />
-                </Section>
+            <Section title="Картинки">
+              <div className="space-y-4">
+                <GptImagePair equipmentId={equipment.id ?? undefined} />
 
                 {imagesFromDb.length > 0 && (
-                  <Section title="Фото из базы">
-                    <div className="grid gap-2 sm:grid-cols-2">
-                      {imagesFromDb.map((url, idx) => (
-                        // eslint-disable-next-line @next/next/no-img-element
-                        <img
-                          key={`${url}-${idx}`}
-                          src={url}
-                          alt={`Изображение оборудования ${idx + 1}`}
-                          className="h-40 w-full rounded-md border border-slate-200 object-cover"
-                          loading="lazy"
-                        />
-                      ))}
-                    </div>
-                  </Section>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {imagesFromDb.map((url, idx) => (
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img
+                        key={`${url}-${idx}`}
+                        src={url}
+                        alt={`Изображение оборудования ${idx + 1}`}
+                        className="h-40 w-full rounded-md border border-slate-200 object-cover"
+                        loading="lazy"
+                      />
+                    ))}
+                  </div>
                 )}
               </div>
-            </div>
+            </Section>
+
+            <Section title="Проблемы оборудования">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                <ColoredTile title="Загрязнения" text={equipment.contamination} />
+                <ColoredTile title="Поверхности" text={equipment.surface} />
+                <ColoredTile title="Проблемы от загрязнений" text={equipment.problems} />
+              </div>
+            </Section>
+
+            <Section title="Традиционная очистка vs крио-очистка">
+              <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+                <ColoredTile title="Традиционная очистка" text={equipment.old_method} />
+                <ColoredTile title="Недостатки традиционной очистки" text={equipment.old_problem} />
+                <ColoredTile title="Преимущества крио-очистки" text={equipment.benefit} emphasize />
+              </div>
+            </Section>
+
+            <Section title="Центр принятия решений">
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                <DecisionRow label="ЛПР" value={equipment.decision_pr} />
+                <DecisionRow label="Прескриптор" value={equipment.decision_prs} />
+                <DecisionRow label="Эксплуатация" value={equipment.decision_operator} />
+                <DecisionRow label="Закупка" value={equipment.decision_proc} />
+              </div>
+            </Section>
+
+            <Section title="Примеры товаров">
+              <GoodsList items={equipment.goods_examples ?? undefined} />
+            </Section>
+
+            <Section title="Пример компании">
+              <div className="space-y-1 text-sm text-slate-700">
+                {equipment.company_name && <div className="font-medium text-slate-900">{equipment.company_name}</div>}
+                <TextBlock value={equipment.site_description} />
+              </div>
+            </Section>
 
             <Section title="Примеры основных ОКВЭД в отрасли">
               <OkvedList items={okvedItems} />
