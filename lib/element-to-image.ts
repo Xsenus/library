@@ -13,6 +13,7 @@ export interface CopyImageOptions {
 
 const DATA_URL_REGEX = /^data:/i;
 const URL_FUNCTION_REGEX = /url\(("|'|)([^"')]+)\1\)/gi;
+const URL_FUNCTION_SIMPLE_REGEX = /url\(/gi;
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
 function getWindow(): Window {
@@ -56,13 +57,24 @@ type Counters = {
   backgrounds: number;
 };
 
-type PrepareOptions = Required<Pick<CopyImageOptions, 'skipDataAttribute'>>;
+type PrepareOptions = Required<Pick<CopyImageOptions, 'skipDataAttribute'>> & {
+  stripAllImages: boolean;
+};
 
 async function processCssUrls(
   value: string,
   counters: Counters,
+  stripAllImages: boolean,
 ): Promise<string | null> {
   if (!value || !value.includes('url(')) return value;
+
+  if (stripAllImages) {
+    const matches = value.match(URL_FUNCTION_SIMPLE_REGEX);
+    if (matches?.length) {
+      counters.backgrounds += matches.length;
+    }
+    return 'none';
+  }
 
   let result = value;
   const matches = Array.from(value.matchAll(URL_FUNCTION_REGEX));
@@ -104,6 +116,17 @@ async function inlineElementStyles(
     return;
   }
 
+  if (
+    clone instanceof HTMLIFrameElement ||
+    clone instanceof HTMLEmbedElement ||
+    clone instanceof HTMLObjectElement ||
+    clone instanceof HTMLVideoElement
+  ) {
+    counters.images += 1;
+    clone.remove();
+    return;
+  }
+
   const win = getWindow();
   const style = win.getComputedStyle(original);
   const cssTexts: string[] = [];
@@ -113,7 +136,7 @@ async function inlineElementStyles(
     let value = style.getPropertyValue(name);
     if (!value) continue;
     if (name === 'background' || name === 'background-image' || name === 'mask' || name === 'mask-image') {
-      value = (await processCssUrls(value, counters)) ?? value;
+      value = (await processCssUrls(value, counters, options.stripAllImages)) ?? value;
       if (!value || value === 'none') {
         cssTexts.push(`${name}: none;`);
         continue;
@@ -138,7 +161,7 @@ async function inlineElementStyles(
   }
 
   if (clone instanceof HTMLImageElement && original instanceof HTMLImageElement) {
-    await inlineImageElement(original, clone, counters);
+    await inlineImageElement(original, clone, counters, options);
   } else if (clone instanceof HTMLCanvasElement && original instanceof HTMLCanvasElement) {
     const dataUrl = original.toDataURL();
     const img = new Image();
@@ -176,7 +199,21 @@ async function inlineImageElement(
   original: HTMLImageElement,
   clone: HTMLImageElement,
   counters: Counters,
+  options: PrepareOptions,
 ): Promise<void> {
+  if (options.stripAllImages) {
+    const src = original.currentSrc || original.src;
+    if (src) {
+      counters.images += 1;
+    }
+    clone.removeAttribute('srcset');
+    clone.setAttribute('src', '');
+    clone.setAttribute('data-skipped-image', src || '');
+    clone.style.backgroundColor = '#f8fafc';
+    clone.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+    return;
+  }
+
   const src = original.currentSrc || original.src;
   if (!src || DATA_URL_REGEX.test(src)) return;
 
@@ -216,7 +253,13 @@ async function inlineSvgImageElement(
   original: SVGImageElement,
   clone: SVGImageElement,
   counters: Counters,
+  options: PrepareOptions,
 ): Promise<void> {
+  if (options.stripAllImages) {
+    counters.images += 1;
+    clone.remove();
+    return;
+  }
   const rawHref = getSvgHref(original);
   if (!rawHref || DATA_URL_REGEX.test(rawHref) || rawHref.startsWith('blob:')) {
     return;
@@ -243,10 +286,19 @@ async function inlineSvgImageElement(
   }
 }
 
-async function inlineExternalSvgSubtree(element: Element, counters: Counters): Promise<void> {
+async function inlineExternalSvgSubtree(
+  element: Element,
+  counters: Counters,
+  options: PrepareOptions,
+): Promise<void> {
   if (!(element instanceof SVGElement)) return;
 
   if (element instanceof SVGImageElement) {
+    if (options.stripAllImages) {
+      counters.images += 1;
+      element.remove();
+      return;
+    }
     const href = getSvgHref(element);
     if (!href || DATA_URL_REGEX.test(href) || href.startsWith('blob:')) {
       // nothing to inline
@@ -270,7 +322,7 @@ async function inlineExternalSvgSubtree(element: Element, counters: Counters): P
 
   const children = Array.from(element.children);
   for (const child of children) {
-    await inlineExternalSvgSubtree(child, counters);
+    await inlineExternalSvgSubtree(child, counters, options);
   }
 }
 
@@ -280,6 +332,11 @@ async function inlineSvgUseElement(
   counters: Counters,
   options: PrepareOptions,
 ): Promise<boolean> {
+  if (options.stripAllImages) {
+    counters.images += 1;
+    clone.remove();
+    return true;
+  }
   const rawHref = getSvgHref(original);
   if (!rawHref) return false;
 
@@ -350,7 +407,7 @@ async function inlineSvgUseElement(
       replacement.setAttribute('transform', transform);
     }
     parent.replaceChild(replacement, clone);
-    await inlineExternalSvgSubtree(replacement, counters);
+    await inlineExternalSvgSubtree(replacement, counters, options);
     return true;
   } catch (error) {
     counters.images += 1;
@@ -370,7 +427,7 @@ async function inlineSvgElementResources(
   }
 
   if (clone instanceof SVGImageElement && original instanceof SVGImageElement) {
-    await inlineSvgImageElement(original, clone, counters);
+    await inlineSvgImageElement(original, clone, counters, options);
     return false;
   }
 
@@ -385,12 +442,14 @@ async function createCanvasFromElement(
   element: HTMLElement,
   options: CopyImageOptions,
   counters: Counters,
+  stripAllImages: boolean,
 ): Promise<HTMLCanvasElement> {
   const clone = element.cloneNode(true) as HTMLElement;
   clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
 
   const prepareOptions: PrepareOptions = {
     skipDataAttribute: options.skipDataAttribute ?? 'data-copy-skip',
+    stripAllImages,
   };
 
   await inlineElementStyles(element, clone, counters, prepareOptions);
@@ -482,6 +541,29 @@ async function writeBlobToClipboard(blob: Blob): Promise<void> {
   await nav.clipboard.write([item]);
 }
 
+function isSecurityError(error: unknown): boolean {
+  return (
+    error instanceof DOMException &&
+    (error.name === 'SecurityError' || error.message.includes('Tainted canvases may not be exported'))
+  );
+}
+
+async function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise<Blob>((resolve, reject) => {
+    try {
+      canvas.toBlob((blob) => {
+        if (blob) {
+          resolve(blob);
+        } else {
+          reject(new Error('Не удалось создать изображение'));
+        }
+      }, 'image/png', 0.95);
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
 export async function copyElementImageToClipboard(
   element: HTMLElement,
   options: CopyImageOptions = {},
@@ -490,17 +572,30 @@ export async function copyElementImageToClipboard(
     throw new Error('Невозможно сделать снимок на сервере');
   }
 
-  const counters: Counters = { images: 0, backgrounds: 0 };
-  const canvas = await createCanvasFromElement(element, options, counters);
+  const firstCounters: Counters = { images: 0, backgrounds: 0 };
 
-  const blob = await new Promise<Blob | null>((resolve) =>
-    canvas.toBlob((b) => resolve(b), 'image/png', 0.95),
-  );
-  if (!blob) {
-    throw new Error('Не удалось создать изображение');
+  try {
+    const canvas = await createCanvasFromElement(element, options, firstCounters, false);
+    const blob = await canvasToBlob(canvas);
+    await writeBlobToClipboard(blob);
+    return {
+      skippedImages: firstCounters.images,
+      skippedBackgrounds: firstCounters.backgrounds,
+    };
+  } catch (error) {
+    if (!isSecurityError(error)) {
+      throw error instanceof Error ? error : new Error(String(error));
+    }
+
+    console.warn('Falling back to strict capture mode due to canvas security error', error);
+    const fallbackCounters: Counters = { images: 0, backgrounds: 0 };
+    const fallbackCanvas = await createCanvasFromElement(element, options, fallbackCounters, true);
+    const fallbackBlob = await canvasToBlob(fallbackCanvas);
+    await writeBlobToClipboard(fallbackBlob);
+    return {
+      skippedImages: fallbackCounters.images,
+      skippedBackgrounds: fallbackCounters.backgrounds,
+    };
   }
-
-  await writeBlobToClipboard(blob);
-  return { skippedImages: counters.images, skippedBackgrounds: counters.backgrounds };
 }
 
