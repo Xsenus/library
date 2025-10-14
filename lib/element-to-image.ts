@@ -11,6 +11,15 @@ export interface CopyImageOptions {
   skipDataAttribute?: string;
 }
 
+type DebugLevel = 'info' | 'warn' | 'error';
+
+type DebugDetails = Record<string, unknown> | undefined;
+
+interface CaptureDebugger {
+  enabled: boolean;
+  log: (level: DebugLevel, message: string, details?: DebugDetails) => void;
+}
+
 const DATA_URL_REGEX = /^data:/i;
 const URL_FUNCTION_REGEX = /url\(("|'|)([^"')]+)\1\)/gi;
 const URL_FUNCTION_SIMPLE_REGEX = /url\(/gi;
@@ -19,6 +28,52 @@ const TRANSPARENT_PIXEL =
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 const ABSOLUTE_HTTP_REGEX = /https?:\/\//i;
 const GOOGLE_TOKEN_REGEX = /(google|gstatic|googleapis|googleusercontent|googletag|doubleclick)/i;
+
+function createCaptureDebugger(element: HTMLElement): CaptureDebugger {
+  const win = typeof window === 'undefined' ? undefined : window;
+  if (!win) {
+    return { enabled: false, log: () => undefined };
+  }
+
+  let enabled = true;
+  const flag = (win as any).__EQUIPMENT_CAPTURE_DEBUG__;
+  if (typeof flag === 'boolean') {
+    enabled = flag;
+  } else if (
+    typeof process !== 'undefined' &&
+    process.env &&
+    process.env.NODE_ENV === 'production'
+  ) {
+    enabled = false;
+  }
+
+  const elementInfo = `${element.tagName.toLowerCase()}${
+    element.id ? `#${element.id}` : ''
+  }${element.className ? `.${String(element.className).replace(/\s+/g, '.')}` : ''}`;
+
+  return {
+    enabled,
+    log(level, message, details) {
+      if (!enabled) return;
+      const prefix = `[equipment-copy:${elementInfo}]`;
+      const payload = details ? [`${prefix} ${message}`, details] : [`${prefix} ${message}`];
+      if (level === 'error') {
+        console.error(...payload);
+      } else if (level === 'warn') {
+        console.warn(...payload);
+      } else {
+        console.debug(...payload);
+      }
+    },
+  };
+}
+
+function errorToMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return `${error.name}: ${error.message}`;
+  }
+  return String(error);
+}
 
 function getWindow(): Window {
   if (typeof window === 'undefined') {
@@ -63,6 +118,7 @@ type Counters = {
 
 type PrepareOptions = Required<Pick<CopyImageOptions, 'skipDataAttribute'>> & {
   stripAllImages: boolean;
+  debug: CaptureDebugger;
 };
 
 type PreparedClone = {
@@ -75,6 +131,8 @@ async function processCssUrls(
   value: string,
   counters: Counters,
   stripAllImages: boolean,
+  debug: CaptureDebugger,
+  propertyName: string,
 ): Promise<string | null> {
   if (!value || !value.includes('url(')) return value;
 
@@ -83,6 +141,10 @@ async function processCssUrls(
     if (matches?.length) {
       counters.backgrounds += matches.length;
     }
+    debug.log('info', 'Stripped CSS url due to strict mode', {
+      property: propertyName,
+      original: value,
+    });
     return 'none';
   }
 
@@ -102,26 +164,47 @@ async function processCssUrls(
       if (parsed.protocol === 'chrome-extension:' || parsed.protocol === 'moz-extension:') {
         counters.backgrounds += 1;
         result = result.replace(match[0], 'none');
+        debug.log('warn', 'Removed extension url from CSS', {
+          property: propertyName,
+          url: rawUrl,
+        });
         continue;
       }
       if (isLikelyGoogleUrl(parsed)) {
         counters.backgrounds += 1;
         result = result.replace(match[0], 'none');
+        debug.log('info', 'Removed Google url from CSS', {
+          property: propertyName,
+          url: parsed.href,
+        });
         continue;
       }
       absolute = parsed.href;
     } catch {
       counters.backgrounds += 1;
       result = result.replace(match[0], 'none');
+      debug.log('warn', 'Removed unparseable CSS url', {
+        property: propertyName,
+        url: rawUrl,
+      });
       continue;
     }
 
     try {
       const dataUrl = await fetchAsDataUrl(absolute);
       result = result.replace(match[0], `url("${dataUrl}")`);
+      debug.log('info', 'Inlined CSS url', {
+        property: propertyName,
+        source: absolute,
+      });
     } catch (error) {
       counters.backgrounds += 1;
       result = result.replace(match[0], 'none');
+      debug.log('warn', 'Failed to inline CSS url', {
+        property: propertyName,
+        source: absolute,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -156,6 +239,10 @@ async function inlineElementStyles(
   if (!(original instanceof HTMLElement || original instanceof SVGElement)) return;
 
   if (options.skipDataAttribute && original.getAttribute(options.skipDataAttribute) === '1') {
+    options.debug.log('info', 'Removed element due to skip attribute', {
+      tag: clone.tagName,
+      reason: options.skipDataAttribute,
+    });
     clone.remove();
     return;
   }
@@ -167,6 +254,9 @@ async function inlineElementStyles(
     clone instanceof HTMLVideoElement
   ) {
     counters.images += 1;
+    options.debug.log('info', 'Removed media element during inline styles', {
+      tag: clone.tagName,
+    });
     clone.remove();
     return;
   }
@@ -180,7 +270,14 @@ async function inlineElementStyles(
     let value = style.getPropertyValue(name);
     if (!value) continue;
     if (value.includes('url(') && shouldProcessCssProperty(name)) {
-      value = (await processCssUrls(value, counters, options.stripAllImages)) ?? value;
+      value =
+        (await processCssUrls(
+          value,
+          counters,
+          options.stripAllImages,
+          options.debug,
+          name,
+        )) ?? value;
       if (!value || value === 'none') {
         cssTexts.push(`${name}: none;`);
         continue;
@@ -278,6 +375,9 @@ async function inlineImageElement(
     clone.setAttribute('data-skipped-image', src || '');
     clone.style.backgroundColor = '#f8fafc';
     clone.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+    options.debug.log('info', 'Replaced image with transparent pixel in strict mode', {
+      source: src,
+    });
     return;
   }
 
@@ -298,6 +398,9 @@ async function inlineImageElement(
     clone.setAttribute('data-skipped-image', absolute);
     clone.style.backgroundColor = '#f8fafc';
     clone.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+    options.debug.log('info', 'Skipped Google hosted image', {
+      source: absolute,
+    });
     return;
   }
 
@@ -305,6 +408,9 @@ async function inlineImageElement(
     const dataUrl = await fetchAsDataUrl(absolute);
     clone.setAttribute('src', dataUrl);
     clone.removeAttribute('srcset');
+    options.debug.log('info', 'Inlined image as data URL', {
+      source: absolute,
+    });
   } catch (error) {
     counters.images += 1;
     clone.removeAttribute('srcset');
@@ -312,6 +418,10 @@ async function inlineImageElement(
     clone.setAttribute('data-skipped-image', absolute);
     clone.style.backgroundColor = '#f8fafc';
     clone.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+    options.debug.log('warn', 'Failed to inline image', {
+      source: absolute,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -335,6 +445,9 @@ async function inlineSvgImageElement(
   if (options.stripAllImages) {
     counters.images += 1;
     clone.remove();
+    options.debug.log('info', 'Removed SVG image in strict mode', {
+      href: getSvgHref(original),
+    });
     return;
   }
   const rawHref = getSvgHref(original);
@@ -348,6 +461,9 @@ async function inlineSvgImageElement(
   } catch {
     counters.images += 1;
     clone.remove();
+    options.debug.log('warn', 'Failed to resolve SVG image href', {
+      href: rawHref,
+    });
     return;
   }
 
@@ -358,11 +474,18 @@ async function inlineSvgImageElement(
     const dataUrl = await fetchAsDataUrl(absolute);
     clone.setAttribute('href', dataUrl);
     clone.setAttributeNS(XLINK_NS, 'href', dataUrl);
+    options.debug.log('info', 'Inlined SVG image as data URL', {
+      source: absolute,
+    });
   } catch (error) {
     counters.images += 1;
     clone.removeAttribute('href');
     clone.removeAttributeNS(XLINK_NS, 'href');
     clone.remove();
+    options.debug.log('warn', 'Failed to inline SVG image', {
+      source: absolute,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
@@ -377,6 +500,9 @@ async function inlineExternalSvgSubtree(
     if (options.stripAllImages) {
       counters.images += 1;
       element.remove();
+      options.debug.log('info', 'Removed nested SVG image in strict mode', {
+        href: getSvgHref(element),
+      });
       return;
     }
     const href = getSvgHref(element);
@@ -391,15 +517,25 @@ async function inlineExternalSvgSubtree(
         const dataUrl = await fetchAsDataUrl(absolute.href);
         element.setAttribute('href', dataUrl);
         element.setAttributeNS(XLINK_NS, 'href', dataUrl);
+        options.debug.log('info', 'Inlined nested SVG image', {
+          source: absolute.href,
+        });
       } catch (error) {
         counters.images += 1;
         element.remove();
+        options.debug.log('warn', 'Failed to inline nested SVG image', {
+          source: href,
+          error: error instanceof Error ? error.message : String(error),
+        });
         return;
       }
     }
   } else if (element instanceof SVGUseElement) {
     counters.images += 1;
     element.remove();
+    options.debug.log('info', 'Removed nested <use> element', {
+      href: getSvgHref(element),
+    });
     return;
   }
 
@@ -418,6 +554,9 @@ async function inlineSvgUseElement(
   if (options.stripAllImages) {
     counters.images += 1;
     clone.remove();
+    options.debug.log('info', 'Removed <use> element in strict mode', {
+      href: getSvgHref(original),
+    });
     return true;
   }
   const rawHref = getSvgHref(original);
@@ -434,6 +573,9 @@ async function inlineSvgUseElement(
     if (!target) {
       counters.images += 1;
       clone.remove();
+      options.debug.log('warn', 'Failed to resolve local <use> reference', {
+        href: rawHref,
+      });
       return true;
     }
     const replacement = target.cloneNode(true) as Element;
@@ -442,6 +584,9 @@ async function inlineSvgUseElement(
     }
     parent.replaceChild(replacement, clone);
     await inlineElementStyles(target, replacement, counters, options);
+    options.debug.log('info', 'Expanded local <use> reference', {
+      href: rawHref,
+    });
     return true;
   }
 
@@ -451,12 +596,18 @@ async function inlineSvgUseElement(
   } catch {
     counters.images += 1;
     clone.remove();
+    options.debug.log('warn', 'Failed to parse external <use> href', {
+      href: rawHref,
+    });
     return true;
   }
 
   if (isLikelyGoogleUrl(absoluteUrl)) {
     counters.images += 1;
     clone.remove();
+    options.debug.log('info', 'Skipped Google hosted <use> reference', {
+      href: absoluteUrl.href,
+    });
     return true;
   }
 
@@ -501,10 +652,19 @@ async function inlineSvgUseElement(
     }
     parent.replaceChild(replacement, clone);
     await inlineExternalSvgSubtree(replacement, counters, options);
+    options.debug.log('info', 'Expanded external <use> reference', {
+      href: resourceUrl,
+      fragment: fragmentId,
+    });
     return true;
   } catch (error) {
     counters.images += 1;
     clone.remove();
+    options.debug.log('warn', 'Failed to inline external <use> reference', {
+      href: resourceUrl,
+      fragment: fragmentId,
+      error: error instanceof Error ? error.message : String(error),
+    });
     return true;
   }
 }
@@ -589,7 +749,11 @@ function extractSrcsetUrls(srcset: string): string[] {
     .filter(Boolean);
 }
 
-function purgeExternalResourceAttributes(root: HTMLElement, counters: Counters): void {
+function purgeExternalResourceAttributes(
+  root: HTMLElement,
+  counters: Counters,
+  debug: CaptureDebugger,
+): void {
   const win = getWindow();
   const origin = win.location.origin;
   const stack: Element[] = [root];
@@ -613,11 +777,15 @@ function purgeExternalResourceAttributes(root: HTMLElement, counters: Counters):
       const matches = text.match(URL_FUNCTION_SIMPLE_REGEX);
       if (matches?.length) {
         counters.backgrounds += matches.length;
+        debug.log('info', 'Removed <style> tag with url() in strict mode', {
+          text: text.slice(0, 200),
+        });
         el.remove();
         continue;
       }
       if (/@import\s+/i.test(text)) {
         counters.backgrounds += 1;
+        debug.log('info', 'Removed <style> tag with @import in strict mode', {});
         el.remove();
       }
       continue;
@@ -627,6 +795,9 @@ function purgeExternalResourceAttributes(root: HTMLElement, counters: Counters):
       const rel = el.rel ? el.rel.toLowerCase() : '';
       if (rel.includes('stylesheet') || rel.includes('preload')) {
         counters.backgrounds += 1;
+        debug.log('info', 'Removed linked stylesheet in strict mode', {
+          href: el.href,
+        });
         el.remove();
         continue;
       }
@@ -678,35 +849,81 @@ function purgeExternalResourceAttributes(root: HTMLElement, counters: Counters):
         el.setAttribute('data-skipped-image', value);
         el.style.backgroundColor = '#f8fafc';
         el.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+        debug.log('info', 'Replaced external image attribute in strict mode', {
+          tag: el.tagName,
+          attr: name,
+          value,
+        });
       } else if (lower === 'src' && el instanceof HTMLVideoElement) {
         el.removeAttribute('src');
+        debug.log('info', 'Removed video src attribute in strict mode', {
+          value,
+        });
       } else if (lower === 'src' && el instanceof HTMLSourceElement) {
         el.removeAttribute('src');
         el.removeAttribute('srcset');
+        debug.log('info', 'Removed <source> references in strict mode', {
+          value,
+        });
       } else if (lower === 'srcset') {
         el.removeAttribute('srcset');
+        debug.log('info', 'Removed srcset attribute in strict mode', {
+          tag: el.tagName,
+          value,
+        });
       } else if (lower === 'poster') {
         el.removeAttribute('poster');
+        debug.log('info', 'Removed poster attribute in strict mode', {
+          value,
+        });
       } else if (lower === 'data') {
         el.removeAttribute('data');
+        debug.log('info', 'Removed data attribute in strict mode', {
+          tag: el.tagName,
+        });
       } else if (lower === 'href' && el instanceof SVGUseElement) {
         el.remove();
+        debug.log('info', 'Removed SVG <use> referencing external resource', {
+          value,
+        });
+        continue;
       } else if (lower === 'href' && el instanceof SVGImageElement) {
         el.remove();
+        debug.log('info', 'Removed SVG <image> referencing external resource', {
+          value,
+        });
+        continue;
       } else if (lower === 'xlink:href' && el instanceof SVGImageElement) {
         el.remove();
+        debug.log('info', 'Removed SVG xlink:image reference', {
+          value,
+        });
+        continue;
       } else if (lower === 'xlink:href' && el instanceof SVGUseElement) {
         el.remove();
+        debug.log('info', 'Removed SVG xlink:use reference', {
+          value,
+        });
+        continue;
       } else {
         el.removeAttribute(name);
+        debug.log('info', 'Removed attribute referencing external resource', {
+          tag: el.tagName,
+          attr: name,
+          value,
+        });
       }
     }
   }
 }
 
-function forceStripResidualUrls(root: HTMLElement, counters: Counters): void {
-  removeGoogleElements(root, counters);
-  stripAbsoluteHttpAttributes(root, counters);
+function forceStripResidualUrls(
+  root: HTMLElement,
+  counters: Counters,
+  debug: CaptureDebugger,
+): void {
+  removeGoogleElements(root, counters, debug);
+  stripAbsoluteHttpAttributes(root, counters, debug);
 
   const stack: Element[] = [root];
 
@@ -729,6 +946,9 @@ function forceStripResidualUrls(root: HTMLElement, counters: Counters): void {
       el.setAttribute('src', TRANSPARENT_PIXEL);
       el.style.backgroundColor = '#f8fafc';
       el.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+      debug.log('info', 'Replaced residual image with transparent pixel', {
+        tag: el.tagName,
+      });
       continue;
     }
 
@@ -751,6 +971,9 @@ function forceStripResidualUrls(root: HTMLElement, counters: Counters): void {
         placeholder.style.display = placeholder.style.display || 'inline-block';
         el.replaceWith(placeholder);
         stack.push(placeholder);
+        debug.log('info', 'Replaced media element with placeholder', {
+          tag: el.tagName,
+        });
         continue;
       }
     }
@@ -758,12 +981,16 @@ function forceStripResidualUrls(root: HTMLElement, counters: Counters): void {
     if (el instanceof HTMLSourceElement) {
       counters.images += 1;
       el.remove();
+      debug.log('info', 'Removed <source> element in strict cleanup', {});
       continue;
     }
 
     if (el instanceof SVGImageElement || el instanceof SVGUseElement) {
       counters.images += 1;
       el.remove();
+      debug.log('info', 'Removed SVG image/use in strict cleanup', {
+        tag: el.tagName,
+      });
       continue;
     }
 
@@ -774,6 +1001,9 @@ function forceStripResidualUrls(root: HTMLElement, counters: Counters): void {
         counters.backgrounds += matchCount;
         const replaced = styleAttr.replace(URL_FUNCTION_REGEX, 'none');
         el.setAttribute('style', replaced);
+        debug.log('info', 'Removed url() from inline style during strict cleanup', {
+          tag: el.tagName,
+        });
       }
     }
 
@@ -786,6 +1016,10 @@ function forceStripResidualUrls(root: HTMLElement, counters: Counters): void {
         if (!(el instanceof HTMLImageElement)) {
           counters.images += 1;
           el.removeAttribute(attr.name);
+          debug.log('info', 'Removed residual src/srcset attribute', {
+            tag: el.tagName,
+            attr: attr.name,
+          });
         }
         continue;
       }
@@ -793,12 +1027,20 @@ function forceStripResidualUrls(root: HTMLElement, counters: Counters): void {
         const matchCount = value.match(URL_FUNCTION_SIMPLE_REGEX)?.length ?? 1;
         counters.backgrounds += matchCount;
         el.removeAttribute(attr.name);
+        debug.log('info', 'Removed attribute with url() during strict cleanup', {
+          tag: el.tagName,
+          attr: attr.name,
+        });
       }
     }
   }
 }
 
-function removeGoogleElements(root: HTMLElement, counters: Counters): void {
+function removeGoogleElements(
+  root: HTMLElement,
+  counters: Counters,
+  debug: CaptureDebugger,
+): void {
   const stack: Element[] = [];
   for (let i = 0; i < root.children.length; i += 1) {
     const child = root.children.item(i);
@@ -851,6 +1093,9 @@ function removeGoogleElements(root: HTMLElement, counters: Counters): void {
         counters.backgrounds += 1;
       }
       el.remove();
+      debug.log('info', 'Removed node referencing Google resource', {
+        tag: el.tagName,
+      });
       continue;
     }
 
@@ -863,7 +1108,11 @@ function removeGoogleElements(root: HTMLElement, counters: Counters): void {
   }
 }
 
-function stripAbsoluteHttpAttributes(root: HTMLElement, counters: Counters): void {
+function stripAbsoluteHttpAttributes(
+  root: HTMLElement,
+  counters: Counters,
+  debug: CaptureDebugger,
+): void {
   const stack: Element[] = [root];
 
   while (stack.length) {
@@ -902,6 +1151,9 @@ function stripAbsoluteHttpAttributes(root: HTMLElement, counters: Counters): voi
         } else {
           el.removeAttribute('style');
         }
+        debug.log('info', 'Sanitized style attribute with absolute url', {
+          tag: el.tagName,
+        });
         continue;
       }
 
@@ -928,13 +1180,27 @@ function stripAbsoluteHttpAttributes(root: HTMLElement, counters: Counters): voi
         el.setAttribute('data-skipped-image', value);
         el.style.backgroundColor = '#f8fafc';
         el.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+        debug.log('info', 'Replaced absolute src attribute', {
+          value,
+        });
       } else if (lower === 'srcset' && el instanceof HTMLImageElement) {
         el.removeAttribute('srcset');
+        debug.log('info', 'Removed absolute srcset attribute', {
+          value,
+        });
       } else if (lower === 'href' && el instanceof SVGImageElement) {
         el.remove();
+        debug.log('info', 'Removed SVG image with absolute href', {
+          value,
+        });
         break;
       } else {
         el.removeAttribute(name);
+        debug.log('info', 'Removed attribute with absolute URL', {
+          tag: el.tagName,
+          attr: name,
+          value,
+        });
       }
     }
   }
@@ -951,8 +1217,8 @@ async function prepareElementClone(
   await inlineElementStyles(element, clone, counters, options);
 
   if (options.stripAllImages) {
-    purgeExternalResourceAttributes(clone, counters);
-    forceStripResidualUrls(clone, counters);
+    purgeExternalResourceAttributes(clone, counters, options.debug);
+    forceStripResidualUrls(clone, counters, options.debug);
   }
 
   const rect = element.getBoundingClientRect();
@@ -1022,10 +1288,12 @@ async function createCanvasFromElement(
   options: CopyImageOptions,
   counters: Counters,
   stripAllImages: boolean,
+  debug: CaptureDebugger,
 ): Promise<HTMLCanvasElement> {
   const prepareOptions: PrepareOptions = {
     skipDataAttribute: options.skipDataAttribute ?? 'data-copy-skip',
     stripAllImages,
+    debug,
   };
 
   const prepared = await prepareElementClone(element, counters, prepareOptions);
@@ -1107,29 +1375,81 @@ export async function copyElementImageToClipboard(
     throw new Error('Невозможно сделать снимок на сервере');
   }
 
+  const debug = createCaptureDebugger(element);
+  debug.log('info', 'Starting capture attempt', {
+    mode: 'normal',
+    elementWidth: element.clientWidth,
+    elementHeight: element.clientHeight,
+  });
+
   const firstCounters: Counters = { images: 0, backgrounds: 0 };
 
   try {
-    const canvas = await createCanvasFromElement(element, options, firstCounters, false);
-    const blob = await canvasToBlob(canvas);
+    const canvas = await createCanvasFromElement(element, options, firstCounters, false, debug);
+    let blob: Blob;
+    try {
+      blob = await canvasToBlob(canvas);
+    } catch (blobError) {
+      debug.log('error', 'Failed to serialize canvas in normal mode', {
+        error: errorToMessage(blobError),
+      });
+      throw blobError;
+    }
     await writeBlobToClipboard(blob);
+    debug.log('info', 'Capture succeeded', {
+      mode: 'normal',
+      skippedImages: firstCounters.images,
+      skippedBackgrounds: firstCounters.backgrounds,
+    });
     return {
       skippedImages: firstCounters.images,
       skippedBackgrounds: firstCounters.backgrounds,
     };
   } catch (error) {
     if (!isSecurityError(error)) {
+      debug.log('error', 'Capture failed with non-security error', {
+        mode: 'normal',
+        error: errorToMessage(error),
+      });
       throw error instanceof Error ? error : new Error(String(error));
     }
 
     console.warn('Falling back to strict capture mode due to canvas security error', error);
+    debug.log('warn', 'Security error encountered, switching to strict mode', {
+      error: errorToMessage(error),
+    });
   }
 
   const fallbackCounters: Counters = { images: 0, backgrounds: 0 };
 
-  const fallbackCanvas = await createCanvasFromElement(element, options, fallbackCounters, true);
-  const fallbackBlob = await canvasToBlob(fallbackCanvas);
+  debug.log('info', 'Starting capture attempt', {
+    mode: 'strict',
+    elementWidth: element.clientWidth,
+    elementHeight: element.clientHeight,
+  });
+
+  const fallbackCanvas = await createCanvasFromElement(
+    element,
+    options,
+    fallbackCounters,
+    true,
+    debug,
+  );
+  let fallbackBlob: Blob;
+  try {
+    fallbackBlob = await canvasToBlob(fallbackCanvas);
+  } catch (blobError) {
+    debug.log('error', 'Failed to serialize canvas in strict mode', {
+      error: errorToMessage(blobError),
+    });
+    throw blobError;
+  }
   await writeBlobToClipboard(fallbackBlob);
+  debug.log('info', 'Capture succeeded', {
+    mode: 'strict',
+    skippedImages: fallbackCounters.images,
+    skippedBackgrounds: fallbackCounters.backgrounds,
+  });
   return {
     skippedImages: fallbackCounters.images,
     skippedBackgrounds: fallbackCounters.backgrounds,
