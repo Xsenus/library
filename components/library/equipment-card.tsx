@@ -797,13 +797,23 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
             <Button size="sm" onClick={() => setShowMail(true)} className={blueBtn}>
               ✉ Письмо
             </Button>
-            <Button size="sm" asChild className={blueBtn}>
-              <a href={googleImagesUrl} target="_blank" rel="noopener noreferrer">
+            <Button size="sm" asChild className={blueBtn} data-copy-skip="1">
+              <a
+                href={googleImagesUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-copy-skip="1"
+              >
                 Картинки Google
               </a>
             </Button>
-            <Button size="sm" asChild className={blueBtn}>
-              <a href={googleTextUrl} target="_blank" rel="noopener noreferrer">
+            <Button size="sm" asChild className={blueBtn} data-copy-skip="1">
+              <a
+                href={googleTextUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-copy-skip="1"
+              >
                 Описание Google
               </a>
             </Button>

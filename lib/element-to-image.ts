@@ -100,6 +100,11 @@ async function processCssUrls(
         result = result.replace(match[0], 'none');
         continue;
       }
+      if (isLikelyGoogleUrl(parsed)) {
+        counters.backgrounds += 1;
+        result = result.replace(match[0], 'none');
+        continue;
+      }
       absolute = parsed.href;
     } catch {
       counters.backgrounds += 1;
@@ -282,6 +287,16 @@ async function inlineImageElement(
     return;
   }
 
+  if (isLikelyGoogleUrl(absolute)) {
+    counters.images += 1;
+    clone.removeAttribute('srcset');
+    clone.setAttribute('src', '');
+    clone.setAttribute('data-skipped-image', absolute);
+    clone.style.backgroundColor = '#f8fafc';
+    clone.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+    return;
+  }
+
   try {
     const dataUrl = await fetchAsDataUrl(absolute);
     clone.setAttribute('src', dataUrl);
@@ -333,6 +348,9 @@ async function inlineSvgImageElement(
   }
 
   try {
+    if (isLikelyGoogleUrl(absolute)) {
+      throw new Error('Google asset skipped');
+    }
     const dataUrl = await fetchAsDataUrl(absolute);
     clone.setAttribute('href', dataUrl);
     clone.setAttributeNS(XLINK_NS, 'href', dataUrl);
@@ -362,8 +380,11 @@ async function inlineExternalSvgSubtree(
       // nothing to inline
     } else {
       try {
-        const absolute = new URL(href, getWindow().location.href).href;
-        const dataUrl = await fetchAsDataUrl(absolute);
+        const absolute = new URL(href, getWindow().location.href);
+        if (isLikelyGoogleUrl(absolute)) {
+          throw new Error('Google asset skipped');
+        }
+        const dataUrl = await fetchAsDataUrl(absolute.href);
         element.setAttribute('href', dataUrl);
         element.setAttributeNS(XLINK_NS, 'href', dataUrl);
       } catch (error) {
@@ -429,12 +450,22 @@ async function inlineSvgUseElement(
     return true;
   }
 
+  if (isLikelyGoogleUrl(absoluteUrl)) {
+    counters.images += 1;
+    clone.remove();
+    return true;
+  }
+
   const hrefString = absoluteUrl.href;
   const hashIndex = hrefString.indexOf('#');
   const resourceUrl = hashIndex >= 0 ? hrefString.slice(0, hashIndex) : hrefString;
   const fragmentId = hashIndex >= 0 ? hrefString.slice(hashIndex + 1) : null;
 
   try {
+    if (isLikelyGoogleUrl(resourceUrl)) {
+      throw new Error('Google asset skipped');
+    }
+
     const response = await fetch(resourceUrl, {
       mode: 'cors',
       credentials: 'omit',
@@ -510,6 +541,39 @@ function isCrossOriginUrl(url: string, origin: string): boolean {
   } catch {
     return true;
   }
+}
+
+function isLikelyGoogleUrl(input: string | URL): boolean {
+  if (!input) return false;
+
+  let url: URL;
+  if (typeof input === 'string') {
+    try {
+      url = new URL(input, getWindow().location.href);
+    } catch {
+      return /google|gstatic|googleapis|googleusercontent|googletag/i.test(input);
+    }
+  } else {
+    url = input;
+  }
+
+  const hostname = url.hostname.toLowerCase();
+  return (
+    hostname === 'google.com' ||
+    hostname.endsWith('.google.com') ||
+    hostname.endsWith('.google.ru') ||
+    hostname.endsWith('.google.by') ||
+    hostname.endsWith('.google.kz') ||
+    hostname.endsWith('.google.ua') ||
+    hostname.endsWith('.google') ||
+    hostname.includes('googleusercontent.') ||
+    hostname.includes('.gstatic.') ||
+    hostname.endsWith('gstatic.com') ||
+    hostname.includes('googleapis.') ||
+    hostname.includes('googletagmanager.') ||
+    hostname.includes('googletagservices.') ||
+    hostname.includes('doubleclick.')
+  );
 }
 
 function extractSrcsetUrls(srcset: string): string[] {
