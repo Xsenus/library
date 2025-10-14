@@ -28,6 +28,14 @@ const TRANSPARENT_PIXEL =
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 const ABSOLUTE_HTTP_REGEX = /https?:\/\//i;
 const GOOGLE_TOKEN_REGEX = /(google|gstatic|googleapis|googleusercontent|googletag|doubleclick)/i;
+const FONT_FAMILY_DECLARATION_REGEX = /font-family\s*:[^;]+;?/gi;
+const SAFE_FONT_STACK = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const SUSPECT_SAMPLE_LIMIT = 20;
+
+function containsFontFamilyDeclaration(value: string): boolean {
+  FONT_FAMILY_DECLARATION_REGEX.lastIndex = 0;
+  return FONT_FAMILY_DECLARATION_REGEX.test(value);
+}
 
 function createCaptureDebugger(element: HTMLElement): CaptureDebugger {
   const win = typeof window === 'undefined' ? undefined : window;
@@ -1034,6 +1042,8 @@ function forceStripResidualUrls(
       }
     }
   }
+
+  applySafeFontFallback(root, debug);
 }
 
 function removeGoogleElements(
@@ -1106,6 +1116,179 @@ function removeGoogleElements(
       }
     }
   }
+}
+
+function applySafeFontFallback(root: HTMLElement, debug: CaptureDebugger): void {
+  const stack: Element[] = [root];
+  let updated = 0;
+
+  while (stack.length) {
+    const el = stack.pop();
+    if (!el) continue;
+
+    for (let i = 0; i < el.children.length; i += 1) {
+      const child = el.children.item(i);
+      if (child) {
+        stack.push(child);
+      }
+    }
+
+    if (!(el instanceof HTMLElement || el instanceof SVGElement)) {
+      continue;
+    }
+
+    const styleAttr = el.getAttribute('style');
+    if (styleAttr && containsFontFamilyDeclaration(styleAttr)) {
+      const cleanedStyle = styleAttr.replace(FONT_FAMILY_DECLARATION_REGEX, '').trim();
+      if (cleanedStyle) {
+        const normalized = cleanedStyle.endsWith(';') ? cleanedStyle : `${cleanedStyle};`;
+        el.setAttribute('style', normalized);
+      } else {
+        el.removeAttribute('style');
+      }
+      updated += 1;
+    }
+
+    if (el instanceof SVGElement) {
+      if (el.getAttribute('font-family') !== SAFE_FONT_STACK) {
+        el.setAttribute('font-family', SAFE_FONT_STACK);
+        updated += 1;
+      }
+      continue;
+    }
+
+    if (el instanceof HTMLElement) {
+      const baseStyle = el.getAttribute('style') || '';
+      let finalStyle = baseStyle.trim();
+      if (finalStyle && !finalStyle.endsWith(';')) {
+        finalStyle = `${finalStyle};`;
+      }
+      const declaration = `font-family: ${SAFE_FONT_STACK};`;
+      if (!finalStyle.includes(declaration)) {
+        finalStyle = `${finalStyle} ${declaration}`.trim();
+        el.setAttribute('style', finalStyle);
+        updated += 1;
+      }
+    }
+  }
+
+  if (updated > 0) {
+    debug.log('info', 'Applied safe font fallback in strict mode', {
+      updatedNodes: updated,
+    });
+  }
+}
+
+type TaintSuspects = {
+  httpAttributes: Array<{ tag: string; attr: string; value: string }>;
+  urlDeclarations: Array<{ tag: string; attr: string; value: string }>;
+  googleMatches: Array<{ tag: string; attr: string; value: string }>;
+  fontDeclarations: Array<{ tag: string; attr: string; value: string }>;
+};
+
+function pushSuspect<T>(bucket: T[], value: T): void {
+  if (bucket.length < SUSPECT_SAMPLE_LIMIT) {
+    bucket.push(value);
+  }
+}
+
+function collectTaintSuspects(root: HTMLElement): TaintSuspects {
+  const httpAttributes: TaintSuspects['httpAttributes'] = [];
+  const urlDeclarations: TaintSuspects['urlDeclarations'] = [];
+  const googleMatches: TaintSuspects['googleMatches'] = [];
+  const fontDeclarations: TaintSuspects['fontDeclarations'] = [];
+
+  const stack: Element[] = [root];
+
+  while (stack.length) {
+    const el = stack.pop();
+    if (!el) continue;
+
+    for (let i = 0; i < el.children.length; i += 1) {
+      const child = el.children.item(i);
+      if (child) {
+        stack.push(child);
+      }
+    }
+
+    if (!(el instanceof HTMLElement || el instanceof SVGElement)) {
+      continue;
+    }
+
+    const attrs = Array.from(el.attributes);
+    for (const attr of attrs) {
+      const name = attr.name;
+      const lower = name.toLowerCase();
+      const value = attr.value;
+      if (!value) continue;
+
+      if (lower === 'style') {
+        if (value.includes('url(')) {
+          pushSuspect(urlDeclarations, {
+            tag: el.tagName,
+            attr: name,
+            value: value.slice(0, 200),
+          });
+        }
+        if (ABSOLUTE_HTTP_REGEX.test(value)) {
+          pushSuspect(httpAttributes, {
+            tag: el.tagName,
+            attr: name,
+            value: value.slice(0, 200),
+          });
+        }
+        if (containsFontFamilyDeclaration(value)) {
+          pushSuspect(fontDeclarations, {
+            tag: el.tagName,
+            attr: name,
+            value: value.slice(0, 200),
+          });
+        }
+        if (GOOGLE_TOKEN_REGEX.test(value)) {
+          pushSuspect(googleMatches, {
+            tag: el.tagName,
+            attr: name,
+            value: value.slice(0, 200),
+          });
+        }
+        continue;
+      }
+
+      if (ABSOLUTE_HTTP_REGEX.test(value) || value.startsWith('//')) {
+        pushSuspect(httpAttributes, {
+          tag: el.tagName,
+          attr: name,
+          value: value.slice(0, 200),
+        });
+      }
+
+      if (value.includes('url(')) {
+        pushSuspect(urlDeclarations, {
+          tag: el.tagName,
+          attr: name,
+          value: value.slice(0, 200),
+        });
+      }
+
+      if (GOOGLE_TOKEN_REGEX.test(value)) {
+        pushSuspect(googleMatches, {
+          tag: el.tagName,
+          attr: name,
+          value: value.slice(0, 200),
+        });
+      }
+
+      if (lower === 'font-family') {
+        pushSuspect(fontDeclarations, {
+          tag: el.tagName,
+          attr: name,
+          value: value.slice(0, 200),
+        });
+      }
+    }
+  }
+
+  return { httpAttributes, urlDeclarations, googleMatches, fontDeclarations };
 }
 
 function stripAbsoluteHttpAttributes(
@@ -1297,6 +1480,20 @@ async function createCanvasFromElement(
   };
 
   const prepared = await prepareElementClone(element, counters, prepareOptions);
+  const suspects = collectTaintSuspects(prepared.node);
+  if (
+    suspects.httpAttributes.length ||
+    suspects.urlDeclarations.length ||
+    suspects.googleMatches.length ||
+    suspects.fontDeclarations.length
+  ) {
+    debug.log('warn', 'Potential external references detected after preparation', suspects);
+  } else {
+    debug.log('info', 'Prepared clone sanitized', {
+      width: prepared.width,
+      height: prepared.height,
+    });
+  }
   return rasterizeCloneWithForeignObject(prepared, element, options);
 }
 
