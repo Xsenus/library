@@ -253,31 +253,59 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     if (isCopyingCard) return;
     if (!cardRef.current) return;
 
+    const copyLog = (message: string, payload?: Record<string, unknown>) => {
+      if (payload) {
+        console.log('[equipment-card:copy]', message, payload);
+      } else {
+        console.log('[equipment-card:copy]', message);
+      }
+    };
+
+    copyLog('Старт копирования карточки', {
+      equipmentId: equipment?.id,
+      equipmentName: equipment?.name,
+    });
     setIsCopyingCard(true);
 
     try {
+      copyLog('Проверяем готовность шрифтов');
       const fonts = (document as Document & { fonts?: FontFaceSet }).fonts;
       if (fonts?.ready) {
         try {
+          copyLog('Ожидаем загрузку шрифтов');
           await fonts.ready;
+          copyLog('Шрифты готовы');
         } catch {
           /* ignore font readiness errors */
+          copyLog('Ошибка ожидания шрифтов, продолжаем');
         }
       }
 
+      copyLog('Ожидаем следующий кадр анимации перед захватом');
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      copyLog('Кадр получен, продолжаем');
 
       const node = cardRef.current;
       if (!node) throw new Error('Карточка недоступна для копирования.');
+
+      copyLog('Подготавливаем параметры захвата', {
+        devicePixelRatio: window.devicePixelRatio,
+      });
 
       const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
 
       const buildFilter = (ignoreRisky: boolean) => {
         return (element: HTMLElement) => {
           if (element.dataset?.screenshotIgnore === 'true') {
+            copyLog('Фильтр исключил элемент из-за screenshotIgnore', {
+              tagName: element.tagName,
+            });
             return false;
           }
           if (ignoreRisky && element.dataset?.screenshotRisky === 'true') {
+            copyLog('Фильтр исключил элемент из-за screenshotRisky', {
+              tagName: element.tagName,
+            });
             return false;
           }
           return true;
@@ -285,6 +313,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       };
 
       const capture = async (ignoreRisky: boolean) => {
+        copyLog('Начинаем захват DOM', { ignoreRisky, pixelRatio });
         return await elementToBlob(node, {
           pixelRatio,
           backgroundColor: '#ffffff',
@@ -296,16 +325,32 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       let fallbackUsed = false;
 
       try {
+        copyLog('Пробуем основной захват карточки');
         blob = await capture(false);
+        copyLog('Основной захват успешен', {
+          size: blob.size,
+          type: blob.type,
+        });
       } catch (captureError) {
         if (captureError instanceof DOMException && captureError.name === 'SecurityError') {
           console.warn(
             'Первичный скриншот карточки загрязнил canvas, повторяем без внешних изображений',
             captureError,
           );
+          copyLog('Основной захват завершился SecurityError, пробуем fallback', {
+            error: captureError.message,
+          });
           blob = await capture(true);
           fallbackUsed = true;
+          copyLog('Fallback-захват успешен', {
+            size: blob.size,
+            type: blob.type,
+          });
         } else {
+          copyLog('Основной захват завершился ошибкой', {
+            error:
+              captureError instanceof Error ? captureError.message : String(captureError),
+          });
           throw captureError;
         }
       }
@@ -318,22 +363,29 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       const canWriteImageToClipboard =
         !!clipboardItemCtor && !!navigator.clipboard && 'write' in navigator.clipboard;
 
+      copyLog('Проверяем возможности буфера обмена', { canWriteImageToClipboard });
+
       const fileName = `equipment-${equipment?.id ?? 'card'}.png`;
       const fallbackNote = fallbackUsed
         ? ' Некоторые внешние изображения были исключены из скриншота, потому что их нельзя безопасно загрузить.'
         : '';
 
       if (canWriteImageToClipboard) {
+        copyLog('Пробуем записать изображение в буфер обмена');
         const item = new clipboardItemCtor({ 'image/png': blob });
         await navigator.clipboard.write([item]);
+        copyLog('Изображение успешно записано в буфер обмена');
         setCopyCardStatus('success');
         toast({
           title: 'Карточка скопирована',
           description: `Изображение сохранено в буфер обмена.${fallbackNote}`,
         });
       } else {
+        copyLog('Буфер обмена недоступен, готовим сохранение файла');
         const dataUrl = await blobToDataUrl(blob);
+        copyLog('DataURL подготовлен', { length: dataUrl.length });
         downloadDataUrl(dataUrl, fileName);
+        copyLog('Скачивание изображения инициировано', { fileName });
         setCopyCardStatus('success');
         toast({
           title: 'Изображение сохранено файлом',
@@ -341,6 +393,9 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
         });
       }
     } catch (error) {
+      copyLog('Ошибка при копировании карточки', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       console.error('Failed to copy equipment card', error);
       setCopyCardStatus('error');
       toast({
@@ -352,11 +407,13 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
             : 'Проверьте разрешения браузера и попробуйте ещё раз.',
       });
     } finally {
+      copyLog('Завершаем копирование карточки, сбрасываем состояния');
       setIsCopyingCard(false);
       if (copyCardStatusTimerRef.current) {
         clearTimeout(copyCardStatusTimerRef.current);
       }
       copyCardStatusTimerRef.current = setTimeout(() => {
+        copyLog('Таймер статуса копирования сработал, возвращаем idle');
         setCopyCardStatus('idle');
         copyCardStatusTimerRef.current = null;
       }, 2200);

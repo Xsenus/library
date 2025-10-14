@@ -12,6 +12,16 @@ const TRANSPARENT_PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const HTTP_URL_REGEX = /^(https?:)?\/\//i;
 
+const LOG_PREFIX = '[element-to-image]';
+
+function debugLog(message: string, payload?: Record<string, unknown>) {
+  if (payload) {
+    console.log(`${LOG_PREFIX} ${message}`, payload);
+  } else {
+    console.log(`${LOG_PREFIX} ${message}`);
+  }
+}
+
 function isHTMLElement(node: Element): node is HTMLElement {
   return node instanceof HTMLElement;
 }
@@ -40,49 +50,93 @@ function isLoopbackHostname(hostname: string): boolean {
 }
 
 function shouldTreatAsSameOrigin(url: URL, reference: URL): boolean {
+  debugLog('Проверяем принадлежность к origin', {
+    url: url.toString(),
+    reference: reference.toString(),
+  });
   if (url.origin === reference.origin) {
+    debugLog('URL совпадает по origin напрямую');
     return true;
   }
 
   if (url.protocol !== reference.protocol) {
+    debugLog('Разный протокол, считаем origin отличающимся', {
+      urlProtocol: url.protocol,
+      referenceProtocol: reference.protocol,
+    });
     return false;
   }
 
   if (!isLoopbackHostname(url.hostname) || !isLoopbackHostname(reference.hostname)) {
+    debugLog('Не loopback hostname, origin различается', {
+      urlHostname: url.hostname,
+      referenceHostname: reference.hostname,
+    });
     return false;
   }
 
+  const samePort = getEffectivePort(url) === getEffectivePort(reference);
+  debugLog('Loopback origin сравнивает порты', {
+    urlPort: getEffectivePort(url),
+    referencePort: getEffectivePort(reference),
+    samePort,
+  });
   return getEffectivePort(url) === getEffectivePort(reference);
 }
 
 function normalizeLoopbackUrl(url: URL, reference: URL): URL {
+  debugLog('Нормализуем loopback URL', {
+    url: url.toString(),
+    reference: reference.toString(),
+  });
   if (shouldTreatAsSameOrigin(url, reference)) {
-    return new URL(url.pathname + url.search, reference.origin);
+    const normalized = new URL(url.pathname + url.search, reference.origin);
+    debugLog('URL признан своим origin, подменяем на reference', {
+      normalized: normalized.toString(),
+    });
+    return normalized;
   }
   return url;
 }
 
 function shouldUseAnonymousCors(src: string | null | undefined): boolean {
+  debugLog('Проверяем необходимость anonymous CORS для изображения', { src });
   if (!src) return false;
   if (src.startsWith('data:') || src.startsWith('blob:')) return false;
 
   try {
     const reference = new URL(window.location.href);
     const absolute = new URL(src, reference);
-    return !shouldTreatAsSameOrigin(absolute, reference);
+    const needCors = !shouldTreatAsSameOrigin(absolute, reference);
+    debugLog('Результат проверки anonymous CORS', {
+      src,
+      absolute: absolute.toString(),
+      needCors,
+    });
+    return needCors;
   } catch {
+    debugLog('Не удалось распарсить src, считаем его безопасным', { src });
     return false;
   }
 }
 
 function cloneNodeDeep(node: Element, filter?: (node: HTMLElement) => boolean): Element | null {
+  debugLog('Клонируем узел', {
+    nodeName: node instanceof HTMLElement ? node.tagName : node.nodeName,
+  });
   if (filter && isHTMLElement(node) && !filter(node)) {
+    debugLog('Фильтр исключил узел из копирования', {
+      nodeName: node.tagName,
+    });
     return null;
   }
 
   const clone = node.cloneNode(false) as Element;
 
   if (clone instanceof HTMLImageElement) {
+    debugLog('Обрабатываем <img> при клонировании', {
+      originalSrc: (node as HTMLImageElement).getAttribute('src'),
+    });
     if (shouldUseAnonymousCors((node as HTMLImageElement).getAttribute('src'))) {
       clone.crossOrigin = 'anonymous';
       clone.referrerPolicy = 'no-referrer';
@@ -110,6 +164,9 @@ function cloneNodeDeep(node: Element, filter?: (node: HTMLElement) => boolean): 
 }
 
 function inlineStyles(source: Element, target: Element) {
+  debugLog('Инлайним стили', {
+    nodeName: source instanceof HTMLElement ? source.tagName : source.nodeName,
+  });
   if (!(isHTMLElement(target) || isSVGElement(target))) return;
 
   const computed = window.getComputedStyle(source);
@@ -126,6 +183,9 @@ function inlineStyles(source: Element, target: Element) {
 }
 
 function copySpecialValues(source: Element, target: Element) {
+  debugLog('Копируем специальные значения', {
+    nodeName: source instanceof HTMLElement ? source.tagName : source.nodeName,
+  });
   if (source instanceof HTMLInputElement && target instanceof HTMLInputElement) {
     target.value = source.value;
   } else if (source instanceof HTMLTextAreaElement && target instanceof HTMLTextAreaElement) {
@@ -152,6 +212,7 @@ function copySpecialValues(source: Element, target: Element) {
 }
 
 async function readBlobAsDataUrl(blob: Blob): Promise<string> {
+  debugLog('Конвертируем Blob в dataURL', { size: blob.size, type: blob.type });
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(reader.result as string);
@@ -161,6 +222,7 @@ async function readBlobAsDataUrl(blob: Blob): Promise<string> {
 }
 
 async function fetchResource(url: string): Promise<Response> {
+  debugLog('Пробуем загрузить ресурс напрямую', { url });
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 12_000);
 
@@ -169,6 +231,11 @@ async function fetchResource(url: string): Promise<Response> {
     const absolute = new URL(url, reference);
     const normalized = normalizeLoopbackUrl(absolute, reference);
     const sameOrigin = shouldTreatAsSameOrigin(normalized, reference);
+    debugLog('Выполняем fetch ресурса', {
+      normalized: normalized.toString(),
+      sameOrigin,
+      credentials: sameOrigin ? 'same-origin' : 'omit',
+    });
     const response = await fetch(normalized.toString(), {
       cache: 'no-store',
       mode: sameOrigin ? 'same-origin' : 'cors',
@@ -176,8 +243,17 @@ async function fetchResource(url: string): Promise<Response> {
       credentials: sameOrigin ? 'same-origin' : 'omit',
     });
     if (!response.ok) {
+      debugLog('Ресурс ответил ошибкой', {
+        status: response.status,
+        statusText: response.statusText,
+        url: normalized.toString(),
+      });
       throw new Error(`HTTP ${response.status}`);
     }
+    debugLog('Ресурс успешно получен', {
+      url: normalized.toString(),
+      size: response.headers.get('content-length'),
+    });
     return response;
   } finally {
     clearTimeout(timeout);
@@ -185,26 +261,40 @@ async function fetchResource(url: string): Promise<Response> {
 }
 
 async function proxyResource(url: string): Promise<Response> {
+  debugLog('Пробуем загрузить ресурс через прокси', { url });
   const proxyUrl = `/api/screenshot/proxy?url=${encodeURIComponent(url)}`;
   const response = await fetch(proxyUrl, { cache: 'no-store', mode: 'same-origin' });
   if (!response.ok) {
+    debugLog('Прокси вернул ошибку', { status: response.status, url });
     throw new Error(`Proxy HTTP ${response.status}`);
   }
+  debugLog('Ресурс через прокси успешно получен', {
+    url,
+    size: response.headers.get('content-length'),
+  });
   return response;
 }
 
 async function resourceToDataUrl(url: string): Promise<string> {
+  debugLog('Инлайним ресурс в dataURL', { url });
   try {
     const response = await fetchResource(url);
     const blob = await response.blob();
+    debugLog('Получили blob ресурса', { url, size: blob.size, type: blob.type });
     return await readBlobAsDataUrl(blob);
   } catch (directError) {
+    debugLog('Прямой fetch провалился, пробуем прокси', {
+      url,
+      error: directError instanceof Error ? directError.message : String(directError),
+    });
     try {
       const response = await proxyResource(url);
       const blob = await response.blob();
+      debugLog('Получили blob через прокси', { url, size: blob.size, type: blob.type });
       return await readBlobAsDataUrl(blob);
     } catch (proxyError) {
       const message = proxyError instanceof Error ? proxyError.message : String(proxyError);
+      debugLog('Прокси не помог, ресурс не получится встроить', { url, message });
       throw new Error(`Не удалось загрузить ресурс ${url}: ${message}`);
     }
   }
@@ -213,14 +303,23 @@ async function resourceToDataUrl(url: string): Promise<string> {
 async function inlineImageSource(img: HTMLImageElement) {
   const src = img.getAttribute('src');
   if (!src || src.startsWith('data:') || src.startsWith('blob:')) return;
+  debugLog('Инлайним <img>', { src });
   try {
     const reference = new URL(window.location.href);
     const absolute = new URL(src, reference);
     const normalized = normalizeLoopbackUrl(absolute, reference).toString();
+    debugLog('Нормализовали src изображения', {
+      original: src,
+      normalized,
+    });
     const dataUrl = await resourceToDataUrl(normalized);
     img.setAttribute('src', dataUrl);
     img.removeAttribute('crossorigin');
     img.removeAttribute('srcset');
+    debugLog('Изображение встроено как dataURL', {
+      original: src,
+      length: dataUrl.length,
+    });
   } catch (error) {
     console.warn('Не удалось встроить изображение', src, error);
     img.removeAttribute('srcset');
@@ -230,6 +329,9 @@ async function inlineImageSource(img: HTMLImageElement) {
 }
 
 async function inlineStyleUrls(element: Element): Promise<void> {
+  debugLog('Ищем ресурсы в inline-стилях элемента', {
+    node: element instanceof HTMLElement ? element.tagName : element.nodeName,
+  });
   if (!(isHTMLElement(element) || isSVGElement(element))) return;
 
   const style = element.style;
@@ -254,11 +356,17 @@ async function inlineStyleUrls(element: Element): Promise<void> {
         let result = value;
         URL_REGEX.lastIndex = 0;
         const matches = Array.from(value.matchAll(URL_REGEX));
+        debugLog('Обрабатываем CSS-свойство', {
+          property,
+          value,
+          matches: matches.map((m) => m[2]),
+        });
         for (const match of matches) {
           const raw = match[2];
           if (!raw || raw.startsWith('data:') || raw.startsWith('#')) continue;
           try {
             const absolute = new URL(raw, window.location.href).toString();
+            debugLog('Инлайним ресурс из CSS', { property, raw, absolute });
             const dataUrl = await resourceToDataUrl(absolute);
             result = result.replace(match[0], `url("${dataUrl}")`);
           } catch (error) {
@@ -268,16 +376,24 @@ async function inlineStyleUrls(element: Element): Promise<void> {
         }
 
         style.setProperty(property, result, priority);
+        debugLog('CSS-свойство обновлено после инлайна', { property, result });
       })(),
     );
   }
 
   if (tasks.length > 0) {
+    debugLog('Ожидаем завершение задач по инлайну стилей', { count: tasks.length });
     await Promise.all(tasks);
+    debugLog('Инлайн ресурсов в стилях завершён', {
+      node: element instanceof HTMLElement ? element.tagName : element.nodeName,
+    });
   }
 }
 
 async function embedImages(root: Element): Promise<void> {
+  debugLog('Начинаем инлайнинг изображений и ресурсов', {
+    root: root instanceof HTMLElement ? root.tagName : root.nodeName,
+  });
   const imageTasks: Promise<void>[] = [];
   const visitedImages = new Set<HTMLImageElement>();
   const svgImages: SVGImageElement[] = [];
@@ -294,6 +410,8 @@ async function embedImages(root: Element): Promise<void> {
     }
   });
 
+  debugLog('Подготовленные HTML-изображения', { count: visitedImages.size });
+
   if (typeof SVGImageElement !== 'undefined') {
     root.querySelectorAll('image').forEach((img) => {
       if (img instanceof SVGImageElement) {
@@ -301,6 +419,8 @@ async function embedImages(root: Element): Promise<void> {
       }
     });
   }
+
+  debugLog('Подготовленные SVG-изображения', { count: svgImages.length });
 
   visitedImages.forEach((img) => {
     imageTasks.push(inlineImageSource(img));
@@ -326,18 +446,22 @@ async function embedImages(root: Element): Promise<void> {
     imageTasks.push(inlineStyleUrls(element));
   }
 
+  debugLog('Всего задач на инлайн ресурсов', { count: imageTasks.length });
   await Promise.all(imageTasks);
+  debugLog('Инлайн изображений завершён');
 }
 
 async function inlineSvgImageSource(image: SVGImageElement) {
   const href = image.getAttribute('href') ?? image.getAttribute('xlink:href');
   if (!href || href.startsWith('data:') || href.startsWith('#')) return;
+  debugLog('Инлайним SVG <image>', { href });
 
   try {
     const absolute = new URL(href, window.location.href).toString();
     const dataUrl = await resourceToDataUrl(absolute);
     image.setAttribute('href', dataUrl);
     image.setAttribute('xlink:href', dataUrl);
+    debugLog('SVG <image> успешно встроен', { href, length: dataUrl.length });
   } catch (error) {
     console.warn('Не удалось встроить SVG-изображение', href, error);
     image.removeAttribute('href');
@@ -346,6 +470,7 @@ async function inlineSvgImageSource(image: SVGImageElement) {
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
+  debugLog('Создаём объект Image для загрузки', { url });
   return new Promise((resolve, reject) => {
     const img = new Image();
     if (shouldUseAnonymousCors(url)) {
@@ -355,12 +480,16 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     }
     img.decoding = 'async';
     img.onload = () => resolve(img);
-    img.onerror = (err) => reject(err);
+    img.onerror = (err) => {
+      debugLog('Ошибка загрузки изображения', { url, error: err });
+      reject(err);
+    };
     img.src = url;
   });
 }
 
 function isSafeResourceUrl(value: string | null): boolean {
+  debugLog('Проверяем URL на безопасность', { value });
   if (!value) return true;
   const trimmed = value.trim();
   if (!trimmed) return true;
@@ -370,19 +499,30 @@ function isSafeResourceUrl(value: string | null): boolean {
     trimmed.startsWith('about:blank') ||
     trimmed.startsWith('#')
   ) {
+    debugLog('URL безопасен по схеме data/blob/about/anchor', { value });
     return true;
   }
 
   try {
     const reference = new URL(window.location.href);
     const absolute = new URL(trimmed, reference);
-    return shouldTreatAsSameOrigin(absolute, reference);
+    const safe = shouldTreatAsSameOrigin(absolute, reference);
+    debugLog('Результат проверки URL', {
+      value,
+      absolute: absolute.toString(),
+      safe,
+    });
+    return safe;
   } catch {
+    debugLog('URL не распарсили, считаем небезопасным', { value });
     return false;
   }
 }
 
 function sanitizeExternalResources(root: Element) {
+  debugLog('Начинаем санитарную обработку DOM', {
+    root: root instanceof HTMLElement ? root.tagName : root.nodeName,
+  });
   const elements: Element[] = [];
 
   if (root instanceof Element) {
@@ -451,9 +591,14 @@ function sanitizeExternalResources(root: Element) {
       }
     }
   });
+
+  debugLog('Санитарная обработка завершена', { processed: elements.length });
 }
 
 function stripRemainingExternalReferences(root: Element) {
+  debugLog('Удаляем оставшиеся внешние ссылки', {
+    root: root instanceof HTMLElement ? root.tagName : root.nodeName,
+  });
   const processElement = (element: Element) => {
     if (element instanceof HTMLImageElement) {
       const src = element.getAttribute('src');
@@ -575,20 +720,32 @@ function stripRemainingExternalReferences(root: Element) {
   root.querySelectorAll('*').forEach((element) => {
     processElement(element);
   });
+
+  debugLog('Очистка внешних ссылок завершена');
 }
 
 function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  debugLog('Преобразуем canvas в Blob', {
+    width: canvas.width,
+    height: canvas.height,
+  });
   return new Promise((resolve, reject) => {
     try {
       canvas.toBlob((blob) => {
         if (!blob) {
+          debugLog('Canvas вернул пустой Blob');
           reject(new Error('Не удалось сформировать изображение.'));
           return;
         }
+        debugLog('Canvas успешно преобразован в Blob', {
+          size: blob.size,
+          type: blob.type,
+        });
         resolve(blob);
       }, 'image/png');
     } catch (error) {
       if (error instanceof DOMException && error.name === 'SecurityError') {
+        debugLog('Получили SecurityError при toBlob', { message: error.message });
         reject(
           new DOMException(
             'Canvas оказался tainted при формировании PNG. Убедитесь, что все изображения и фоновые ресурсы доступны с текущего origin.',
@@ -597,15 +754,22 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
         );
         return;
       }
+      debugLog('Неизвестная ошибка при преобразовании canvas', {
+        error: error instanceof Error ? error.message : String(error),
+      });
       reject(error instanceof Error ? error : new Error(String(error)));
     }
   });
 }
 
 function measure(node: HTMLElement) {
+  debugLog('Измеряем элемент', {
+    tagName: node.tagName,
+  });
   const rect = node.getBoundingClientRect();
   const width = Math.max(Math.ceil(rect.width), node.offsetWidth, node.scrollWidth);
   const height = Math.max(Math.ceil(rect.height), node.offsetHeight, node.scrollHeight);
+  debugLog('Результаты измерения элемента', { width, height });
   return { width, height };
 }
 
@@ -613,6 +777,10 @@ export async function elementToCanvas(
   node: HTMLElement,
   options: ElementToImageOptions = {}
 ): Promise<HTMLCanvasElement> {
+  debugLog('Запускаем elementToCanvas', {
+    tagName: node.tagName,
+    options,
+  });
   const { filter, pixelRatio: requestedPixelRatio, backgroundColor } = options;
   const clone = cloneNodeDeep(node, filter);
   if (!clone) {
@@ -624,6 +792,7 @@ export async function elementToCanvas(
     throw new Error('Не удалось определить размер элемента.');
   }
 
+  debugLog('Готовим обёртку для foreignObject', { width, height });
   const wrapper = document.createElement('div');
   wrapper.style.margin = '0';
   wrapper.style.width = `${width}px`;
@@ -643,6 +812,7 @@ export async function elementToCanvas(
   sanitizeExternalResources(wrapper);
   stripRemainingExternalReferences(wrapper);
 
+  debugLog('Сериализуем DOM в SVG', { width, height });
   const serialized = new XMLSerializer().serializeToString(wrapper);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
     `<foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`;
@@ -650,8 +820,10 @@ export async function elementToCanvas(
   const url = URL.createObjectURL(svgBlob);
 
   try {
+    debugLog('Загружаем SVG как изображение', { url });
     const img = await loadImage(url);
     const pixelRatio = Math.max(1, Math.min(requestedPixelRatio ?? (window.devicePixelRatio || 1), 3));
+    debugLog('Создаём canvas и настраиваем контекст', { pixelRatio, width, height });
     const canvas = document.createElement('canvas');
     canvas.width = Math.round(width * pixelRatio);
     canvas.height = Math.round(height * pixelRatio);
@@ -666,9 +838,14 @@ export async function elementToCanvas(
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     ctx.scale(pixelRatio, pixelRatio);
     ctx.drawImage(img, 0, 0);
+    debugLog('Canvas заполнен изображением', {
+      canvasWidth: canvas.width,
+      canvasHeight: canvas.height,
+    });
 
     return canvas;
   } finally {
+    debugLog('Ревокаем blob URL', { url });
     URL.revokeObjectURL(url);
   }
 }
@@ -677,7 +854,9 @@ export async function elementToBlob(
   node: HTMLElement,
   options?: ElementToImageOptions
 ): Promise<Blob> {
+  debugLog('Старт elementToBlob', { tagName: node.tagName });
   const canvas = await elementToCanvas(node, options);
+  debugLog('Canvas готов, преобразуем в Blob');
   return canvasToBlob(canvas);
 }
 
@@ -685,6 +864,8 @@ export async function elementToPng(
   node: HTMLElement,
   options?: ElementToImageOptions
 ): Promise<string> {
+  debugLog('Старт elementToPng', { tagName: node.tagName });
   const canvas = await elementToCanvas(node, options);
+  debugLog('Canvas готов, преобразуем в dataURL');
   return canvas.toDataURL('image/png');
 }
