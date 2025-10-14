@@ -136,6 +136,11 @@ type PreparedClone = {
   height: number;
 };
 
+type RasterizationResult = {
+  canvas: HTMLCanvasElement;
+  svgText: string;
+};
+
 async function processCssUrls(
   value: string,
   counters: Counters,
@@ -1425,7 +1430,7 @@ async function rasterizeCloneWithForeignObject(
   prepared: PreparedClone,
   element: HTMLElement,
   options: CopyImageOptions,
-): Promise<HTMLCanvasElement> {
+): Promise<RasterizationResult> {
   const { node, width, height } = prepared;
 
   const svgNS = 'http://www.w3.org/2000/svg';
@@ -1466,11 +1471,16 @@ async function rasterizeCloneWithForeignObject(
       ctx.fillRect(0, 0, width, height);
     }
     ctx.drawImage(img, 0, 0, width, height);
-    return canvas;
+    return { canvas, svgText: serialized };
   } finally {
     URL.revokeObjectURL(url);
   }
 }
+
+type CanvasCreationResult = {
+  canvas: HTMLCanvasElement;
+  svgText: string;
+};
 
 async function createCanvasFromElement(
   element: HTMLElement,
@@ -1478,7 +1488,7 @@ async function createCanvasFromElement(
   counters: Counters,
   stripAllImages: boolean,
   debug: CaptureDebugger,
-): Promise<HTMLCanvasElement> {
+): Promise<CanvasCreationResult> {
   const prepareOptions: PrepareOptions = {
     skipDataAttribute: options.skipDataAttribute ?? 'data-copy-skip',
     stripAllImages,
@@ -1547,6 +1557,24 @@ async function writeBlobToClipboard(blob: Blob): Promise<void> {
   await nav.clipboard.write([item]);
 }
 
+async function writeSvgToClipboard(svgText: string): Promise<void> {
+  const nav = getWindow().navigator as Navigator & { ClipboardItem?: typeof ClipboardItem };
+  if (!nav.clipboard || typeof nav.clipboard.write !== 'function') {
+    throw new Error('Буфер обмена недоступен в этом браузере');
+  }
+
+  const ClipboardItemCtor = getWindow().ClipboardItem || (nav as any).ClipboardItem;
+  if (!ClipboardItemCtor) {
+    throw new Error('Браузер не поддерживает сохранение изображений в буфер обмена');
+  }
+
+  const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
+  const item = new ClipboardItemCtor({
+    'image/svg+xml': blob,
+  });
+  await nav.clipboard.write([item]);
+}
+
 function isSecurityError(error: unknown): boolean {
   return (
     error instanceof DOMException &&
@@ -1588,10 +1616,10 @@ export async function copyElementImageToClipboard(
   const firstCounters: Counters = { images: 0, backgrounds: 0 };
 
   try {
-    const canvas = await createCanvasFromElement(element, options, firstCounters, false, debug);
+    const firstResult = await createCanvasFromElement(element, options, firstCounters, false, debug);
     let blob: Blob;
     try {
-      blob = await canvasToBlob(canvas);
+      blob = await canvasToBlob(firstResult.canvas);
     } catch (blobError) {
       debug.log('error', 'Failed to serialize canvas in normal mode', {
         error: errorToMessage(blobError),
@@ -1631,7 +1659,7 @@ export async function copyElementImageToClipboard(
     elementHeight: element.clientHeight,
   });
 
-  const fallbackCanvas = await createCanvasFromElement(
+  const fallbackResult = await createCanvasFromElement(
     element,
     options,
     fallbackCounters,
@@ -1640,12 +1668,29 @@ export async function copyElementImageToClipboard(
   );
   let fallbackBlob: Blob;
   try {
-    fallbackBlob = await canvasToBlob(fallbackCanvas);
+    fallbackBlob = await canvasToBlob(fallbackResult.canvas);
   } catch (blobError) {
     debug.log('error', 'Failed to serialize canvas in strict mode', {
       error: errorToMessage(blobError),
     });
-    throw blobError;
+    if (!isSecurityError(blobError)) {
+      throw blobError;
+    }
+
+    debug.log('warn', 'Strict canvas still tainted, copying SVG markup instead', {
+      error: errorToMessage(blobError),
+    });
+
+    await writeSvgToClipboard(fallbackResult.svgText);
+    debug.log('info', 'Capture succeeded', {
+      mode: 'svg',
+      skippedImages: fallbackCounters.images,
+      skippedBackgrounds: fallbackCounters.backgrounds,
+    });
+    return {
+      skippedImages: fallbackCounters.images,
+      skippedBackgrounds: fallbackCounters.backgrounds,
+    };
   }
   await writeBlobToClipboard(fallbackBlob);
   debug.log('info', 'Capture succeeded', {
