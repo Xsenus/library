@@ -277,15 +277,91 @@ async function inlineStyleUrls(element: Element): Promise<void> {
   }
 }
 
+async function inlineStyleElement(styleElement: HTMLStyleElement): Promise<void> {
+  const cssText = styleElement.textContent;
+  if (!cssText || cssText.indexOf('url(') === -1) {
+    return;
+  }
+
+  let result = cssText;
+  const matches = Array.from(cssText.matchAll(URL_REGEX));
+
+  for (const match of matches) {
+    const raw = match[2];
+    if (!raw) continue;
+    const trimmed = raw.trim();
+    if (trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('#')) {
+      continue;
+    }
+
+    try {
+      const reference = new URL(window.location.href);
+      const absolute = new URL(trimmed, reference);
+      const normalized = normalizeLoopbackUrl(absolute, reference).toString();
+      const dataUrl = await resourceToDataUrl(normalized);
+      result = result.replace(match[0], `url("${dataUrl}")`);
+    } catch (error) {
+      console.warn('Не удалось встроить ресурс из <style>', trimmed, error);
+      result = result.replace(match[0], 'none');
+    }
+  }
+
+  if (result !== cssText) {
+    styleElement.textContent = result;
+  }
+}
+
+function sanitizeStyleElement(styleElement: HTMLStyleElement, strict = false) {
+  const cssText = styleElement.textContent;
+  if (!cssText || cssText.indexOf('url(') === -1) {
+    return;
+  }
+
+  const reference = new URL(window.location.href);
+  let result = cssText;
+
+  result = result.replace(URL_REGEX, (match, _quote, raw) => {
+    if (!raw) return match;
+    const trimmed = String(raw).trim();
+    if (!trimmed) return match;
+    if (
+      trimmed.startsWith('data:') ||
+      trimmed.startsWith('blob:') ||
+      trimmed.startsWith('#') ||
+      trimmed.toLowerCase().startsWith('about:blank')
+    ) {
+      return match;
+    }
+
+    try {
+      const absolute = new URL(trimmed, reference);
+      if (!strict && shouldTreatAsSameOrigin(absolute, reference)) {
+        return match;
+      }
+    } catch {
+      /* fall through */
+    }
+
+    return 'none';
+  });
+
+  if (result !== cssText) {
+    styleElement.textContent = result;
+  }
+}
+
 async function embedImages(root: Element): Promise<void> {
   const imageTasks: Promise<void>[] = [];
   const visitedImages = new Set<HTMLImageElement>();
   const svgImages: SVGImageElement[] = [];
+  const styleElements: HTMLStyleElement[] = [];
 
   if (root instanceof HTMLImageElement) {
     visitedImages.add(root);
   } else if (typeof SVGImageElement !== 'undefined' && root instanceof SVGImageElement) {
     svgImages.push(root);
+  } else if (root instanceof HTMLStyleElement) {
+    styleElements.push(root);
   }
 
   root.querySelectorAll('img').forEach((img) => {
@@ -302,12 +378,22 @@ async function embedImages(root: Element): Promise<void> {
     });
   }
 
+  root.querySelectorAll('style').forEach((style) => {
+    if (style instanceof HTMLStyleElement) {
+      styleElements.push(style);
+    }
+  });
+
   visitedImages.forEach((img) => {
     imageTasks.push(inlineImageSource(img));
   });
 
   svgImages.forEach((image) => {
     imageTasks.push(inlineSvgImageSource(image));
+  });
+
+  styleElements.forEach((styleEl) => {
+    imageTasks.push(inlineStyleElement(styleEl));
   });
 
   const cssElements: Element[] = [];
@@ -401,6 +487,8 @@ function sanitizeExternalResources(root: Element) {
         element.style.visibility = 'hidden';
       }
       element.removeAttribute('srcset');
+    } else if (element instanceof HTMLStyleElement) {
+      sanitizeStyleElement(element);
     } else if (typeof SVGImageElement !== 'undefined' && element instanceof SVGImageElement) {
       const href = element.getAttribute('href') ?? element.getAttribute('xlink:href');
       if (!isSafeResourceUrl(href)) {
@@ -515,6 +603,9 @@ function stripRemainingExternalReferences(root: Element) {
       if (srcAttr && HTTP_URL_REGEX.test(srcAttr)) {
         element.removeAttribute('src');
       }
+    } else if (element instanceof HTMLStyleElement) {
+      sanitizeStyleElement(element, true);
+      return;
     }
 
     if (isHTMLElement(element) || isSVGElement(element)) {

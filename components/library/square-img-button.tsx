@@ -45,6 +45,7 @@ export default function SquareImgButton({
   const frame = cn(
     sizeClassName,
     radiusClassName,
+    'relative',
     bordered ? 'border' : 'border-0',
     noHover ? '' : 'bg-background hover:bg-accent active:scale-[.98]',
     className,
