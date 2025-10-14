@@ -137,7 +137,7 @@ export function GoogleImagesStrip({
   if (!query) return null;
 
   return (
-    <div className="space-y-2">
+    <div className="space-y-2" data-screenshot-risky="true">
       <div className="text-sm text-muted-foreground">
         Картинки по запросу: <span className="font-medium">{query}</span>
       </div>

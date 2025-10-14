@@ -142,5 +142,9 @@ export function GptImagePair({
     );
   };
 
-  return <div className={cn('grid gap-3 sm:grid-cols-2', className)}>{items.map(({ key, url }) => renderTile(key, url))}</div>;
+  return (
+    <div data-screenshot-risky="true" className={cn('grid gap-3 sm:grid-cols-2', className)}>
+      {items.map(({ key, url }) => renderTile(key, url))}
+    </div>
+  );
 }

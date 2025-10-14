@@ -72,7 +72,7 @@ export function EmbedImagesSection({ equipmentId, imagesFromDb }: Props) {
               />
 
               {hasDbImages && (
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid gap-2 sm:grid-cols-2" data-screenshot-risky="true">
                   {normalizedImages.map((url, idx) => (
                     // eslint-disable-next-line @next/next/no-img-element
                     <img
