@@ -8,6 +8,8 @@ export interface ElementToImageOptions {
 
 const DEFAULT_BACKGROUND = '#ffffff';
 const URL_REGEX = /url\(("|')?(.*?)(\1)?\)/g;
+const TRANSPARENT_PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 
 function isHTMLElement(node: Element): node is HTMLElement {
   return node instanceof HTMLElement;
@@ -221,42 +223,56 @@ async function inlineImageSource(img: HTMLImageElement) {
   } catch (error) {
     console.warn('Не удалось встроить изображение', src, error);
     img.removeAttribute('srcset');
-    img.setAttribute(
-      'src',
-      'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
-    );
+    img.setAttribute('src', TRANSPARENT_PIXEL);
     img.style.visibility = 'hidden';
   }
 }
 
-async function inlineCssImages(element: Element, properties: string[]) {
+async function inlineStyleUrls(element: Element): Promise<void> {
   if (!(isHTMLElement(element) || isSVGElement(element))) return;
 
   const style = element.style;
+  const tasks: Promise<void>[] = [];
+  const properties: string[] = [];
+
+  for (let i = 0; i < style.length; i += 1) {
+    const property = style.item(i);
+    if (!property) continue;
+    const value = style.getPropertyValue(property);
+    if (!value || value.indexOf('url(') === -1) continue;
+    properties.push(property);
+  }
 
   for (const property of properties) {
+    const priority = style.getPropertyPriority(property);
     const value = style.getPropertyValue(property);
-    if (!value || value === 'none') continue;
+    if (!value) continue;
 
-    URL_REGEX.lastIndex = 0;
-    const matches = Array.from(value.matchAll(URL_REGEX));
-    if (!matches.length) continue;
+    tasks.push(
+      (async () => {
+        let result = value;
+        URL_REGEX.lastIndex = 0;
+        const matches = Array.from(value.matchAll(URL_REGEX));
+        for (const match of matches) {
+          const raw = match[2];
+          if (!raw || raw.startsWith('data:') || raw.startsWith('#')) continue;
+          try {
+            const absolute = new URL(raw, window.location.href).toString();
+            const dataUrl = await resourceToDataUrl(absolute);
+            result = result.replace(match[0], `url("${dataUrl}")`);
+          } catch (error) {
+            console.warn('Не удалось встроить ресурс стиля', property, raw, error);
+            result = result.replace(match[0], 'none');
+          }
+        }
 
-    let result = value;
-    for (const match of matches) {
-      const raw = match[2];
-      if (!raw || raw.startsWith('data:') || raw.startsWith('#')) continue;
-      try {
-        const absolute = new URL(raw, window.location.href).toString();
-        const dataUrl = await resourceToDataUrl(absolute);
-        result = result.replace(match[0], `url("${dataUrl}")`);
-      } catch (error) {
-        console.warn(`Не удалось встроить ресурс ${property}`, raw, error);
-        result = result.replace(match[0], 'none');
-      }
-    }
+        style.setProperty(property, result, priority);
+      })(),
+    );
+  }
 
-    style.setProperty(property, result);
+  if (tasks.length > 0) {
+    await Promise.all(tasks);
   }
 }
 
@@ -293,14 +309,6 @@ async function embedImages(root: Element): Promise<void> {
     imageTasks.push(inlineSvgImageSource(image));
   });
 
-  const cssImageProperties = [
-    'background-image',
-    'mask-image',
-    'border-image-source',
-    'list-style-image',
-    'cursor',
-  ];
-
   const cssElements: Element[] = [];
 
   if (isHTMLElement(root) || isSVGElement(root)) {
@@ -314,7 +322,7 @@ async function embedImages(root: Element): Promise<void> {
   });
 
   for (const element of cssElements) {
-    imageTasks.push(inlineCssImages(element, cssImageProperties));
+    imageTasks.push(inlineStyleUrls(element));
   }
 
   await Promise.all(imageTasks);
@@ -348,6 +356,99 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     img.onload = () => resolve(img);
     img.onerror = (err) => reject(err);
     img.src = url;
+  });
+}
+
+function isSafeResourceUrl(value: string | null): boolean {
+  if (!value) return true;
+  const trimmed = value.trim();
+  if (!trimmed) return true;
+  if (
+    trimmed.startsWith('data:') ||
+    trimmed.startsWith('blob:') ||
+    trimmed.startsWith('about:blank') ||
+    trimmed.startsWith('#')
+  ) {
+    return true;
+  }
+
+  try {
+    const reference = new URL(window.location.href);
+    const absolute = new URL(trimmed, reference);
+    return shouldTreatAsSameOrigin(absolute, reference);
+  } catch {
+    return false;
+  }
+}
+
+function sanitizeExternalResources(root: Element) {
+  const elements: Element[] = [];
+
+  if (root instanceof Element) {
+    elements.push(root);
+  }
+
+  root.querySelectorAll('*').forEach((node) => {
+    elements.push(node);
+  });
+
+  elements.forEach((element) => {
+    if (element instanceof HTMLImageElement) {
+      if (!isSafeResourceUrl(element.getAttribute('src'))) {
+        console.warn('Заменяю небезопасный src у <img>', element.getAttribute('src'));
+        element.setAttribute('src', TRANSPARENT_PIXEL);
+        element.style.visibility = 'hidden';
+      }
+      element.removeAttribute('srcset');
+    } else if (typeof SVGImageElement !== 'undefined' && element instanceof SVGImageElement) {
+      const href = element.getAttribute('href') ?? element.getAttribute('xlink:href');
+      if (!isSafeResourceUrl(href)) {
+        console.warn('Удаляю небезопасный href у <image>', href);
+        element.setAttribute('href', TRANSPARENT_PIXEL);
+        element.setAttribute('xlink:href', TRANSPARENT_PIXEL);
+      }
+    } else if (element instanceof HTMLVideoElement || element instanceof HTMLAudioElement) {
+      if (!isSafeResourceUrl(element.getAttribute('src'))) {
+        element.removeAttribute('src');
+      }
+      if (element instanceof HTMLVideoElement && !isSafeResourceUrl(element.getAttribute('poster'))) {
+        element.removeAttribute('poster');
+      }
+      element.querySelectorAll('source,track').forEach((child) => {
+        if (child instanceof HTMLSourceElement || child instanceof HTMLTrackElement) {
+          if (!isSafeResourceUrl(child.getAttribute('src'))) {
+            child.removeAttribute('src');
+          }
+          child.removeAttribute('srcset');
+        }
+      });
+    } else if (element instanceof HTMLSourceElement || element instanceof HTMLTrackElement) {
+      if (!isSafeResourceUrl(element.getAttribute('src'))) {
+        element.removeAttribute('src');
+      }
+      element.removeAttribute('srcset');
+    } else if (element instanceof HTMLLinkElement) {
+      if (!isSafeResourceUrl(element.getAttribute('href'))) {
+        element.remove();
+      }
+    } else if (
+      element instanceof HTMLObjectElement ||
+      element instanceof HTMLEmbedElement ||
+      element instanceof HTMLIFrameElement
+    ) {
+      if (!isSafeResourceUrl(element.getAttribute('data'))) {
+        element.removeAttribute('data');
+      }
+      if (!isSafeResourceUrl(element.getAttribute('src'))) {
+        element.removeAttribute('src');
+      }
+    } else if (element instanceof SVGUseElement) {
+      const href = element.getAttribute('href') ?? element.getAttribute('xlink:href');
+      if (href && !href.startsWith('#') && !isSafeResourceUrl(href)) {
+        element.removeAttribute('href');
+        element.removeAttribute('xlink:href');
+      }
+    }
   });
 }
 
@@ -401,6 +502,7 @@ export async function elementToCanvas(
   }
 
   await embedImages(wrapper);
+  sanitizeExternalResources(wrapper);
 
   const serialized = new XMLSerializer().serializeToString(wrapper);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
