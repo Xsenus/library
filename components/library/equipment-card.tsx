@@ -312,13 +312,52 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
         };
       };
 
+      const temporarilyToggleIgnore = (enable: boolean) => {
+        const riskyNodes = Array.from(
+          node.querySelectorAll<HTMLElement>('[data-screenshot-risky="true"]'),
+        );
+        copyLog('Переключаем атрибут screenshotIgnore для рискованных секций', {
+          enable,
+          count: riskyNodes.length,
+        });
+        riskyNodes.forEach((el) => {
+          const key = 'screenshotIgnoreOriginal';
+          if (enable) {
+            if (el.dataset[key] === undefined) {
+              el.dataset[key] = el.dataset.screenshotIgnore ?? '';
+            }
+            el.dataset.screenshotIgnore = 'true';
+          } else {
+            const previous = el.dataset[key];
+            if (previous !== undefined) {
+              if (previous) {
+                el.dataset.screenshotIgnore = previous;
+              } else {
+                delete el.dataset.screenshotIgnore;
+              }
+              delete el.dataset[key];
+            }
+          }
+        });
+      };
+
       const capture = async (ignoreRisky: boolean) => {
         copyLog('Начинаем захват DOM', { ignoreRisky, pixelRatio });
-        return await elementToBlob(node, {
-          pixelRatio,
-          backgroundColor: '#ffffff',
-          filter: buildFilter(ignoreRisky),
-        });
+        if (ignoreRisky) {
+          temporarilyToggleIgnore(true);
+        }
+        try {
+          return await elementToBlob(node, {
+            pixelRatio,
+            backgroundColor: '#ffffff',
+            filter: buildFilter(ignoreRisky),
+            safeMode: ignoreRisky,
+          });
+        } finally {
+          if (ignoreRisky) {
+            temporarilyToggleIgnore(false);
+          }
+        }
       };
 
       let blob: Blob;
@@ -509,16 +548,17 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
         const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
         if (r.ok) return true;
         if (r.status === 404) return false;
-      } catch {
-        /* ignore */
+        console.debug('[equipment-card:gpt-probe] HEAD ответ без OK/404', {
+          url,
+          status: r.status,
+        });
+      } catch (error) {
+        console.debug('[equipment-card:gpt-probe] HEAD запрос завершился ошибкой', {
+          url,
+          error,
+        });
       }
-      return new Promise<boolean>((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
-        img.onerror = () => resolve(false);
-        const sep = url.includes('?') ? '&' : '?';
-        img.src = `${url}${sep}cb=${Date.now()}`;
-      });
+      return false;
     }
 
     (async () => {

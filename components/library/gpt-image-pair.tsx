@@ -53,16 +53,17 @@ export function GptImagePair({
         const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
         if (r.ok) return true;
         if (r.status === 404) return false;
-      } catch {
-        /* ignore */
+        console.debug('[gpt-image-pair:probe] HEAD ответ без OK/404', {
+          url,
+          status: r.status,
+        });
+      } catch (error) {
+        console.debug('[gpt-image-pair:probe] HEAD запрос завершился ошибкой', {
+          url,
+          error,
+        });
       }
-      return new Promise<boolean>((resolve) => {
-        const img = new Image();
-        img.onload = () => resolve(img.naturalWidth >= 32 && img.naturalHeight >= 32);
-        img.onerror = () => resolve(false);
-        const sep = url.includes('?') ? '&' : '?';
-        img.src = `${url}${sep}cb=${Date.now()}`;
-      });
+      return false;
     }
 
     (async () => {

@@ -4,6 +4,7 @@ export interface ElementToImageOptions {
   pixelRatio?: number;
   backgroundColor?: string;
   filter?: (node: HTMLElement) => boolean;
+  safeMode?: boolean;
 }
 
 const DEFAULT_BACKGROUND = '#ffffff';
@@ -11,6 +12,27 @@ const URL_REGEX = /url\(("|')?(.*?)(\1)?\)/g;
 const TRANSPARENT_PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const HTTP_URL_REGEX = /^(https?:)?\/\//i;
+
+const SAFE_MODE_PSEUDO_STYLE = `*::before, *::after {\n  content: none !important;\n  background-image: none !important;\n  mask-image: none !important;\n  border-image-source: none !important;\n  cursor: auto !important;\n  -webkit-mask-image: none !important;\n}`;
+
+const EXTRA_URL_PROPERTIES = [
+  'background',
+  'background-image',
+  'border-image',
+  'border-image-source',
+  'mask',
+  'mask-image',
+  'mask-border-source',
+  '-webkit-mask-image',
+  '-webkit-mask',
+  'content',
+  'cursor',
+  'filter',
+  'clip-path',
+  'shape-outside',
+  'list-style',
+  'list-style-image',
+];
 
 const LOG_PREFIX = '[element-to-image]';
 
@@ -118,6 +140,36 @@ function shouldUseAnonymousCors(src: string | null | undefined): boolean {
     debugLog('Не удалось распарсить src, считаем его безопасным', { src });
     return false;
   }
+}
+
+function getSafeReplacementValue(property: string): string {
+  const lower = property.toLowerCase();
+  if (lower === 'cursor') return 'auto';
+  if (lower === 'content') return 'none';
+  if (lower === 'list-style' || lower === 'list-style-image') return 'none';
+  if (lower === 'filter') return 'none';
+  if (lower === 'clip-path') return 'none';
+  if (lower === 'shape-outside') return 'none';
+  return 'none';
+}
+
+function collectUrlProperties(style: CSSStyleDeclaration): string[] {
+  const properties = new Set<string>();
+  for (let i = 0; i < style.length; i += 1) {
+    const property = style.item(i);
+    if (!property) continue;
+    const value = style.getPropertyValue(property);
+    if (!value || value.indexOf('url(') === -1) continue;
+    properties.add(property);
+  }
+
+  for (const candidate of EXTRA_URL_PROPERTIES) {
+    const value = style.getPropertyValue(candidate);
+    if (!value || value.indexOf('url(') === -1) continue;
+    properties.add(candidate);
+  }
+
+  return Array.from(properties);
 }
 
 function cloneNodeDeep(node: Element, filter?: (node: HTMLElement) => boolean): Element | null {
@@ -336,15 +388,7 @@ async function inlineStyleUrls(element: Element): Promise<void> {
 
   const style = element.style;
   const tasks: Promise<void>[] = [];
-  const properties: string[] = [];
-
-  for (let i = 0; i < style.length; i += 1) {
-    const property = style.item(i);
-    if (!property) continue;
-    const value = style.getPropertyValue(property);
-    if (!value || value.indexOf('url(') === -1) continue;
-    properties.push(property);
-  }
+  const properties = collectUrlProperties(style);
 
   for (const property of properties) {
     const priority = style.getPropertyPriority(property);
@@ -353,14 +397,19 @@ async function inlineStyleUrls(element: Element): Promise<void> {
 
     tasks.push(
       (async () => {
-        let result = value;
         URL_REGEX.lastIndex = 0;
         const matches = Array.from(value.matchAll(URL_REGEX));
+        if (matches.length === 0) return;
+
         debugLog('Обрабатываем CSS-свойство', {
           property,
           value,
           matches: matches.map((m) => m[2]),
         });
+
+        let mutated = value;
+        let failed = false;
+
         for (const match of matches) {
           const raw = match[2];
           if (!raw || raw.startsWith('data:') || raw.startsWith('#')) continue;
@@ -368,15 +417,28 @@ async function inlineStyleUrls(element: Element): Promise<void> {
             const absolute = new URL(raw, window.location.href).toString();
             debugLog('Инлайним ресурс из CSS', { property, raw, absolute });
             const dataUrl = await resourceToDataUrl(absolute);
-            result = result.replace(match[0], `url("${dataUrl}")`);
+            mutated = mutated.replace(match[0], `url("${dataUrl}")`);
           } catch (error) {
             console.warn('Не удалось встроить ресурс стиля', property, raw, error);
-            result = result.replace(match[0], 'none');
+            failed = true;
+            break;
           }
         }
 
-        style.setProperty(property, result, priority);
-        debugLog('CSS-свойство обновлено после инлайна', { property, result });
+        if (failed) {
+          const safeValue = getSafeReplacementValue(property);
+          style.setProperty(property, safeValue, priority);
+          debugLog('CSS-свойство заменено безопасным значением', {
+            property,
+            safeValue,
+          });
+          return;
+        }
+
+        if (mutated !== value) {
+          style.setProperty(property, mutated, priority);
+          debugLog('CSS-свойство обновлено после инлайна', { property, mutated });
+        }
       })(),
     );
   }
@@ -595,6 +657,37 @@ function sanitizeExternalResources(root: Element) {
   debugLog('Санитарная обработка завершена', { processed: elements.length });
 }
 
+function sanitizeCanvasElements(root: Element) {
+  const canvases: HTMLCanvasElement[] = [];
+  if (root instanceof HTMLCanvasElement) {
+    canvases.push(root);
+  }
+
+  root.querySelectorAll('canvas').forEach((canvas) => {
+    if (canvas instanceof HTMLCanvasElement) {
+      canvases.push(canvas);
+    }
+  });
+
+  canvases.forEach((canvas) => {
+    try {
+      void canvas.toDataURL('image/png');
+    } catch (error) {
+      console.warn('Обнаружен tainted canvas, заменяем плейсхолдером', error);
+      const placeholder = document.createElement('img');
+      placeholder.setAttribute('src', TRANSPARENT_PIXEL);
+      placeholder.setAttribute('aria-hidden', 'true');
+      placeholder.setAttribute('data-screenshot-canvas-placeholder', 'true');
+      placeholder.width = canvas.width;
+      placeholder.height = canvas.height;
+      placeholder.className = canvas.className;
+      placeholder.style.cssText = canvas.getAttribute('style') ?? '';
+      placeholder.style.visibility = 'hidden';
+      canvas.replaceWith(placeholder);
+    }
+  });
+}
+
 function stripRemainingExternalReferences(root: Element) {
   debugLog('Удаляем оставшиеся внешние ссылки', {
     root: root instanceof HTMLElement ? root.tagName : root.nodeName,
@@ -664,23 +757,18 @@ function stripRemainingExternalReferences(root: Element) {
 
     if (isHTMLElement(element) || isSVGElement(element)) {
       const style = element.style;
-      const properties: string[] = [];
-      for (let i = 0; i < style.length; i += 1) {
-        const property = style.item(i);
-        if (!property) continue;
-        const value = style.getPropertyValue(property);
-        if (!value || value.indexOf('url(') === -1) continue;
-        properties.push(property);
-      }
-
+      const properties = collectUrlProperties(style);
       for (const property of properties) {
         const priority = style.getPropertyPriority(property);
         const value = style.getPropertyValue(property);
         if (!value) continue;
 
-        let mutated = value;
         URL_REGEX.lastIndex = 0;
-        const matches = Array.from(mutated.matchAll(URL_REGEX));
+        const matches = Array.from(value.matchAll(URL_REGEX));
+        if (matches.length === 0) continue;
+
+        let shouldNeutralize = false;
+
         for (const match of matches) {
           const raw = match[2];
           if (!raw) continue;
@@ -695,22 +783,26 @@ function stripRemainingExternalReferences(root: Element) {
           }
 
           if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('//')) {
-            mutated = mutated.replace(match[0], 'none');
-          } else {
-            try {
-              const reference = new URL(window.location.href);
-              const absolute = new URL(trimmed, reference);
-              if (!shouldTreatAsSameOrigin(absolute, reference)) {
-                mutated = mutated.replace(match[0], 'none');
-              }
-            } catch {
-              mutated = mutated.replace(match[0], 'none');
+            shouldNeutralize = true;
+            break;
+          }
+
+          try {
+            const reference = new URL(window.location.href);
+            const absolute = new URL(trimmed, reference);
+            if (!shouldTreatAsSameOrigin(absolute, reference)) {
+              shouldNeutralize = true;
+              break;
             }
+          } catch {
+            shouldNeutralize = true;
+            break;
           }
         }
 
-        if (mutated !== value) {
-          style.setProperty(property, mutated, priority);
+        if (shouldNeutralize) {
+          const safeValue = getSafeReplacementValue(property);
+          style.setProperty(property, safeValue, priority);
         }
       }
     }
@@ -722,6 +814,19 @@ function stripRemainingExternalReferences(root: Element) {
   });
 
   debugLog('Очистка внешних ссылок завершена');
+}
+
+function enableSafeMode(wrapper: Element) {
+  debugLog('Активируем безопасный режим сериализации DOM');
+  const style = document.createElement('style');
+  style.setAttribute('data-screenshot-safe-mode', 'pseudo-neutralize');
+  style.textContent = SAFE_MODE_PSEUDO_STYLE;
+  if (wrapper.firstChild) {
+    wrapper.insertBefore(style, wrapper.firstChild);
+  } else {
+    wrapper.appendChild(style);
+  }
+  sanitizeCanvasElements(wrapper);
 }
 
 function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
@@ -781,7 +886,7 @@ export async function elementToCanvas(
     tagName: node.tagName,
     options,
   });
-  const { filter, pixelRatio: requestedPixelRatio, backgroundColor } = options;
+  const { filter, pixelRatio: requestedPixelRatio, backgroundColor, safeMode } = options;
   const clone = cloneNodeDeep(node, filter);
   if (!clone) {
     throw new Error('Элемент не содержит содержимого для копирования.');
@@ -806,6 +911,10 @@ export async function elementToCanvas(
   } else if (isSVGElement(clone)) {
     clone.setAttribute('width', `${width}px`);
     clone.setAttribute('height', `${height}px`);
+  }
+
+  if (safeMode) {
+    enableSafeMode(wrapper);
   }
 
   await embedImages(wrapper);
