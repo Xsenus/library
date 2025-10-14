@@ -253,6 +253,24 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     if (isCopyingCard) return;
     if (!cardRef.current) return;
 
+    const STYLE_URL_PROPS: string[] = [
+      'background-image',
+      'background',
+      'mask-image',
+      'mask',
+      'mask-border-source',
+      '-webkit-mask-image',
+      '-webkit-mask',
+      'border-image',
+      'border-image-source',
+      'cursor',
+      'filter',
+      'clip-path',
+      'shape-outside',
+      'list-style',
+      'list-style-image',
+    ];
+
     const copyLog = (message: string, payload?: Record<string, unknown>) => {
       if (payload) {
         console.log('[equipment-card:copy]', message, payload);
@@ -293,6 +311,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       });
 
       const pixelRatio = Math.min(2, window.devicePixelRatio || 1);
+      const forcedIgnoreNodes = new Set<HTMLElement>();
 
       const buildFilter = (ignoreRisky: boolean) => {
         return (element: HTMLElement) => {
@@ -313,21 +332,61 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       };
 
       const temporarilyToggleIgnore = (enable: boolean) => {
-        const riskyNodes = Array.from(
-          node.querySelectorAll<HTMLElement>('[data-screenshot-risky="true"]'),
-        );
-        copyLog('Переключаем атрибут screenshotIgnore для рискованных секций', {
-          enable,
-          count: riskyNodes.length,
-        });
-        riskyNodes.forEach((el) => {
-          const key = 'screenshotIgnoreOriginal';
-          if (enable) {
-            if (el.dataset[key] === undefined) {
-              el.dataset[key] = el.dataset.screenshotIgnore ?? '';
+        const key = 'screenshotIgnoreOriginal';
+        const applyIgnore = (el: HTMLElement, reason: string) => {
+          if (forcedIgnoreNodes.has(el)) return;
+          forcedIgnoreNodes.add(el);
+          if (el.dataset[key] === undefined) {
+            el.dataset[key] = el.dataset.screenshotIgnore ?? '';
+          }
+          el.dataset.screenshotIgnore = 'true';
+          copyLog('Флагируем элемент к исключению', {
+            tagName: el.tagName,
+            reason,
+          });
+        };
+
+        if (enable) {
+          forcedIgnoreNodes.clear();
+
+          const riskyNodes = Array.from(
+            node.querySelectorAll<HTMLElement>('[data-screenshot-risky="true"]'),
+          );
+          copyLog('Переключаем атрибут screenshotIgnore для рискованных секций', {
+            enable,
+            count: riskyNodes.length,
+          });
+          riskyNodes.forEach((el) => applyIgnore(el, 'data-screenshot-risky'));
+
+          const structuralSelectors = 'img, picture, video, audio, iframe, canvas, object, embed';
+          const structuralNodes = Array.from(node.querySelectorAll<HTMLElement>(structuralSelectors));
+          copyLog('Автоматически исключаем медиа-узлы в fallback', {
+            count: structuralNodes.length,
+          });
+          structuralNodes.forEach((el) => applyIgnore(el, 'media-element'));
+
+          const styledNodes = Array.from(node.querySelectorAll<HTMLElement>('*'));
+          let styledMarked = 0;
+          styledNodes.forEach((el) => {
+            if (el === node) return;
+            const style = window.getComputedStyle(el);
+            const hasUrl = STYLE_URL_PROPS.some((prop) => {
+              const value = style.getPropertyValue(prop);
+              return value && value.includes('url(');
+            });
+            if (hasUrl) {
+              styledMarked += 1;
+              applyIgnore(el, 'computed-style-url');
             }
-            el.dataset.screenshotIgnore = 'true';
-          } else {
+          });
+          copyLog('Элементы с CSS url(), исключённые в fallback', {
+            count: styledMarked,
+          });
+        } else {
+          copyLog('Восстанавливаем исходные флаги screenshotIgnore', {
+            count: forcedIgnoreNodes.size,
+          });
+          forcedIgnoreNodes.forEach((el) => {
             const previous = el.dataset[key];
             if (previous !== undefined) {
               if (previous) {
@@ -337,8 +396,9 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
               }
               delete el.dataset[key];
             }
-          }
-        });
+          });
+          forcedIgnoreNodes.clear();
+        }
       };
 
       const capture = async (ignoreRisky: boolean) => {
@@ -544,27 +604,41 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     const urls = [`${GPT_IMAGES_BASE}${id}_old.jpg`, `${GPT_IMAGES_BASE}${id}_cryo.jpg`];
 
     async function probe(url: string): Promise<boolean> {
-      try {
-        const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-        if (r.ok) return true;
-        if (r.status === 404) return false;
-        console.debug('[equipment-card:gpt-probe] HEAD ответ без OK/404', {
-          url,
-          status: r.status,
-        });
-      } catch (error) {
-        console.debug('[equipment-card:gpt-probe] HEAD запрос завершился ошибкой', {
-          url,
-          error,
-        });
-      }
-      return false;
+      return await new Promise<boolean>((resolve) => {
+        const img = new Image();
+        const timeout = window.setTimeout(() => {
+          cleanup();
+          resolve(false);
+        }, 12_000);
+
+        const cleanup = () => {
+          window.clearTimeout(timeout);
+          img.onload = null;
+          img.onerror = null;
+        };
+
+        img.onload = () => {
+          cleanup();
+          resolve(true);
+        };
+
+        img.onerror = () => {
+          cleanup();
+          resolve(false);
+        };
+
+        img.src = url;
+      });
     }
 
     (async () => {
       const [a, b] = await Promise.all(urls.map((u) => probe(u)));
       if (cancelled) return;
-      setGptAvailable(!!(a || b));
+      const available = !!(a || b);
+      if (!available) {
+        console.info('[equipment-card:gpt-probe] GPT изображения не найдены', { id });
+      }
+      setGptAvailable(available);
     })();
 
     return () => {

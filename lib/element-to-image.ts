@@ -14,6 +14,15 @@ const TRANSPARENT_PIXEL =
 const HTTP_URL_REGEX = /^(https?:)?\/\//i;
 
 const SAFE_MODE_PSEUDO_STYLE = `*::before, *::after {\n  content: none !important;\n  background-image: none !important;\n  mask-image: none !important;\n  border-image-source: none !important;\n  cursor: auto !important;\n  -webkit-mask-image: none !important;\n}`;
+const TARGETED_PSEUDO_NEUTRALIZE_STYLE =
+  '[data-screenshot-pseudo-neutralize="true"]::before, [data-screenshot-pseudo-neutralize="true"]::after {\\n' +
+  '  content: none !important;\\n' +
+  '  background-image: none !important;\\n' +
+  '  mask-image: none !important;\\n' +
+  '  border-image-source: none !important;\\n' +
+  '  cursor: auto !important;\\n' +
+  '  -webkit-mask-image: none !important;\\n' +
+  '}';
 
 const EXTRA_URL_PROPERTIES = [
   'background',
@@ -33,6 +42,33 @@ const EXTRA_URL_PROPERTIES = [
   'list-style',
   'list-style-image',
 ];
+
+const COMPUTED_URL_PROPERTIES = [
+  'background',
+  'background-image',
+  'mask',
+  'mask-image',
+  'mask-border-source',
+  '-webkit-mask-image',
+  '-webkit-mask',
+  'border-image',
+  'border-image-source',
+  'cursor',
+  'content',
+  'filter',
+  'clip-path',
+  'shape-outside',
+  'list-style',
+  'list-style-image',
+];
+
+type ExternalReferenceEntry = {
+  type: 'attribute' | 'style' | 'computed' | 'pseudo';
+  tagName: string;
+  attribute?: string;
+  property?: string;
+  value: string | null;
+};
 
 const LOG_PREFIX = '[element-to-image]';
 
@@ -170,6 +206,44 @@ function collectUrlProperties(style: CSSStyleDeclaration): string[] {
   }
 
   return Array.from(properties);
+}
+
+function shouldNeutralizeCssValue(value: string): boolean {
+  if (!value) return false;
+
+  URL_REGEX.lastIndex = 0;
+  const matches = Array.from(value.matchAll(URL_REGEX));
+  if (matches.length === 0) return false;
+
+  for (const match of matches) {
+    const raw = match[2];
+    if (!raw) continue;
+    const trimmed = raw.trim();
+    if (
+      trimmed.startsWith('data:') ||
+      trimmed.startsWith('blob:') ||
+      trimmed.startsWith('#') ||
+      trimmed.toLowerCase().startsWith('about:blank')
+    ) {
+      continue;
+    }
+
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('//')) {
+      return true;
+    }
+
+    try {
+      const reference = new URL(window.location.href);
+      const absolute = new URL(trimmed, reference);
+      if (!shouldTreatAsSameOrigin(absolute, reference)) {
+        return true;
+      }
+    } catch {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 function cloneNodeDeep(node: Element, filter?: (node: HTMLElement) => boolean): Element | null {
@@ -581,11 +655,12 @@ function isSafeResourceUrl(value: string | null): boolean {
   }
 }
 
-function sanitizeExternalResources(root: Element) {
+function sanitizeExternalResources(root: Element): ExternalReferenceEntry[] {
   debugLog('Начинаем санитарную обработку DOM', {
     root: root instanceof HTMLElement ? root.tagName : root.nodeName,
   });
   const elements: Element[] = [];
+  const entries: ExternalReferenceEntry[] = [];
 
   if (root instanceof Element) {
     elements.push(root);
@@ -597,10 +672,17 @@ function sanitizeExternalResources(root: Element) {
 
   elements.forEach((element) => {
     if (element instanceof HTMLImageElement) {
-      if (!isSafeResourceUrl(element.getAttribute('src'))) {
-        console.warn('Заменяю небезопасный src у <img>', element.getAttribute('src'));
+      const originalSrc = element.getAttribute('src');
+      if (!isSafeResourceUrl(originalSrc)) {
+        console.warn('Заменяю небезопасный src у <img>', originalSrc);
         element.setAttribute('src', TRANSPARENT_PIXEL);
         element.style.visibility = 'hidden';
+        entries.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'src',
+          value: originalSrc,
+        });
       }
       element.removeAttribute('srcset');
     } else if (typeof SVGImageElement !== 'undefined' && element instanceof SVGImageElement) {
@@ -609,52 +691,119 @@ function sanitizeExternalResources(root: Element) {
         console.warn('Удаляю небезопасный href у <image>', href);
         element.setAttribute('href', TRANSPARENT_PIXEL);
         element.setAttribute('xlink:href', TRANSPARENT_PIXEL);
+        entries.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'href',
+          value: href,
+        });
       }
     } else if (element instanceof HTMLVideoElement || element instanceof HTMLAudioElement) {
-      if (!isSafeResourceUrl(element.getAttribute('src'))) {
+      const mediaSrc = element.getAttribute('src');
+      if (!isSafeResourceUrl(mediaSrc)) {
         element.removeAttribute('src');
+        entries.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'src',
+          value: mediaSrc,
+        });
       }
-      if (element instanceof HTMLVideoElement && !isSafeResourceUrl(element.getAttribute('poster'))) {
-        element.removeAttribute('poster');
+      if (element instanceof HTMLVideoElement) {
+        const poster = element.getAttribute('poster');
+        if (!isSafeResourceUrl(poster)) {
+          element.removeAttribute('poster');
+          entries.push({
+            type: 'attribute',
+            tagName: element.tagName,
+            attribute: 'poster',
+            value: poster,
+          });
+        }
       }
       element.querySelectorAll('source,track').forEach((child) => {
         if (child instanceof HTMLSourceElement || child instanceof HTMLTrackElement) {
-          if (!isSafeResourceUrl(child.getAttribute('src'))) {
+          const childSrc = child.getAttribute('src');
+          if (!isSafeResourceUrl(childSrc)) {
             child.removeAttribute('src');
+            entries.push({
+              type: 'attribute',
+              tagName: child.tagName,
+              attribute: 'src',
+              value: childSrc,
+            });
           }
           child.removeAttribute('srcset');
         }
       });
     } else if (element instanceof HTMLSourceElement || element instanceof HTMLTrackElement) {
-      if (!isSafeResourceUrl(element.getAttribute('src'))) {
+      const ownSrc = element.getAttribute('src');
+      if (!isSafeResourceUrl(ownSrc)) {
         element.removeAttribute('src');
+        entries.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'src',
+          value: ownSrc,
+        });
       }
       element.removeAttribute('srcset');
     } else if (element instanceof HTMLLinkElement) {
-      if (!isSafeResourceUrl(element.getAttribute('href'))) {
+      const href = element.getAttribute('href');
+      if (!isSafeResourceUrl(href)) {
         element.remove();
+        entries.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'href',
+          value: href,
+        });
       }
     } else if (
       element instanceof HTMLObjectElement ||
       element instanceof HTMLEmbedElement ||
       element instanceof HTMLIFrameElement
     ) {
-      if (!isSafeResourceUrl(element.getAttribute('data'))) {
+      const dataAttr = element.getAttribute('data');
+      if (!isSafeResourceUrl(dataAttr)) {
         element.removeAttribute('data');
+        entries.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'data',
+          value: dataAttr,
+        });
       }
-      if (!isSafeResourceUrl(element.getAttribute('src'))) {
+      const srcAttr = element.getAttribute('src');
+      if (!isSafeResourceUrl(srcAttr)) {
         element.removeAttribute('src');
+        entries.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'src',
+          value: srcAttr,
+        });
       }
     } else if (element instanceof SVGUseElement) {
       const href = element.getAttribute('href') ?? element.getAttribute('xlink:href');
       if (href && !href.startsWith('#') && !isSafeResourceUrl(href)) {
         element.removeAttribute('href');
         element.removeAttribute('xlink:href');
+        entries.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'href',
+          value: href,
+        });
       }
     }
   });
 
-  debugLog('Санитарная обработка завершена', { processed: elements.length });
+  debugLog('Санитарная обработка завершена', {
+    processed: elements.length,
+    sanitizedAttributes: entries.length,
+  });
+  return entries;
 }
 
 function sanitizeCanvasElements(root: Element) {
@@ -688,17 +837,24 @@ function sanitizeCanvasElements(root: Element) {
   });
 }
 
-function stripRemainingExternalReferences(root: Element) {
+function stripRemainingExternalReferences(root: Element): ExternalReferenceEntry[] {
   debugLog('Удаляем оставшиеся внешние ссылки', {
     root: root instanceof HTMLElement ? root.tagName : root.nodeName,
   });
   const processElement = (element: Element) => {
+    const records: ExternalReferenceEntry[] = [];
     if (element instanceof HTMLImageElement) {
       const src = element.getAttribute('src');
       if (src && HTTP_URL_REGEX.test(src)) {
         console.warn('Заменяю оставшийся http(s)-src у <img>', src);
         element.setAttribute('src', TRANSPARENT_PIXEL);
         element.style.visibility = 'hidden';
+        records.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'src',
+          value: src,
+        });
       }
       element.removeAttribute('srcset');
     } else if (typeof SVGImageElement !== 'undefined' && element instanceof SVGImageElement) {
@@ -707,16 +863,34 @@ function stripRemainingExternalReferences(root: Element) {
         console.warn('Заменяю оставшийся http(s)-href у <image>', href);
         element.setAttribute('href', TRANSPARENT_PIXEL);
         element.setAttribute('xlink:href', TRANSPARENT_PIXEL);
+        records.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'href',
+          value: href,
+        });
       }
     } else if (element instanceof HTMLVideoElement || element instanceof HTMLAudioElement) {
       const mediaSrc = element.getAttribute('src');
       if (mediaSrc && HTTP_URL_REGEX.test(mediaSrc)) {
         element.removeAttribute('src');
+        records.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'src',
+          value: mediaSrc,
+        });
       }
       if (element instanceof HTMLVideoElement) {
         const poster = element.getAttribute('poster');
         if (poster && HTTP_URL_REGEX.test(poster)) {
           element.removeAttribute('poster');
+          records.push({
+            type: 'attribute',
+            tagName: element.tagName,
+            attribute: 'poster',
+            value: poster,
+          });
         }
       }
       element.querySelectorAll('source,track').forEach((child) => {
@@ -724,6 +898,12 @@ function stripRemainingExternalReferences(root: Element) {
           const srcAttr = child.getAttribute('src');
           if (srcAttr && HTTP_URL_REGEX.test(srcAttr)) {
             child.removeAttribute('src');
+            records.push({
+              type: 'attribute',
+              tagName: child.tagName,
+              attribute: 'src',
+              value: srcAttr,
+            });
           }
           child.removeAttribute('srcset');
         }
@@ -732,11 +912,23 @@ function stripRemainingExternalReferences(root: Element) {
       const srcAttr = element.getAttribute('src');
       if (srcAttr && HTTP_URL_REGEX.test(srcAttr)) {
         element.removeAttribute('src');
+        records.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'src',
+          value: srcAttr,
+        });
       }
       element.removeAttribute('srcset');
     } else if (element instanceof HTMLLinkElement) {
       const href = element.getAttribute('href');
       if (href && HTTP_URL_REGEX.test(href)) {
+        records.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'href',
+          value: href,
+        });
         element.remove();
         return;
       }
@@ -748,10 +940,22 @@ function stripRemainingExternalReferences(root: Element) {
       const dataAttr = element.getAttribute('data');
       if (dataAttr && HTTP_URL_REGEX.test(dataAttr)) {
         element.removeAttribute('data');
+        records.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'data',
+          value: dataAttr,
+        });
       }
       const srcAttr = element.getAttribute('src');
       if (srcAttr && HTTP_URL_REGEX.test(srcAttr)) {
         element.removeAttribute('src');
+        records.push({
+          type: 'attribute',
+          tagName: element.tagName,
+          attribute: 'src',
+          value: srcAttr,
+        });
       }
     }
 
@@ -763,57 +967,120 @@ function stripRemainingExternalReferences(root: Element) {
         const value = style.getPropertyValue(property);
         if (!value) continue;
 
-        URL_REGEX.lastIndex = 0;
-        const matches = Array.from(value.matchAll(URL_REGEX));
-        if (matches.length === 0) continue;
-
-        let shouldNeutralize = false;
-
-        for (const match of matches) {
-          const raw = match[2];
-          if (!raw) continue;
-          const trimmed = raw.trim();
-          if (
-            trimmed.startsWith('data:') ||
-            trimmed.startsWith('blob:') ||
-            trimmed.startsWith('#') ||
-            trimmed.toLowerCase().startsWith('about:blank')
-          ) {
-            continue;
-          }
-
-          if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('//')) {
-            shouldNeutralize = true;
-            break;
-          }
-
-          try {
-            const reference = new URL(window.location.href);
-            const absolute = new URL(trimmed, reference);
-            if (!shouldTreatAsSameOrigin(absolute, reference)) {
-              shouldNeutralize = true;
-              break;
-            }
-          } catch {
-            shouldNeutralize = true;
-            break;
-          }
-        }
-
-        if (shouldNeutralize) {
+        if (shouldNeutralizeCssValue(value)) {
           const safeValue = getSafeReplacementValue(property);
           style.setProperty(property, safeValue, priority);
+          records.push({
+            type: 'style',
+            tagName: element instanceof HTMLElement ? element.tagName : element.nodeName,
+            property,
+            value,
+          });
         }
       }
     }
+
+    return records;
   };
 
-  processElement(root);
+  const entries: ExternalReferenceEntry[] = [];
+  entries.push(...processElement(root));
   root.querySelectorAll('*').forEach((element) => {
-    processElement(element);
+    entries.push(...processElement(element));
   });
 
-  debugLog('Очистка внешних ссылок завершена');
+  debugLog('Очистка внешних ссылок завершена', {
+    neutralized: entries.length,
+  });
+  return entries;
+}
+
+function neutralizeComputedStyleUrls(root: Element): ExternalReferenceEntry[] {
+  debugLog('Проверяем computed-стили на наличие внешних URL');
+  const entries: ExternalReferenceEntry[] = [];
+  const elements: Element[] = [];
+
+  if (root instanceof Element) {
+    elements.push(root);
+  }
+
+  root.querySelectorAll('*').forEach((node) => {
+    if (node instanceof Element) {
+      elements.push(node);
+    }
+  });
+
+  let pseudoStyle: HTMLStyleElement | null = null;
+  const ensurePseudoStyle = () => {
+    if (pseudoStyle) return pseudoStyle;
+    const style = document.createElement('style');
+    style.setAttribute('data-screenshot-pseudo-override', 'true');
+    style.textContent = TARGETED_PSEUDO_NEUTRALIZE_STYLE;
+    if (root.firstChild) {
+      root.insertBefore(style, root.firstChild);
+    } else {
+      root.appendChild(style);
+    }
+    pseudoStyle = style;
+    return style;
+  };
+
+  const pseudoProperties = COMPUTED_URL_PROPERTIES.filter((prop) => prop !== 'content');
+
+  for (const element of elements) {
+    const computed = window.getComputedStyle(element);
+
+    for (const property of COMPUTED_URL_PROPERTIES) {
+      if (property === 'content') {
+        continue;
+      }
+      const value = computed.getPropertyValue(property);
+      if (!value || value === 'none' || value === 'auto') continue;
+      if (value.indexOf('url(') === -1) continue;
+      if (!shouldNeutralizeCssValue(value)) continue;
+
+      if (isHTMLElement(element) || isSVGElement(element)) {
+        const style = (element as HTMLElement | SVGElement).style;
+        style.setProperty(property, getSafeReplacementValue(property), 'important');
+        entries.push({
+          type: 'computed',
+          tagName: element instanceof HTMLElement ? element.tagName : element.nodeName,
+          property,
+          value,
+        });
+      }
+    }
+
+    const pseudoTargets: Array<['::before' | '::after', CSSStyleDeclaration]> = [
+      ['::before', window.getComputedStyle(element, '::before')],
+      ['::after', window.getComputedStyle(element, '::after')],
+    ];
+
+    for (const [pseudo, styles] of pseudoTargets) {
+      for (const property of pseudoProperties) {
+        const value = styles.getPropertyValue(property);
+        if (!value || value === 'none' || value === 'auto') continue;
+        if (value.indexOf('url(') === -1) continue;
+        if (!shouldNeutralizeCssValue(value)) continue;
+        ensurePseudoStyle();
+        if (isHTMLElement(element)) {
+          element.setAttribute('data-screenshot-pseudo-neutralize', 'true');
+        }
+        entries.push({
+          type: 'pseudo',
+          tagName: element instanceof HTMLElement ? element.tagName : element.nodeName,
+          property: `${pseudo}:${property}`,
+          value,
+        });
+        break;
+      }
+    }
+  }
+
+  debugLog('Проверка computed-стилей завершена', {
+    neutralized: entries.length,
+  });
+  return entries;
 }
 
 function enableSafeMode(wrapper: Element) {
@@ -918,8 +1185,20 @@ export async function elementToCanvas(
   }
 
   await embedImages(wrapper);
-  sanitizeExternalResources(wrapper);
-  stripRemainingExternalReferences(wrapper);
+  const sanitizedAttributes = sanitizeExternalResources(wrapper);
+  const sanitizedComputed = neutralizeComputedStyleUrls(wrapper);
+  const sanitizedResidual = stripRemainingExternalReferences(wrapper);
+
+  const neutralizedReport = [
+    ...sanitizedAttributes,
+    ...sanitizedComputed,
+    ...sanitizedResidual,
+  ];
+
+  debugLog('Отчёт по нейтрализованным ссылкам перед сериализацией', {
+    count: neutralizedReport.length,
+    entries: neutralizedReport,
+  });
 
   debugLog('Сериализуем DOM в SVG', { width, height });
   const serialized = new XMLSerializer().serializeToString(wrapper);
@@ -951,6 +1230,25 @@ export async function elementToCanvas(
       canvasWidth: canvas.width,
       canvasHeight: canvas.height,
     });
+
+    try {
+      void ctx.getImageData(0, 0, 1, 1);
+      debugLog('Проверка canvas на taint прошла успешно');
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'SecurityError') {
+        debugLog('Обнаружили tainted canvas при getImageData', {
+          message: error.message,
+        });
+        throw new DOMException(
+          'Canvas оказался tainted при формировании PNG. Убедитесь, что все изображения и фоновые ресурсы доступны с текущего origin.',
+          'SecurityError',
+        );
+      }
+      debugLog('Неизвестная ошибка при проверке canvas на taint', {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      throw error instanceof Error ? error : new Error(String(error));
+    }
 
     return canvas;
   } finally {

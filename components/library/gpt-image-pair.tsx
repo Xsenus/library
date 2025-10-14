@@ -49,21 +49,31 @@ export function GptImagePair({
     let cancelled = false;
 
     async function probe(url: string): Promise<boolean> {
-      try {
-        const r = await fetch(url, { method: 'HEAD', cache: 'no-store' });
-        if (r.ok) return true;
-        if (r.status === 404) return false;
-        console.debug('[gpt-image-pair:probe] HEAD ответ без OK/404', {
-          url,
-          status: r.status,
-        });
-      } catch (error) {
-        console.debug('[gpt-image-pair:probe] HEAD запрос завершился ошибкой', {
-          url,
-          error,
-        });
-      }
-      return false;
+      return await new Promise<boolean>((resolve) => {
+        const img = new Image();
+        const timeout = window.setTimeout(() => {
+          cleanup();
+          resolve(false);
+        }, 12_000);
+
+        const cleanup = () => {
+          window.clearTimeout(timeout);
+          img.onload = null;
+          img.onerror = null;
+        };
+
+        img.onload = () => {
+          cleanup();
+          resolve(true);
+        };
+
+        img.onerror = () => {
+          cleanup();
+          resolve(false);
+        };
+
+        img.src = url;
+      });
     }
 
     (async () => {
@@ -73,7 +83,12 @@ export function GptImagePair({
       }
       const [oldUrl, cryoUrl] = [`${GPT_IMAGES_BASE}${id}_old.jpg`, `${GPT_IMAGES_BASE}${id}_cryo.jpg`];
       const [oldOk, cryoOk] = await Promise.all([probe(oldUrl), probe(cryoUrl)]);
-      if (!cancelled) setExists({ old: oldOk, cryo: cryoOk });
+      if (!cancelled) {
+        if (!oldOk && !cryoOk) {
+          console.info('[gpt-image-pair:probe] GPT изображения не найдены', { equipmentId: id });
+        }
+        setExists({ old: oldOk, cryo: cryoOk });
+      }
     })();
 
     return () => {

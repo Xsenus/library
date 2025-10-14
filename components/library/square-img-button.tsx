@@ -52,7 +52,12 @@ export default function SquareImgButton({
   );
 
   const content = (
-    <span className={frame} style={{ padding: padding > 0 ? `${padding}px` : undefined }}>
+    <span
+      className={frame}
+      style={{
+        position: 'relative',
+        padding: padding > 0 ? `${padding}px` : undefined,
+      }}>
       <Image
         src={`/icons/${icon}.png`}
         alt={title || icon}
