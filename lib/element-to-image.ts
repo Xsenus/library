@@ -82,11 +82,22 @@ async function processCssUrls(
     const rawUrl = match[2];
     if (!rawUrl) continue;
     if (DATA_URL_REGEX.test(rawUrl) || rawUrl.startsWith('blob:')) continue;
+    if (rawUrl.startsWith('#')) continue;
 
     let absolute: string;
     try {
-      absolute = new URL(rawUrl, getWindow().location.href).href;
+      const parsed = new URL(rawUrl, getWindow().location.href);
+      if (parsed.protocol === 'data:') continue;
+      if (parsed.protocol === 'javascript:') continue;
+      if (parsed.protocol === 'chrome-extension:' || parsed.protocol === 'moz-extension:') {
+        counters.backgrounds += 1;
+        result = result.replace(match[0], 'none');
+        continue;
+      }
+      absolute = parsed.href;
     } catch {
+      counters.backgrounds += 1;
+      result = result.replace(match[0], 'none');
       continue;
     }
 
@@ -100,6 +111,24 @@ async function processCssUrls(
   }
 
   return result;
+}
+
+function shouldProcessCssProperty(name: string): boolean {
+  if (!name) return false;
+  const lower = name.toLowerCase();
+  return (
+    lower.includes('background') ||
+    lower.includes('mask') ||
+    lower.includes('filter') ||
+    lower.includes('clip-path') ||
+    lower.includes('image') ||
+    lower === 'border-image' ||
+    lower === 'border-image-source' ||
+    lower === 'list-style' ||
+    lower === 'list-style-image' ||
+    lower === 'content' ||
+    lower === 'cursor'
+  );
 }
 
 async function inlineElementStyles(
@@ -135,7 +164,7 @@ async function inlineElementStyles(
     if (!name) continue;
     let value = style.getPropertyValue(name);
     if (!value) continue;
-    if (name === 'background' || name === 'background-image' || name === 'mask' || name === 'mask-image') {
+    if (value.includes('url(') && shouldProcessCssProperty(name)) {
       value = (await processCssUrls(value, counters, options.stripAllImages)) ?? value;
       if (!value || value === 'none') {
         cssTexts.push(`${name}: none;`);
@@ -162,18 +191,41 @@ async function inlineElementStyles(
 
   if (clone instanceof HTMLImageElement && original instanceof HTMLImageElement) {
     await inlineImageElement(original, clone, counters, options);
-  } else if (clone instanceof HTMLCanvasElement && original instanceof HTMLCanvasElement) {
-    const dataUrl = original.toDataURL();
-    const img = new Image();
-    img.src = dataUrl;
-    img.width = original.width;
-    img.height = original.height;
-    const styleText = clone.getAttribute('style');
-    if (styleText) {
-      img.setAttribute('style', styleText);
+  } else if (clone instanceof HTMLSourceElement && original instanceof HTMLSourceElement) {
+    if (original.src || original.srcset) {
+      counters.images += 1;
     }
-    clone.replaceWith(img);
+    clone.removeAttribute('srcset');
+    clone.removeAttribute('src');
     return;
+  } else if (clone instanceof HTMLCanvasElement && original instanceof HTMLCanvasElement) {
+    try {
+      const dataUrl = original.toDataURL();
+      const img = new Image();
+      img.src = dataUrl;
+      img.width = original.width;
+      img.height = original.height;
+      const styleText = clone.getAttribute('style');
+      if (styleText) {
+        img.setAttribute('style', styleText);
+      }
+      clone.replaceWith(img);
+      return;
+    } catch (error) {
+      counters.images += 1;
+      if (options.stripAllImages) {
+        clone.remove();
+      } else {
+        const placeholder = original.ownerDocument?.createElement('div') || document.createElement('div');
+        placeholder.textContent = '';
+        placeholder.setAttribute('style', clone.getAttribute('style') || '');
+        placeholder.style.backgroundColor = '#f8fafc';
+        placeholder.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+        placeholder.setAttribute('data-skipped-canvas', '1');
+        clone.replaceWith(placeholder);
+      }
+      return;
+    }
   }
 
   const svgHandled = await inlineSvgElementResources(original, clone, counters, options);
@@ -518,6 +570,11 @@ function getCanvasBackgroundColor(element: HTMLElement): string {
 async function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    try {
+      img.crossOrigin = 'anonymous';
+    } catch {
+      /* ignore */
+    }
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('Не удалось отрисовать изображение'));
     img.src = url;
