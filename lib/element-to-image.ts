@@ -8,6 +8,15 @@ export interface ElementToImageOptions {
 
 const DEFAULT_BACKGROUND = '#ffffff';
 const URL_REGEX = /url\(("|')?(.*?)(\1)?\)/g;
+const TRANSPARENT_PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+const CSS_IMAGE_PROPERTIES = [
+  'background-image',
+  'mask-image',
+  'border-image-source',
+  'list-style-image',
+  'cursor',
+];
 
 function isHTMLElement(node: Element): node is HTMLElement {
   return node instanceof HTMLElement;
@@ -105,6 +114,25 @@ function copySpecialValues(source: Element, target: Element) {
   }
 }
 
+function isInlineableUrl(value: string | null | undefined): boolean {
+  if (!value) return false;
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  return trimmed.startsWith('data:') || trimmed.startsWith('blob:') || trimmed.startsWith('#');
+}
+
+function hideProblematicImage(img: HTMLImageElement) {
+  img.setAttribute('src', TRANSPARENT_PIXEL);
+  img.style.visibility = 'hidden';
+  img.removeAttribute('srcset');
+}
+
+function hideProblematicSvgImage(img: SVGImageElement) {
+  img.setAttribute('href', TRANSPARENT_PIXEL);
+  img.setAttribute('xlink:href', TRANSPARENT_PIXEL);
+  img.style.setProperty('visibility', 'hidden');
+}
+
 async function readBlobAsDataUrl(blob: Blob): Promise<string> {
   return await new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -164,7 +192,7 @@ async function resourceToDataUrl(url: string): Promise<string> {
 
 async function inlineImageSource(img: HTMLImageElement) {
   const src = img.getAttribute('src');
-  if (!src || src.startsWith('data:') || src.startsWith('blob:')) return;
+  if (!src || isInlineableUrl(src)) return;
   try {
     const absolute = new URL(src, window.location.href).toString();
     const dataUrl = await resourceToDataUrl(absolute);
@@ -173,12 +201,7 @@ async function inlineImageSource(img: HTMLImageElement) {
     img.removeAttribute('srcset');
   } catch (error) {
     console.warn('Не удалось встроить изображение', src, error);
-    img.removeAttribute('srcset');
-    img.setAttribute(
-      'src',
-      'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=='
-    );
-    img.style.visibility = 'hidden';
+    hideProblematicImage(img);
   }
 }
 
@@ -198,7 +221,7 @@ async function inlineCssImages(element: Element, properties: string[]) {
     let result = value;
     for (const match of matches) {
       const raw = match[2];
-      if (!raw || raw.startsWith('data:') || raw.startsWith('#')) continue;
+      if (!raw || isInlineableUrl(raw)) continue;
       try {
         const absolute = new URL(raw, window.location.href).toString();
         const dataUrl = await resourceToDataUrl(absolute);
@@ -230,6 +253,13 @@ async function embedImages(root: Element): Promise<void> {
     }
   });
 
+  root.querySelectorAll('source').forEach((source) => {
+    if (source instanceof HTMLSourceElement) {
+      source.removeAttribute('srcset');
+      source.removeAttribute('sizes');
+    }
+  });
+
   if (typeof SVGImageElement !== 'undefined') {
     root.querySelectorAll('image').forEach((img) => {
       if (img instanceof SVGImageElement) {
@@ -246,14 +276,6 @@ async function embedImages(root: Element): Promise<void> {
     imageTasks.push(inlineSvgImageSource(image));
   });
 
-  const cssImageProperties = [
-    'background-image',
-    'mask-image',
-    'border-image-source',
-    'list-style-image',
-    'cursor',
-  ];
-
   const cssElements: Element[] = [];
 
   if (isHTMLElement(root) || isSVGElement(root)) {
@@ -267,7 +289,7 @@ async function embedImages(root: Element): Promise<void> {
   });
 
   for (const element of cssElements) {
-    imageTasks.push(inlineCssImages(element, cssImageProperties));
+    imageTasks.push(inlineCssImages(element, CSS_IMAGE_PROPERTIES));
   }
 
   await Promise.all(imageTasks);
@@ -275,7 +297,7 @@ async function embedImages(root: Element): Promise<void> {
 
 async function inlineSvgImageSource(image: SVGImageElement) {
   const href = image.getAttribute('href') ?? image.getAttribute('xlink:href');
-  if (!href || href.startsWith('data:') || href.startsWith('#')) return;
+  if (!href || isInlineableUrl(href)) return;
 
   try {
     const absolute = new URL(href, window.location.href).toString();
@@ -284,8 +306,7 @@ async function inlineSvgImageSource(image: SVGImageElement) {
     image.setAttribute('xlink:href', dataUrl);
   } catch (error) {
     console.warn('Не удалось встроить SVG-изображение', href, error);
-    image.removeAttribute('href');
-    image.removeAttribute('xlink:href');
+    hideProblematicSvgImage(image);
   }
 }
 
@@ -301,6 +322,57 @@ function loadImage(url: string): Promise<HTMLImageElement> {
     img.onload = () => resolve(img);
     img.onerror = (err) => reject(err);
     img.src = url;
+  });
+}
+
+function stripResidualExternalResources(root: Element) {
+  const elements: Element[] = [];
+  if (isHTMLElement(root) || isSVGElement(root)) {
+    elements.push(root);
+  }
+
+  root.querySelectorAll('*').forEach((node) => {
+    if (isHTMLElement(node) || isSVGElement(node)) {
+      elements.push(node);
+    }
+  });
+
+  elements.forEach((node) => {
+    if (node instanceof HTMLImageElement) {
+      const src = node.getAttribute('src');
+      if (!isInlineableUrl(src)) {
+        console.warn('Удаление внешнего изображения из скриншота', src);
+        hideProblematicImage(node);
+      }
+    } else if (typeof SVGImageElement !== 'undefined' && node instanceof SVGImageElement) {
+      const href = node.getAttribute('href') ?? node.getAttribute('xlink:href');
+      if (!isInlineableUrl(href)) {
+        console.warn('Удаление внешнего SVG-ресурса из скриншота', href);
+        hideProblematicSvgImage(node);
+      }
+    }
+
+    if ('style' in node) {
+      const style = (node as HTMLElement | SVGElement).style;
+      for (const property of CSS_IMAGE_PROPERTIES) {
+        const value = style.getPropertyValue(property);
+        if (!value) continue;
+
+        URL_REGEX.lastIndex = 0;
+        const matches = Array.from(value.matchAll(URL_REGEX));
+        if (!matches.length) continue;
+
+        let sanitized = value;
+        for (const match of matches) {
+          const raw = match[2];
+          if (isInlineableUrl(raw)) continue;
+          console.warn('Удаление внешнего CSS-ресурса из скриншота', property, raw);
+          sanitized = sanitized.replace(match[0], 'none');
+        }
+
+        style.setProperty(property, sanitized.includes('url(') ? sanitized : 'none');
+      }
+    }
   });
 }
 
@@ -354,6 +426,7 @@ export async function elementToCanvas(
   }
 
   await embedImages(wrapper);
+  stripResidualExternalResources(wrapper);
 
   const serialized = new XMLSerializer().serializeToString(wrapper);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
