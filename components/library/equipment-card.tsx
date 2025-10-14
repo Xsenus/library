@@ -8,7 +8,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { ExternalLink, X, Copy, ArrowUpRight } from 'lucide-react';
+import { ExternalLink, X, Copy, ArrowUpRight, Camera, Loader2 } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import NextImage from 'next/image';
@@ -17,6 +17,7 @@ import { cn } from '@/lib/utils';
 import type { OkvedByEquipment } from '@/lib/validators';
 import SquareImgButton from './square-img-button';
 import { GptImagePair } from './gpt-image-pair';
+import { copyElementImageToClipboard } from '@/lib/element-to-image';
 
 interface EquipmentCardProps {
   equipment: EquipmentDetail;
@@ -139,9 +140,32 @@ const EsBadge = ({
 };
 
 export function EquipmentCard({ equipment }: EquipmentCardProps) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showUtp, setShowUtp] = useState(false);
   const [showMail, setShowMail] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [copyHint, setCopyHint] = useState<string | null>(null);
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scheduleCopyReset = () => {
+    if (copyResetTimer.current) {
+      clearTimeout(copyResetTimer.current);
+    }
+    copyResetTimer.current = setTimeout(() => {
+      setCopyState('idle');
+      setCopyHint(null);
+      copyResetTimer.current = null;
+    }, 3200);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimer.current) {
+        clearTimeout(copyResetTimer.current);
+      }
+    };
+  }, []);
 
   // Храним/восстанавливаем массив открытых секций для каждой записи
   const [openSections, setOpenSections] = useImgAccordionState(equipment?.id);
@@ -247,6 +271,38 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
   const blueBtn =
     'border border-blue-500 text-blue-600 bg-blue-50 hover:bg-blue-100 active:scale-[.98] transition justify-center';
+
+  const handleCopyCard = async () => {
+    if (!cardRef.current || copyState === 'loading') return;
+    setCopyState('loading');
+    setCopyHint(null);
+
+    try {
+      const { skippedImages, skippedBackgrounds } = await copyElementImageToClipboard(cardRef.current, {
+        pixelRatio: 2,
+        skipDataAttribute: 'data-copy-skip',
+      });
+
+      const skippedParts: string[] = [];
+      if (skippedImages > 0) skippedParts.push(`без ${skippedImages} внеш. изображ.`);
+      if (skippedBackgrounds > 0) skippedParts.push(`без ${skippedBackgrounds} фонов`);
+
+      setCopyState('success');
+      setCopyHint(
+        skippedParts.length > 0
+          ? `Карточка скопирована (${skippedParts.join(', ')})`
+          : 'Карточка скопирована',
+      );
+      scheduleCopyReset();
+    } catch (error) {
+      console.error('Failed to copy equipment card', error);
+      const message =
+        error instanceof Error ? error.message : 'Не удалось скопировать карточку оборудования';
+      setCopyState('error');
+      setCopyHint(message);
+      scheduleCopyReset();
+    }
+  };
 
   /** ===== Проверка наличия GPT-картинок — до открытия секции ===== */
   useEffect(() => {
@@ -520,7 +576,43 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
   return (
     <div className="space-y-4 pb-[1cm]">
-      <Card>
+      <Card ref={cardRef} className="relative">
+        <div
+          data-copy-skip="1"
+          className="pointer-events-auto absolute right-4 top-4 z-10 flex items-center gap-2"
+        >
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={handleCopyCard}
+            title="Скопировать карточку в буфер обмена"
+            aria-label="Скопировать карточку в буфер обмена"
+            disabled={copyState === 'loading'}
+            className="shadow-sm"
+          >
+            {copyState === 'loading' ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Camera className="h-4 w-4" />
+            )}
+          </Button>
+          {copyHint && (
+            <span
+              data-copy-skip="1"
+              className={cn(
+                'rounded-md border px-2 py-1 text-xs shadow-sm backdrop-blur-sm',
+                copyState === 'error'
+                  ? 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-400'
+                  : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+              )}
+              role="status"
+              aria-live="polite"
+            >
+              {copyHint}
+            </span>
+          )}
+        </div>
         <CardHeader className="p-3 sm:p-4 pb-2">
           <CardTitle
             className={cn('text-base font-semibold leading-6 transition-colors', titleToneCls)}>
