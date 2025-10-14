@@ -14,6 +14,8 @@ export interface CopyImageOptions {
 const DATA_URL_REGEX = /^data:/i;
 const URL_FUNCTION_REGEX = /url\(("|'|)([^"')]+)\1\)/gi;
 const URL_FUNCTION_SIMPLE_REGEX = /url\(/gi;
+const TRANSPARENT_PIXEL =
+  'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
 function getWindow(): Window {
@@ -270,7 +272,7 @@ async function inlineImageElement(
       counters.images += 1;
     }
     clone.removeAttribute('srcset');
-    clone.setAttribute('src', '');
+    clone.setAttribute('src', TRANSPARENT_PIXEL);
     clone.setAttribute('data-skipped-image', src || '');
     clone.style.backgroundColor = '#f8fafc';
     clone.style.border = '1px solid rgba(148, 163, 184, 0.4)';
@@ -670,7 +672,7 @@ function purgeExternalResourceAttributes(root: HTMLElement, counters: Counters):
 
       if (lower === 'src' && el instanceof HTMLImageElement) {
         el.removeAttribute('srcset');
-        el.setAttribute('src', '');
+        el.setAttribute('src', TRANSPARENT_PIXEL);
         el.setAttribute('data-skipped-image', value);
         el.style.backgroundColor = '#f8fafc';
         el.style.border = '1px solid rgba(148, 163, 184, 0.4)';
@@ -700,6 +702,97 @@ function purgeExternalResourceAttributes(root: HTMLElement, counters: Counters):
   }
 }
 
+function forceStripResidualUrls(root: HTMLElement, counters: Counters): void {
+  const stack: Element[] = [root];
+
+  while (stack.length) {
+    const el = stack.pop();
+    if (!el) continue;
+
+    for (let i = 0; i < el.children.length; i += 1) {
+      const child = el.children.item(i);
+      if (child) {
+        stack.push(child);
+      }
+    }
+
+    if (el instanceof HTMLImageElement) {
+      if (el.src && !DATA_URL_REGEX.test(el.src) && !el.src.startsWith('blob:')) {
+        counters.images += 1;
+      }
+      el.removeAttribute('srcset');
+      el.setAttribute('src', TRANSPARENT_PIXEL);
+      el.style.backgroundColor = '#f8fafc';
+      el.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+      continue;
+    }
+
+    if (
+      el instanceof HTMLVideoElement ||
+      el instanceof HTMLCanvasElement ||
+      el instanceof HTMLIFrameElement ||
+      el instanceof HTMLEmbedElement ||
+      el instanceof HTMLObjectElement
+    ) {
+      counters.images += 1;
+      if (el instanceof HTMLElement) {
+        const placeholder = el.ownerDocument.createElement('div');
+        const originalStyle = el.getAttribute('style');
+        if (originalStyle) {
+          placeholder.setAttribute('style', originalStyle);
+        }
+        placeholder.style.backgroundColor = '#f8fafc';
+        placeholder.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+        placeholder.style.display = placeholder.style.display || 'inline-block';
+        el.replaceWith(placeholder);
+        stack.push(placeholder);
+        continue;
+      }
+    }
+
+    if (el instanceof HTMLSourceElement) {
+      counters.images += 1;
+      el.remove();
+      continue;
+    }
+
+    if (el instanceof SVGImageElement || el instanceof SVGUseElement) {
+      counters.images += 1;
+      el.remove();
+      continue;
+    }
+
+    if (el instanceof HTMLElement || el instanceof SVGElement) {
+      const styleAttr = el.getAttribute('style');
+      if (styleAttr && styleAttr.includes('url(')) {
+        const matchCount = styleAttr.match(URL_FUNCTION_SIMPLE_REGEX)?.length ?? 1;
+        counters.backgrounds += matchCount;
+        const replaced = styleAttr.replace(URL_FUNCTION_REGEX, 'none');
+        el.setAttribute('style', replaced);
+      }
+    }
+
+    const attributes = Array.from(el.attributes);
+    for (const attr of attributes) {
+      if (attr.name === 'style') continue;
+      const value = attr.value;
+      if (!value) continue;
+      if (attr.name === 'src' || attr.name === 'srcset') {
+        if (!(el instanceof HTMLImageElement)) {
+          counters.images += 1;
+          el.removeAttribute(attr.name);
+        }
+        continue;
+      }
+      if (value.includes('url(')) {
+        const matchCount = value.match(URL_FUNCTION_SIMPLE_REGEX)?.length ?? 1;
+        counters.backgrounds += matchCount;
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+}
+
 async function prepareElementClone(
   element: HTMLElement,
   counters: Counters,
@@ -712,6 +805,7 @@ async function prepareElementClone(
 
   if (options.stripAllImages) {
     purgeExternalResourceAttributes(clone, counters);
+    forceStripResidualUrls(clone, counters);
   }
 
   const rect = element.getBoundingClientRect();
