@@ -13,6 +13,7 @@ export interface CopyImageOptions {
 
 const DATA_URL_REGEX = /^data:/i;
 const URL_FUNCTION_REGEX = /url\(("|'|)([^"')]+)\1\)/gi;
+const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
 function getWindow(): Window {
   if (typeof window === 'undefined') {
@@ -152,6 +153,11 @@ async function inlineElementStyles(
     return;
   }
 
+  const svgHandled = await inlineSvgElementResources(original, clone, counters, options);
+  if (svgHandled) {
+    return;
+  }
+
   for (let i = 0; i < original.childNodes.length; i += 1) {
     const origChild = original.childNodes[i];
     const cloneChild = clone.childNodes[i];
@@ -193,6 +199,186 @@ async function inlineImageElement(
     clone.style.backgroundColor = '#f8fafc';
     clone.style.border = '1px solid rgba(148, 163, 184, 0.4)';
   }
+}
+
+function getSvgHref(element: SVGImageElement | SVGUseElement): string | null {
+  if ('href' in element && element.href && typeof element.href.baseVal === 'string' && element.href.baseVal) {
+    return element.href.baseVal;
+  }
+  return (
+    element.getAttribute('href') ||
+    element.getAttributeNS(XLINK_NS, 'href') ||
+    element.getAttribute('xlink:href')
+  );
+}
+
+async function inlineSvgImageElement(
+  original: SVGImageElement,
+  clone: SVGImageElement,
+  counters: Counters,
+): Promise<void> {
+  const rawHref = getSvgHref(original);
+  if (!rawHref || DATA_URL_REGEX.test(rawHref) || rawHref.startsWith('blob:')) {
+    return;
+  }
+
+  let absolute: string;
+  try {
+    absolute = new URL(rawHref, getWindow().location.href).href;
+  } catch {
+    counters.images += 1;
+    clone.remove();
+    return;
+  }
+
+  try {
+    const dataUrl = await fetchAsDataUrl(absolute);
+    clone.setAttribute('href', dataUrl);
+    clone.setAttributeNS(XLINK_NS, 'href', dataUrl);
+  } catch (error) {
+    counters.images += 1;
+    clone.removeAttribute('href');
+    clone.removeAttributeNS(XLINK_NS, 'href');
+    clone.remove();
+  }
+}
+
+async function inlineExternalSvgSubtree(element: Element, counters: Counters): Promise<void> {
+  if (!(element instanceof SVGElement)) return;
+
+  if (element instanceof SVGImageElement) {
+    const href = getSvgHref(element);
+    if (!href || DATA_URL_REGEX.test(href) || href.startsWith('blob:')) {
+      // nothing to inline
+    } else {
+      try {
+        const absolute = new URL(href, getWindow().location.href).href;
+        const dataUrl = await fetchAsDataUrl(absolute);
+        element.setAttribute('href', dataUrl);
+        element.setAttributeNS(XLINK_NS, 'href', dataUrl);
+      } catch (error) {
+        counters.images += 1;
+        element.remove();
+        return;
+      }
+    }
+  } else if (element instanceof SVGUseElement) {
+    counters.images += 1;
+    element.remove();
+    return;
+  }
+
+  const children = Array.from(element.children);
+  for (const child of children) {
+    await inlineExternalSvgSubtree(child, counters);
+  }
+}
+
+async function inlineSvgUseElement(
+  original: SVGUseElement,
+  clone: SVGUseElement,
+  counters: Counters,
+  options: PrepareOptions,
+): Promise<boolean> {
+  const rawHref = getSvgHref(original);
+  if (!rawHref) return false;
+
+  const parent = clone.parentNode;
+  if (!parent) return true;
+
+  const transform = clone.getAttribute('transform');
+
+  if (rawHref.startsWith('#')) {
+    const id = rawHref.slice(1);
+    const target = original.ownerDocument?.getElementById(id);
+    if (!target) {
+      counters.images += 1;
+      clone.remove();
+      return true;
+    }
+    const replacement = target.cloneNode(true) as Element;
+    if (transform) {
+      replacement.setAttribute('transform', transform);
+    }
+    parent.replaceChild(replacement, clone);
+    await inlineElementStyles(target, replacement, counters, options);
+    return true;
+  }
+
+  let absoluteUrl: URL;
+  try {
+    absoluteUrl = new URL(rawHref, getWindow().location.href);
+  } catch {
+    counters.images += 1;
+    clone.remove();
+    return true;
+  }
+
+  const hrefString = absoluteUrl.href;
+  const hashIndex = hrefString.indexOf('#');
+  const resourceUrl = hashIndex >= 0 ? hrefString.slice(0, hashIndex) : hrefString;
+  const fragmentId = hashIndex >= 0 ? hrefString.slice(hashIndex + 1) : null;
+
+  try {
+    const response = await fetch(resourceUrl, {
+      mode: 'cors',
+      credentials: 'omit',
+      cache: 'no-store',
+    });
+    if (!response.ok) {
+      throw new Error('Не удалось загрузить SVG-спрайт');
+    }
+    const text = await response.text();
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(text, 'image/svg+xml');
+    let target: Element | null = null;
+    if (fragmentId) {
+      target = doc.getElementById(fragmentId);
+    }
+    if (!target) {
+      target = doc.documentElement;
+    }
+    if (!target) {
+      throw new Error('Не найден целевой SVG-элемент');
+    }
+    const ownerDocument = parent.ownerDocument || getWindow().document;
+    const replacementSource = target.cloneNode(true) as Element;
+    const replacement = ownerDocument.importNode
+      ? (ownerDocument.importNode(replacementSource, true) as Element)
+      : replacementSource;
+    if (transform) {
+      replacement.setAttribute('transform', transform);
+    }
+    parent.replaceChild(replacement, clone);
+    await inlineExternalSvgSubtree(replacement, counters);
+    return true;
+  } catch (error) {
+    counters.images += 1;
+    clone.remove();
+    return true;
+  }
+}
+
+async function inlineSvgElementResources(
+  original: Element,
+  clone: Element,
+  counters: Counters,
+  options: PrepareOptions,
+): Promise<boolean> {
+  if (!(clone instanceof SVGElement) || !(original instanceof SVGElement)) {
+    return false;
+  }
+
+  if (clone instanceof SVGImageElement && original instanceof SVGImageElement) {
+    await inlineSvgImageElement(original, clone, counters);
+    return false;
+  }
+
+  if (clone instanceof SVGUseElement && original instanceof SVGUseElement) {
+    return inlineSvgUseElement(original, clone, counters, options);
+  }
+
+  return false;
 }
 
 async function createCanvasFromElement(
