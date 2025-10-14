@@ -10,6 +10,7 @@ const DEFAULT_BACKGROUND = '#ffffff';
 const URL_REGEX = /url\(("|')?(.*?)(\1)?\)/g;
 const TRANSPARENT_PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+const HTTP_URL_REGEX = /^(https?:)?\/\//i;
 
 function isHTMLElement(node: Element): node is HTMLElement {
   return node instanceof HTMLElement;
@@ -452,15 +453,152 @@ function sanitizeExternalResources(root: Element) {
   });
 }
 
-function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
-  return new Promise((resolve, reject) => {
-    canvas.toBlob((blob) => {
-      if (!blob) {
-        reject(new Error('Не удалось сформировать изображение.'));
+function stripRemainingExternalReferences(root: Element) {
+  const processElement = (element: Element) => {
+    if (element instanceof HTMLImageElement) {
+      const src = element.getAttribute('src');
+      if (src && HTTP_URL_REGEX.test(src)) {
+        console.warn('Заменяю оставшийся http(s)-src у <img>', src);
+        element.setAttribute('src', TRANSPARENT_PIXEL);
+        element.style.visibility = 'hidden';
+      }
+      element.removeAttribute('srcset');
+    } else if (typeof SVGImageElement !== 'undefined' && element instanceof SVGImageElement) {
+      const href = element.getAttribute('href') ?? element.getAttribute('xlink:href');
+      if (href && HTTP_URL_REGEX.test(href)) {
+        console.warn('Заменяю оставшийся http(s)-href у <image>', href);
+        element.setAttribute('href', TRANSPARENT_PIXEL);
+        element.setAttribute('xlink:href', TRANSPARENT_PIXEL);
+      }
+    } else if (element instanceof HTMLVideoElement || element instanceof HTMLAudioElement) {
+      const mediaSrc = element.getAttribute('src');
+      if (mediaSrc && HTTP_URL_REGEX.test(mediaSrc)) {
+        element.removeAttribute('src');
+      }
+      if (element instanceof HTMLVideoElement) {
+        const poster = element.getAttribute('poster');
+        if (poster && HTTP_URL_REGEX.test(poster)) {
+          element.removeAttribute('poster');
+        }
+      }
+      element.querySelectorAll('source,track').forEach((child) => {
+        if (child instanceof HTMLSourceElement || child instanceof HTMLTrackElement) {
+          const srcAttr = child.getAttribute('src');
+          if (srcAttr && HTTP_URL_REGEX.test(srcAttr)) {
+            child.removeAttribute('src');
+          }
+          child.removeAttribute('srcset');
+        }
+      });
+    } else if (element instanceof HTMLSourceElement || element instanceof HTMLTrackElement) {
+      const srcAttr = element.getAttribute('src');
+      if (srcAttr && HTTP_URL_REGEX.test(srcAttr)) {
+        element.removeAttribute('src');
+      }
+      element.removeAttribute('srcset');
+    } else if (element instanceof HTMLLinkElement) {
+      const href = element.getAttribute('href');
+      if (href && HTTP_URL_REGEX.test(href)) {
+        element.remove();
         return;
       }
-      resolve(blob);
-    }, 'image/png');
+    } else if (
+      element instanceof HTMLObjectElement ||
+      element instanceof HTMLEmbedElement ||
+      element instanceof HTMLIFrameElement
+    ) {
+      const dataAttr = element.getAttribute('data');
+      if (dataAttr && HTTP_URL_REGEX.test(dataAttr)) {
+        element.removeAttribute('data');
+      }
+      const srcAttr = element.getAttribute('src');
+      if (srcAttr && HTTP_URL_REGEX.test(srcAttr)) {
+        element.removeAttribute('src');
+      }
+    }
+
+    if (isHTMLElement(element) || isSVGElement(element)) {
+      const style = element.style;
+      const properties: string[] = [];
+      for (let i = 0; i < style.length; i += 1) {
+        const property = style.item(i);
+        if (!property) continue;
+        const value = style.getPropertyValue(property);
+        if (!value || value.indexOf('url(') === -1) continue;
+        properties.push(property);
+      }
+
+      for (const property of properties) {
+        const priority = style.getPropertyPriority(property);
+        const value = style.getPropertyValue(property);
+        if (!value) continue;
+
+        let mutated = value;
+        URL_REGEX.lastIndex = 0;
+        const matches = Array.from(mutated.matchAll(URL_REGEX));
+        for (const match of matches) {
+          const raw = match[2];
+          if (!raw) continue;
+          const trimmed = raw.trim();
+          if (
+            trimmed.startsWith('data:') ||
+            trimmed.startsWith('blob:') ||
+            trimmed.startsWith('#') ||
+            trimmed.toLowerCase().startsWith('about:blank')
+          ) {
+            continue;
+          }
+
+          if (trimmed.startsWith('http://') || trimmed.startsWith('https://') || trimmed.startsWith('//')) {
+            mutated = mutated.replace(match[0], 'none');
+          } else {
+            try {
+              const reference = new URL(window.location.href);
+              const absolute = new URL(trimmed, reference);
+              if (!shouldTreatAsSameOrigin(absolute, reference)) {
+                mutated = mutated.replace(match[0], 'none');
+              }
+            } catch {
+              mutated = mutated.replace(match[0], 'none');
+            }
+          }
+        }
+
+        if (mutated !== value) {
+          style.setProperty(property, mutated, priority);
+        }
+      }
+    }
+  };
+
+  processElement(root);
+  root.querySelectorAll('*').forEach((element) => {
+    processElement(element);
+  });
+}
+
+function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
+  return new Promise((resolve, reject) => {
+    try {
+      canvas.toBlob((blob) => {
+        if (!blob) {
+          reject(new Error('Не удалось сформировать изображение.'));
+          return;
+        }
+        resolve(blob);
+      }, 'image/png');
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'SecurityError') {
+        reject(
+          new DOMException(
+            'Canvas оказался tainted при формировании PNG. Убедитесь, что все изображения и фоновые ресурсы доступны с текущего origin.',
+            'SecurityError',
+          ),
+        );
+        return;
+      }
+      reject(error instanceof Error ? error : new Error(String(error)));
+    }
   });
 }
 
@@ -503,6 +641,7 @@ export async function elementToCanvas(
 
   await embedImages(wrapper);
   sanitizeExternalResources(wrapper);
+  stripRemainingExternalReferences(wrapper);
 
   const serialized = new XMLSerializer().serializeToString(wrapper);
   const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">` +
