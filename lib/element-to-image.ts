@@ -61,6 +61,12 @@ type PrepareOptions = Required<Pick<CopyImageOptions, 'skipDataAttribute'>> & {
   stripAllImages: boolean;
 };
 
+type PreparedClone = {
+  node: HTMLElement;
+  width: number;
+  height: number;
+};
+
 async function processCssUrls(
   value: string,
   counters: Counters,
@@ -490,37 +496,189 @@ async function inlineSvgElementResources(
   return false;
 }
 
-async function createCanvasFromElement(
+function isCrossOriginUrl(url: string, origin: string): boolean {
+  if (!url) return false;
+  if (DATA_URL_REGEX.test(url)) return false;
+  if (url.startsWith('blob:')) return false;
+  if (url.startsWith('#')) return false;
+
+  try {
+    const parsed = new URL(url, getWindow().location.href);
+    if (parsed.protocol === 'javascript:') return true;
+    if (parsed.protocol === 'data:') return false;
+    return parsed.origin !== origin;
+  } catch {
+    return true;
+  }
+}
+
+function extractSrcsetUrls(srcset: string): string[] {
+  return srcset
+    .split(',')
+    .map((entry) => entry.trim())
+    .filter(Boolean)
+    .map((entry) => entry.split(/\s+/)[0])
+    .filter(Boolean);
+}
+
+function purgeExternalResourceAttributes(root: HTMLElement, counters: Counters): void {
+  const win = getWindow();
+  const origin = win.location.origin;
+  const stack: Element[] = [root];
+
+  while (stack.length) {
+    const el = stack.pop();
+    if (!el) continue;
+
+    for (let i = 0; i < el.children.length; i += 1) {
+      const child = el.children.item(i);
+      if (child) {
+        stack.push(child);
+      }
+    }
+
+    if (el instanceof HTMLStyleElement) {
+      const text = el.textContent || '';
+      if (!text) {
+        continue;
+      }
+      const matches = text.match(URL_FUNCTION_SIMPLE_REGEX);
+      if (matches?.length) {
+        counters.backgrounds += matches.length;
+        el.remove();
+        continue;
+      }
+      if (/@import\s+/i.test(text)) {
+        counters.backgrounds += 1;
+        el.remove();
+      }
+      continue;
+    }
+
+    if (el instanceof HTMLLinkElement) {
+      const rel = el.rel ? el.rel.toLowerCase() : '';
+      if (rel.includes('stylesheet') || rel.includes('preload')) {
+        counters.backgrounds += 1;
+        el.remove();
+        continue;
+      }
+    }
+
+    const attrs = Array.from(el.attributes);
+    for (const attr of attrs) {
+      const name = attr.name;
+      const lower = name.toLowerCase();
+      const value = attr.value;
+      if (!value || lower === 'style') continue;
+
+      let shouldRemove = false;
+      let treatAsImage = false;
+
+      if (lower === 'srcset') {
+        const urls = extractSrcsetUrls(value);
+        if (urls.some((u) => isCrossOriginUrl(u, origin))) {
+          shouldRemove = true;
+          treatAsImage = true;
+        }
+      } else if (lower === 'src' || lower === 'poster' || lower === 'data') {
+        if (isCrossOriginUrl(value, origin)) {
+          shouldRemove = true;
+          treatAsImage = true;
+        }
+      } else if (lower === 'href' || lower === 'xlink:href') {
+        if (el instanceof SVGElement && !(el instanceof SVGAElement)) {
+          if (isCrossOriginUrl(value, origin)) {
+            shouldRemove = true;
+            treatAsImage = true;
+          }
+        }
+      } else if (value.includes('url(')) {
+        shouldRemove = true;
+      }
+
+      if (!shouldRemove) continue;
+
+      if (treatAsImage) {
+        counters.images += 1;
+      } else {
+        counters.backgrounds += 1;
+      }
+
+      if (lower === 'src' && el instanceof HTMLImageElement) {
+        el.removeAttribute('srcset');
+        el.setAttribute('src', '');
+        el.setAttribute('data-skipped-image', value);
+        el.style.backgroundColor = '#f8fafc';
+        el.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+      } else if (lower === 'src' && el instanceof HTMLVideoElement) {
+        el.removeAttribute('src');
+      } else if (lower === 'src' && el instanceof HTMLSourceElement) {
+        el.removeAttribute('src');
+        el.removeAttribute('srcset');
+      } else if (lower === 'srcset') {
+        el.removeAttribute('srcset');
+      } else if (lower === 'poster') {
+        el.removeAttribute('poster');
+      } else if (lower === 'data') {
+        el.removeAttribute('data');
+      } else if (lower === 'href' && el instanceof SVGUseElement) {
+        el.remove();
+      } else if (lower === 'href' && el instanceof SVGImageElement) {
+        el.remove();
+      } else if (lower === 'xlink:href' && el instanceof SVGImageElement) {
+        el.remove();
+      } else if (lower === 'xlink:href' && el instanceof SVGUseElement) {
+        el.remove();
+      } else {
+        el.removeAttribute(name);
+      }
+    }
+  }
+}
+
+async function prepareElementClone(
   element: HTMLElement,
-  options: CopyImageOptions,
   counters: Counters,
-  stripAllImages: boolean,
-): Promise<HTMLCanvasElement> {
+  options: PrepareOptions,
+): Promise<PreparedClone> {
   const clone = element.cloneNode(true) as HTMLElement;
   clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
 
-  const prepareOptions: PrepareOptions = {
-    skipDataAttribute: options.skipDataAttribute ?? 'data-copy-skip',
-    stripAllImages,
-  };
+  await inlineElementStyles(element, clone, counters, options);
 
-  await inlineElementStyles(element, clone, counters, prepareOptions);
+  if (options.stripAllImages) {
+    purgeExternalResourceAttributes(clone, counters);
+  }
 
-  const { width, height } = element.getBoundingClientRect();
-  const safeWidth = Math.ceil(width);
-  const safeHeight = Math.ceil(height);
+  const rect = element.getBoundingClientRect();
+  const safeWidth = Math.max(Math.ceil(rect.width), 1);
+  const safeHeight = Math.max(Math.ceil(rect.height), 1);
+
+  clone.style.boxSizing = 'border-box';
+  clone.style.width = `${safeWidth}px`;
+  clone.style.height = `${safeHeight}px`;
+
+  return { node: clone, width: safeWidth, height: safeHeight };
+}
+
+async function rasterizeCloneWithForeignObject(
+  prepared: PreparedClone,
+  element: HTMLElement,
+  options: CopyImageOptions,
+): Promise<HTMLCanvasElement> {
+  const { node, width, height } = prepared;
 
   const svgNS = 'http://www.w3.org/2000/svg';
   const svg = document.createElementNS(svgNS, 'svg');
   svg.setAttribute('xmlns', svgNS);
-  svg.setAttribute('width', `${safeWidth}`);
-  svg.setAttribute('height', `${safeHeight}`);
-  svg.setAttribute('viewBox', `0 0 ${safeWidth} ${safeHeight}`);
+  svg.setAttribute('width', `${width}`);
+  svg.setAttribute('height', `${height}`);
+  svg.setAttribute('viewBox', `0 0 ${width} ${height}`);
 
   const foreignObject = document.createElementNS(svgNS, 'foreignObject');
-  foreignObject.setAttribute('width', '100%');
-  foreignObject.setAttribute('height', '100%');
-  foreignObject.appendChild(clone);
+  foreignObject.setAttribute('width', `${width}`);
+  foreignObject.setAttribute('height', `${height}`);
+  foreignObject.appendChild(node);
   svg.appendChild(foreignObject);
 
   const serialized = new XMLSerializer().serializeToString(svg);
@@ -533,8 +691,8 @@ async function createCanvasFromElement(
     const img = await loadImage(url);
     const canvas = document.createElement('canvas');
     const pixelRatio = Math.min(options.pixelRatio ?? getWindow().devicePixelRatio ?? 1, 3);
-    canvas.width = safeWidth * pixelRatio;
-    canvas.height = safeHeight * pixelRatio;
+    canvas.width = width * pixelRatio;
+    canvas.height = height * pixelRatio;
     const ctx = canvas.getContext('2d');
     if (!ctx) {
       throw new Error('Не удалось создать контекст canvas');
@@ -545,13 +703,28 @@ async function createCanvasFromElement(
     const background = options.backgroundColor || getCanvasBackgroundColor(element);
     if (background) {
       ctx.fillStyle = background;
-      ctx.fillRect(0, 0, safeWidth, safeHeight);
+      ctx.fillRect(0, 0, width, height);
     }
-    ctx.drawImage(img, 0, 0, safeWidth, safeHeight);
+    ctx.drawImage(img, 0, 0, width, height);
     return canvas;
   } finally {
     URL.revokeObjectURL(url);
   }
+}
+
+async function createCanvasFromElement(
+  element: HTMLElement,
+  options: CopyImageOptions,
+  counters: Counters,
+  stripAllImages: boolean,
+): Promise<HTMLCanvasElement> {
+  const prepareOptions: PrepareOptions = {
+    skipDataAttribute: options.skipDataAttribute ?? 'data-copy-skip',
+    stripAllImages,
+  };
+
+  const prepared = await prepareElementClone(element, counters, prepareOptions);
+  return rasterizeCloneWithForeignObject(prepared, element, options);
 }
 
 function getCanvasBackgroundColor(element: HTMLElement): string {
@@ -645,14 +818,16 @@ export async function copyElementImageToClipboard(
     }
 
     console.warn('Falling back to strict capture mode due to canvas security error', error);
-    const fallbackCounters: Counters = { images: 0, backgrounds: 0 };
-    const fallbackCanvas = await createCanvasFromElement(element, options, fallbackCounters, true);
-    const fallbackBlob = await canvasToBlob(fallbackCanvas);
-    await writeBlobToClipboard(fallbackBlob);
-    return {
-      skippedImages: fallbackCounters.images,
-      skippedBackgrounds: fallbackCounters.backgrounds,
-    };
   }
+
+  const fallbackCounters: Counters = { images: 0, backgrounds: 0 };
+
+  const fallbackCanvas = await createCanvasFromElement(element, options, fallbackCounters, true);
+  const fallbackBlob = await canvasToBlob(fallbackCanvas);
+  await writeBlobToClipboard(fallbackBlob);
+  return {
+    skippedImages: fallbackCounters.images,
+    skippedBackgrounds: fallbackCounters.backgrounds,
+  };
 }
 
