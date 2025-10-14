@@ -30,6 +30,7 @@ const ABSOLUTE_HTTP_REGEX = /https?:\/\//i;
 const GOOGLE_TOKEN_REGEX = /(google|gstatic|googleapis|googleusercontent|googletag|doubleclick)/i;
 const FONT_FAMILY_DECLARATION_REGEX = /font-family\s*:[^;]+;?/gi;
 const SAFE_FONT_STACK = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const SAFE_FONT_STACK_LOWER = SAFE_FONT_STACK.toLowerCase();
 const SUSPECT_SAMPLE_LIMIT = 20;
 
 function containsFontFamilyDeclaration(value: string): boolean {
@@ -1137,38 +1138,42 @@ function applySafeFontFallback(root: HTMLElement, debug: CaptureDebugger): void 
       continue;
     }
 
-    const styleAttr = el.getAttribute('style');
-    if (styleAttr && containsFontFamilyDeclaration(styleAttr)) {
-      const cleanedStyle = styleAttr.replace(FONT_FAMILY_DECLARATION_REGEX, '').trim();
-      if (cleanedStyle) {
-        const normalized = cleanedStyle.endsWith(';') ? cleanedStyle : `${cleanedStyle};`;
-        el.setAttribute('style', normalized);
-      } else {
-        el.removeAttribute('style');
+    let elementUpdated = false;
+    const styleDecl = (el as HTMLElement | SVGElement).style as CSSStyleDeclaration | undefined;
+
+    if (styleDecl) {
+      const shorthand = styleDecl.getPropertyValue('font');
+      if (shorthand) {
+        styleDecl.removeProperty('font');
+        elementUpdated = true;
       }
-      updated += 1;
+
+      const family = styleDecl.getPropertyValue('font-family');
+      if (family && family.toLowerCase() !== SAFE_FONT_STACK_LOWER) {
+        styleDecl.removeProperty('font-family');
+        elementUpdated = true;
+      }
+
+      if (styleDecl.getPropertyValue('font-family').toLowerCase() !== SAFE_FONT_STACK_LOWER) {
+        styleDecl.setProperty('font-family', SAFE_FONT_STACK, 'important');
+        elementUpdated = true;
+      }
+
+      if (styleDecl.cssText.trim() === '') {
+        (el as Element).removeAttribute('style');
+      }
     }
 
     if (el instanceof SVGElement) {
-      if (el.getAttribute('font-family') !== SAFE_FONT_STACK) {
+      const svgFont = el.getAttribute('font-family');
+      if (svgFont !== SAFE_FONT_STACK) {
         el.setAttribute('font-family', SAFE_FONT_STACK);
-        updated += 1;
+        elementUpdated = true;
       }
-      continue;
     }
 
-    if (el instanceof HTMLElement) {
-      const baseStyle = el.getAttribute('style') || '';
-      let finalStyle = baseStyle.trim();
-      if (finalStyle && !finalStyle.endsWith(';')) {
-        finalStyle = `${finalStyle};`;
-      }
-      const declaration = `font-family: ${SAFE_FONT_STACK};`;
-      if (!finalStyle.includes(declaration)) {
-        finalStyle = `${finalStyle} ${declaration}`.trim();
-        el.setAttribute('style', finalStyle);
-        updated += 1;
-      }
+    if (elementUpdated) {
+      updated += 1;
     }
   }
 
@@ -1223,6 +1228,7 @@ function collectTaintSuspects(root: HTMLElement): TaintSuspects {
       if (!value) continue;
 
       if (lower === 'style') {
+        const normalized = value.toLowerCase();
         if (value.includes('url(')) {
           pushSuspect(urlDeclarations, {
             tag: el.tagName,
@@ -1237,7 +1243,7 @@ function collectTaintSuspects(root: HTMLElement): TaintSuspects {
             value: value.slice(0, 200),
           });
         }
-        if (containsFontFamilyDeclaration(value)) {
+        if (containsFontFamilyDeclaration(value) && !normalized.includes(SAFE_FONT_STACK_LOWER)) {
           pushSuspect(fontDeclarations, {
             tag: el.tagName,
             attr: name,
@@ -1278,7 +1284,7 @@ function collectTaintSuspects(root: HTMLElement): TaintSuspects {
         });
       }
 
-      if (lower === 'font-family') {
+      if (lower === 'font-family' && value.toLowerCase() !== SAFE_FONT_STACK_LOWER) {
         pushSuspect(fontDeclarations, {
           tag: el.tagName,
           attr: name,
