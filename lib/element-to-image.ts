@@ -17,6 +17,8 @@ const URL_FUNCTION_SIMPLE_REGEX = /url\(/gi;
 const TRANSPARENT_PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
+const ABSOLUTE_HTTP_REGEX = /https?:\/\//i;
+const GOOGLE_TOKEN_REGEX = /(google|gstatic|googleapis|googleusercontent|googletag|doubleclick)/i;
 
 function getWindow(): Window {
   if (typeof window === 'undefined') {
@@ -703,6 +705,9 @@ function purgeExternalResourceAttributes(root: HTMLElement, counters: Counters):
 }
 
 function forceStripResidualUrls(root: HTMLElement, counters: Counters): void {
+  removeGoogleElements(root, counters);
+  stripAbsoluteHttpAttributes(root, counters);
+
   const stack: Element[] = [root];
 
   while (stack.length) {
@@ -788,6 +793,148 @@ function forceStripResidualUrls(root: HTMLElement, counters: Counters): void {
         const matchCount = value.match(URL_FUNCTION_SIMPLE_REGEX)?.length ?? 1;
         counters.backgrounds += matchCount;
         el.removeAttribute(attr.name);
+      }
+    }
+  }
+}
+
+function removeGoogleElements(root: HTMLElement, counters: Counters): void {
+  const stack: Element[] = [];
+  for (let i = 0; i < root.children.length; i += 1) {
+    const child = root.children.item(i);
+    if (child) {
+      stack.push(child);
+    }
+  }
+
+  while (stack.length) {
+    const el = stack.pop();
+    if (!el) continue;
+
+    let shouldRemove = false;
+    const attrs = Array.from(el.attributes);
+    for (const attr of attrs) {
+      const raw = attr.value;
+      if (!raw) continue;
+      const lower = raw.toLowerCase();
+      if (GOOGLE_TOKEN_REGEX.test(lower)) {
+        shouldRemove = true;
+        break;
+      }
+      try {
+        const decoded = decodeURIComponent(lower);
+        if (GOOGLE_TOKEN_REGEX.test(decoded)) {
+          shouldRemove = true;
+          break;
+        }
+      } catch {
+        /* ignore decode errors */
+      }
+    }
+
+    if (!shouldRemove && el instanceof HTMLElement) {
+      const style = el.getAttribute('style');
+      if (style && GOOGLE_TOKEN_REGEX.test(style.toLowerCase())) {
+        shouldRemove = true;
+      }
+    }
+
+    if (shouldRemove) {
+      if (
+        el instanceof HTMLImageElement ||
+        el instanceof SVGImageElement ||
+        el instanceof HTMLVideoElement ||
+        el instanceof HTMLIFrameElement
+      ) {
+        counters.images += 1;
+      } else {
+        counters.backgrounds += 1;
+      }
+      el.remove();
+      continue;
+    }
+
+    for (let i = 0; i < el.children.length; i += 1) {
+      const child = el.children.item(i);
+      if (child) {
+        stack.push(child);
+      }
+    }
+  }
+}
+
+function stripAbsoluteHttpAttributes(root: HTMLElement, counters: Counters): void {
+  const stack: Element[] = [root];
+
+  while (stack.length) {
+    const el = stack.pop();
+    if (!el) continue;
+
+    for (let i = 0; i < el.children.length; i += 1) {
+      const child = el.children.item(i);
+      if (child) {
+        stack.push(child);
+      }
+    }
+
+    const attrs = Array.from(el.attributes);
+    for (const attr of attrs) {
+      const name = attr.name;
+      const lower = name.toLowerCase();
+      const value = attr.value;
+      if (!value) continue;
+
+      if (lower === 'style') {
+        let sanitized = value;
+        if (sanitized.includes('url(')) {
+          const matches = sanitized.match(URL_FUNCTION_SIMPLE_REGEX);
+          if (matches?.length) {
+            counters.backgrounds += matches.length;
+          }
+          sanitized = sanitized.replace(URL_FUNCTION_REGEX, 'none');
+        }
+        if (ABSOLUTE_HTTP_REGEX.test(sanitized)) {
+          counters.backgrounds += 1;
+          sanitized = sanitized.replace(ABSOLUTE_HTTP_REGEX, '');
+        }
+        if (sanitized.trim()) {
+          el.setAttribute('style', sanitized);
+        } else {
+          el.removeAttribute('style');
+        }
+        continue;
+      }
+
+      if (!ABSOLUTE_HTTP_REGEX.test(value)) {
+        continue;
+      }
+
+      const treatAsImage =
+        lower === 'src' ||
+        lower === 'srcset' ||
+        lower === 'poster' ||
+        lower === 'data' ||
+        (lower === 'href' && el instanceof SVGImageElement);
+
+      if (treatAsImage) {
+        counters.images += 1;
+      } else {
+        counters.backgrounds += 1;
+      }
+
+      if (lower === 'src' && el instanceof HTMLImageElement) {
+        el.removeAttribute('srcset');
+        el.setAttribute('src', TRANSPARENT_PIXEL);
+        el.setAttribute('data-skipped-image', value);
+        el.style.backgroundColor = '#f8fafc';
+        el.style.border = '1px solid rgba(148, 163, 184, 0.4)';
+      } else if (lower === 'srcset' && el instanceof HTMLImageElement) {
+        el.removeAttribute('srcset');
+      } else if (lower === 'href' && el instanceof SVGImageElement) {
+        el.remove();
+        break;
+      } else {
+        el.removeAttribute(name);
       }
     }
   }
