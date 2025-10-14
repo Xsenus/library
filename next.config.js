@@ -5,6 +5,21 @@ const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
   images: { unoptimized: true },
 
+  async headers() {
+    const allowOrigin = process.env.NEXT_PUBLIC_SITE_ORIGIN || '*';
+
+    return [
+      {
+        source: '/static/:path*',
+        headers: [
+          { key: 'Access-Control-Allow-Origin', value: allowOrigin },
+          { key: 'Access-Control-Allow-Methods', value: 'GET,HEAD,OPTIONS' },
+          { key: 'Timing-Allow-Origin', value: allowOrigin },
+        ],
+      },
+    ];
+  },
+
   webpack: (config, { dev }) => {
     config.ignoreWarnings = [
       ...(config.ignoreWarnings || []),
