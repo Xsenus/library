@@ -3,6 +3,7 @@ import { isServer } from './is-server';
 export interface CopyImageResult {
   skippedImages: number;
   skippedBackgrounds: number;
+  format: 'png' | 'svg';
 }
 
 export interface CopyImageOptions {
@@ -460,9 +461,32 @@ function serializeCloneToSvg(node: HTMLElement, width: number, height: number, b
   const bgRect = backgroundColor
     ? `<rect width="100%" height="100%" fill="${backgroundColor}" />`
     : '';
-  return `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">` +
-    `${bgRect}<foreignObject width="100%" height="100%">${serialized}</foreignObject></svg>`;
+  return (
+    `<?xml version="1.0" encoding="UTF-8"?>` +
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"` +
+    ` width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"` +
+    `>` +
+    `${bgRect}<foreignObject x="0" y="0" width="100%" height="100%" requiredExtensions="http://www.w3.org/1999/xhtml">` +
+    `${serialized}</foreignObject></svg>`
+  );
+}
+
+function isCanvasBlank(canvas: HTMLCanvasElement): boolean {
+  const ctx = canvas.getContext('2d');
+  if (!ctx) {
+    return true;
+  }
+  try {
+    const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    for (let i = 3; i < imageData.data.length; i += 4) {
+      if (imageData.data[i] !== 0) {
+        return false;
+      }
+    }
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function loadImage(url: string): Promise<HTMLImageElement> {
@@ -525,15 +549,18 @@ export async function copyElementImageToClipboard(
 
   try {
     const canvas = await rasterizeSvg(svgText, width, height, pixelRatio);
+    if (isCanvasBlank(canvas)) {
+      throw new Error('Получилось пустое изображение после рендеринга');
+    }
     const blob = await canvasToBlob(canvas);
     await writeBlobToClipboard(blob);
-    return { skippedImages, skippedBackgrounds };
+    return { skippedImages, skippedBackgrounds, format: 'png' };
   } catch (error) {
-    if (!isSecurityError(error)) {
+    if (!isSecurityError(error) && !(error instanceof Error && /пустое изображение/i.test(error.message))) {
       throw error instanceof Error ? error : new Error(String(error));
     }
 
     await writeSvgToClipboard(svgText);
-    return { skippedImages, skippedBackgrounds };
+    return { skippedImages, skippedBackgrounds, format: 'svg' };
   }
 }

@@ -278,7 +278,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     setCopyHint(null);
 
     try {
-      const { skippedImages, skippedBackgrounds } = await copyElementImageToClipboard(cardRef.current, {
+      const { skippedImages, skippedBackgrounds, format } = await copyElementImageToClipboard(cardRef.current, {
         pixelRatio: 2,
         skipDataAttribute: 'data-copy-skip',
       });
@@ -286,6 +286,9 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       const skippedParts: string[] = [];
       if (skippedImages > 0) skippedParts.push(`без ${skippedImages} внеш. изображ.`);
       if (skippedBackgrounds > 0) skippedParts.push(`без ${skippedBackgrounds} фонов`);
+      if (format === 'svg') {
+        skippedParts.push('в формате SVG');
+      }
 
       setCopyState('success');
       setCopyHint(
