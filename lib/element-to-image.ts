@@ -18,6 +18,13 @@ const URL_FUNCTION_REGEX = /url\(("|'|)([^"')]+)\1\)/gi;
 const GOOGLE_DOMAIN_REGEX = /(google|gstatic|googleapis|googleusercontent|googletag|doubleclick)\./i;
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
+interface ClipboardItemLike {
+  readonly types: readonly string[];
+  getType(type: string): Promise<Blob>;
+}
+
+type ClipboardItemConstructor = new (items: Record<string, Blob>) => ClipboardItemLike;
+
 interface Counters {
   images: number;
   backgrounds: number;
@@ -506,6 +513,14 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
+function getClipboardItemConstructor(): ClipboardItemConstructor | undefined {
+  if (typeof globalThis === 'undefined') {
+    return undefined;
+  }
+  const candidate = (globalThis as { ClipboardItem?: unknown }).ClipboardItem;
+  return typeof candidate === 'function' ? (candidate as ClipboardItemConstructor) : undefined;
+}
+
 async function writeBlobToClipboard(blob: Blob): Promise<void> {
   const win = getWindow();
   const nav = win.navigator;
@@ -513,17 +528,15 @@ async function writeBlobToClipboard(blob: Blob): Promise<void> {
   if (!clipboard || typeof clipboard.write !== 'function') {
     throw new Error('Буфер обмена недоступен в этом браузере');
   }
-  const ClipboardItemCtor =
-    'ClipboardItem' in globalThis
-      ? ((globalThis as Record<string, unknown>)['ClipboardItem'] as
-          | { new (items: Record<string, Blob>): { readonly types?: readonly string[] } }
-          | undefined)
-      : undefined;
+  const ClipboardItemCtor = getClipboardItemConstructor();
   if (!ClipboardItemCtor) {
     throw new Error('Браузер не поддерживает сохранение изображений в буфер обмена');
   }
   const item = new ClipboardItemCtor({ [blob.type]: blob });
-  await clipboard.write([item]);
+  const write = clipboard.write.bind(clipboard) as unknown as (
+    items: ClipboardItemLike[],
+  ) => Promise<void>;
+  await write([item]);
 }
 
 async function writeSvgToClipboard(svgText: string): Promise<void> {
@@ -533,18 +546,16 @@ async function writeSvgToClipboard(svgText: string): Promise<void> {
   if (!clipboard || typeof clipboard.write !== 'function') {
     throw new Error('Буфер обмена недоступен в этом браузере');
   }
-  const ClipboardItemCtor =
-    'ClipboardItem' in globalThis
-      ? ((globalThis as Record<string, unknown>)['ClipboardItem'] as
-          | { new (items: Record<string, Blob>): { readonly types?: readonly string[] } }
-          | undefined)
-      : undefined;
+  const ClipboardItemCtor = getClipboardItemConstructor();
   if (!ClipboardItemCtor) {
     throw new Error('Браузер не поддерживает сохранение изображений в буфер обмена');
   }
   const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
   const item = new ClipboardItemCtor({ 'image/svg+xml': blob });
-  await clipboard.write([item]);
+  const write = clipboard.write.bind(clipboard) as unknown as (
+    items: ClipboardItemLike[],
+  ) => Promise<void>;
+  await write([item]);
 }
 
 function isSecurityError(error: unknown): boolean {
