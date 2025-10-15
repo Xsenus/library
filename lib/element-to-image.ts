@@ -377,6 +377,30 @@ function shouldSkipNode(node: Element, skipAttr?: string | null): boolean {
   return tag === 'script' || tag === 'iframe';
 }
 
+function getElementRect(element: Element): DOMRect {
+  const rect = element.getBoundingClientRect();
+  if (rect.width > 0 || rect.height > 0) {
+    return rect;
+  }
+
+  if (element instanceof HTMLElement) {
+    const width = element.offsetWidth || element.clientWidth;
+    const height = element.offsetHeight || element.clientHeight;
+    return new DOMRect(0, 0, width, height);
+  }
+
+  return rect;
+}
+
+function createTransparentPlaceholder(win: Window, rect: DOMRect): HTMLElement {
+  const placeholder = win.document.createElement('div');
+  placeholder.style.width = `${Math.max(1, Math.round(rect.width))}px`;
+  placeholder.style.height = `${Math.max(1, Math.round(rect.height))}px`;
+  placeholder.style.backgroundColor = 'transparent';
+  placeholder.style.boxSizing = 'border-box';
+  return placeholder;
+}
+
 async function sanitizeElement(
   root: HTMLElement,
   options: CopyImageOptions,
@@ -408,6 +432,75 @@ async function sanitizeElement(
       current.removeAttribute('src');
     }
 
+    if (original instanceof HTMLCanvasElement && current instanceof HTMLCanvasElement) {
+      const rect = getElementRect(original);
+      try {
+        const dataUrl = original.toDataURL('image/png');
+        if (!dataUrl || dataUrl === 'data:,') {
+          throw new Error('empty canvas');
+        }
+        const img = win.document.createElement('img');
+        inlineComputedStyles(original, img, SAFE_FONT_STACK);
+        asyncTasks.push(sanitizeBackground(original, img, counters, dataUrlCache));
+        img.src = dataUrl;
+        current.replaceWith(img);
+      } catch {
+        const placeholder = createTransparentPlaceholder(win, rect);
+        inlineComputedStyles(original, placeholder, SAFE_FONT_STACK);
+        asyncTasks.push(sanitizeBackground(original, placeholder, counters, dataUrlCache));
+        current.replaceWith(placeholder);
+        counters.images += 1;
+      }
+      continue;
+    }
+
+    if (original instanceof HTMLVideoElement && current instanceof HTMLVideoElement) {
+      const rect = getElementRect(original);
+      const placeholder = createTransparentPlaceholder(win, rect);
+      inlineComputedStyles(original, placeholder, SAFE_FONT_STACK);
+      asyncTasks.push(sanitizeBackground(original, placeholder, counters, dataUrlCache));
+      current.replaceWith(placeholder);
+
+      asyncTasks.push(
+        (async () => {
+          let dataUrl: string | null = null;
+          try {
+            if (original.readyState >= 2 && original.videoWidth > 0 && original.videoHeight > 0) {
+              const tempCanvas = win.document.createElement('canvas');
+              tempCanvas.width = original.videoWidth;
+              tempCanvas.height = original.videoHeight;
+              const ctx = tempCanvas.getContext('2d');
+              if (ctx) {
+                ctx.drawImage(original, 0, 0, original.videoWidth, original.videoHeight);
+                dataUrl = tempCanvas.toDataURL('image/png');
+              }
+            }
+          } catch {
+            dataUrl = null;
+          }
+
+          if (!dataUrl && original.poster && !isProbablyExternal(original.poster)) {
+            try {
+              dataUrl = await fetchAsDataUrl(original.poster, dataUrlCache);
+            } catch {
+              dataUrl = null;
+            }
+          }
+
+          if (dataUrl) {
+            const img = win.document.createElement('img');
+            inlineComputedStyles(original, img, SAFE_FONT_STACK);
+            await sanitizeBackground(original, img, counters, dataUrlCache);
+            img.src = dataUrl;
+            placeholder.replaceWith(img);
+          } else {
+            counters.images += 1;
+          }
+        })(),
+      );
+      continue;
+    }
+
     inlineComputedStyles(original, current, SAFE_FONT_STACK);
     asyncTasks.push(sanitizeBackground(original, current, counters, dataUrlCache));
 
@@ -417,28 +510,6 @@ async function sanitizeElement(
 
     if (original instanceof SVGImageElement && current instanceof SVGImageElement) {
       asyncTasks.push(sanitizeSvgImage(original, current, counters, dataUrlCache));
-    }
-
-    if (original instanceof HTMLCanvasElement && current instanceof HTMLCanvasElement) {
-      counters.images += 1;
-      const placeholder = win.document.createElement('div');
-      const rect = original.getBoundingClientRect();
-      placeholder.style.width = `${rect.width}px`;
-      placeholder.style.height = `${rect.height}px`;
-      placeholder.style.backgroundColor = 'transparent';
-      current.replaceWith(placeholder);
-      continue;
-    }
-
-    if (original instanceof HTMLVideoElement && current instanceof HTMLVideoElement) {
-      counters.images += 1;
-      const placeholder = win.document.createElement('div');
-      const rect = original.getBoundingClientRect();
-      placeholder.style.width = `${rect.width}px`;
-      placeholder.style.height = `${rect.height}px`;
-      placeholder.style.backgroundColor = 'transparent';
-      current.replaceWith(placeholder);
-      continue;
     }
 
     const originalChildren = Array.from(original.children);
