@@ -688,9 +688,13 @@ function serializeCloneToSvg(
   backgroundColor?: string,
 ): string {
   const serializer = new XMLSerializer();
-  const serialized = serializer.serializeToString(node);
+  const prepared = node.cloneNode(true) as HTMLElement;
   const roundedWidth = Math.max(1, Math.round(width));
   const roundedHeight = Math.max(1, Math.round(height));
+  prepared.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+  prepared.style.width = `${roundedWidth}px`;
+  prepared.style.height = `${roundedHeight}px`;
+  const serialized = serializer.serializeToString(prepared);
   const bgRect = backgroundColor
     ? `<rect width="100%" height="100%" fill="${backgroundColor}" />`
     : '';
@@ -699,7 +703,7 @@ function serializeCloneToSvg(
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"` +
     ` width="${roundedWidth}" height="${roundedHeight}" viewBox="0 0 ${roundedWidth} ${roundedHeight}"` +
     `>` +
-    `${bgRect}<foreignObject x="0" y="0" width="100%" height="100%" requiredExtensions="http://www.w3.org/1999/xhtml">` +
+    `${bgRect}<foreignObject x="0" y="0" width="${roundedWidth}" height="${roundedHeight}" style="width:${roundedWidth}px;height:${roundedHeight}px;" xmlns="http://www.w3.org/1999/xhtml">` +
     `${serialized}</foreignObject></svg>`
   );
 }
@@ -785,7 +789,7 @@ export async function copyElementImageToClipboard(
   if ('style' in node) {
     (node as HTMLElement).style.backgroundColor = backgroundColor;
   }
-  const svgText = serializeCloneToSvg(node.cloneNode(true) as HTMLElement, width, height, backgroundColor);
+  const svgText = serializeCloneToSvg(node, width, height, backgroundColor);
 
   try {
     const canvas = await rasterizeSvg(svgText, width, height, pixelRatio, backgroundColor);
