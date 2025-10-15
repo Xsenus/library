@@ -18,6 +18,7 @@ const XLINK_NS = 'http://www.w3.org/1999/xlink';
 const URL_FUNCTION_REGEX = /url\(("|'|)([^"')]+)\1\)/gi;
 const GOOGLE_DOMAIN_REGEX = /(google|gstatic|googleapis|googleusercontent|googletag|doubleclick)\./i;
 const SAFE_FONT_STACK = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+let cachedCssText: string | null = null;
 const URL_BASED_STYLE_PROPS: Array<keyof CSSStyleDeclaration> = [
   'borderImage',
   'borderImageSource',
@@ -33,6 +34,179 @@ const URL_BASED_STYLE_PROPS: Array<keyof CSSStyleDeclaration> = [
   'shapeOutside',
   'shapeImageThreshold',
 ];
+
+const STYLE_ALLOWLIST = new Set<string>([
+  'color',
+  'background',
+  'background-color',
+  'background-image',
+  'background-position',
+  'background-size',
+  'background-repeat',
+  'background-clip',
+  'background-origin',
+  'background-attachment',
+  'background-blend-mode',
+  'box-shadow',
+  'box-sizing',
+  'display',
+  'flex',
+  'flex-direction',
+  'flex-wrap',
+  'flex-basis',
+  'flex-grow',
+  'flex-shrink',
+  'align-items',
+  'align-content',
+  'align-self',
+  'justify-content',
+  'justify-items',
+  'justify-self',
+  'place-content',
+  'place-items',
+  'place-self',
+  'gap',
+  'row-gap',
+  'column-gap',
+  'grid-template-columns',
+  'grid-template-rows',
+  'grid-auto-columns',
+  'grid-auto-rows',
+  'grid-column',
+  'grid-row',
+  'grid-column-start',
+  'grid-column-end',
+  'grid-row-start',
+  'grid-row-end',
+  'width',
+  'height',
+  'min-width',
+  'min-height',
+  'max-width',
+  'max-height',
+  'padding',
+  'padding-top',
+  'padding-right',
+  'padding-bottom',
+  'padding-left',
+  'margin',
+  'margin-top',
+  'margin-right',
+  'margin-bottom',
+  'margin-left',
+  'border',
+  'border-color',
+  'border-style',
+  'border-width',
+  'border-top',
+  'border-right',
+  'border-bottom',
+  'border-left',
+  'border-radius',
+  'border-top-left-radius',
+  'border-top-right-radius',
+  'border-bottom-left-radius',
+  'border-bottom-right-radius',
+  'border-collapse',
+  'border-spacing',
+  'outline',
+  'outline-color',
+  'outline-style',
+  'outline-width',
+  'position',
+  'top',
+  'right',
+  'bottom',
+  'left',
+  'inset',
+  'transform',
+  'transform-origin',
+  'opacity',
+  'overflow',
+  'overflow-x',
+  'overflow-y',
+  'white-space',
+  'word-break',
+  'word-wrap',
+  'text-overflow',
+  'text-align',
+  'text-decoration',
+  'text-transform',
+  'text-shadow',
+  'text-indent',
+  'vertical-align',
+  'line-height',
+  'letter-spacing',
+  'font',
+  'font-family',
+  'font-size',
+  'font-weight',
+  'font-style',
+  'font-stretch',
+  'font-variant',
+  'font-feature-settings',
+  'font-kerning',
+  'font-synthesis',
+  'font-variation-settings',
+  'list-style',
+  'list-style-type',
+  'list-style-position',
+  'list-style-image',
+  'background-clip',
+  'background-origin',
+  'background-attachment',
+  'cursor',
+  'visibility',
+  'box-decoration-break',
+  'clip-path',
+  'filter',
+  'backdrop-filter',
+  'pointer-events',
+  'z-index',
+]);
+
+function isAllowedStyleProperty(property: string): boolean {
+  if (property.startsWith('--')) {
+    return false;
+  }
+  if (STYLE_ALLOWLIST.has(property)) {
+    return true;
+  }
+  if (property.startsWith('border-')) {
+    return true;
+  }
+  if (property.startsWith('padding-')) {
+    return true;
+  }
+  if (property.startsWith('margin-')) {
+    return true;
+  }
+  if (property.startsWith('font-')) {
+    return true;
+  }
+  if (property.startsWith('grid-')) {
+    return true;
+  }
+  if (property.startsWith('list-style-')) {
+    return true;
+  }
+  if (property.startsWith('text-') && property !== 'text-rendering') {
+    return true;
+  }
+  if (property.startsWith('align-') || property.startsWith('justify-')) {
+    return true;
+  }
+  if (property.startsWith('place-')) {
+    return true;
+  }
+  if (property.startsWith('background-')) {
+    return true;
+  }
+  if (property.startsWith('box-shadow')) {
+    return true;
+  }
+  return false;
+}
 
 async function blobToDataUrl(blob: Blob): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -175,6 +349,28 @@ function getWindow(): Window {
   return window;
 }
 
+function getCombinedCssText(): string {
+  if (cachedCssText != null) {
+    return cachedCssText;
+  }
+  const win = getWindow();
+  const cssPieces: string[] = [];
+  const sheets = Array.from(win.document.styleSheets) as CSSStyleSheet[];
+  sheets.forEach((sheet) => {
+    try {
+      const rules = sheet.cssRules;
+      if (!rules) return;
+      for (let i = 0; i < rules.length; i += 1) {
+        cssPieces.push(rules[i].cssText);
+      }
+    } catch {
+      /* ignore cross-origin styles */
+    }
+  });
+  cachedCssText = cssPieces.join('\n');
+  return cachedCssText;
+}
+
 function isDataUrl(url: string | null | undefined): boolean {
   return !!url && url.startsWith('data:');
 }
@@ -290,6 +486,9 @@ function inlineComputedStyles(original: Element, clone: Element, fontStack: stri
   const target = (clone as HTMLElement | SVGElement).style;
   for (let i = 0; i < computed.length; i += 1) {
     const prop = computed[i];
+    if (!isAllowedStyleProperty(prop)) {
+      continue;
+    }
     target.setProperty(prop, computed.getPropertyValue(prop));
   }
   target.setProperty('font-family', fontStack);
@@ -695,16 +894,20 @@ function serializeCloneToSvg(
   prepared.style.width = `${roundedWidth}px`;
   prepared.style.height = `${roundedHeight}px`;
   const serialized = serializer.serializeToString(prepared);
+  const cssText = getCombinedCssText();
+  const styleBlock = cssText
+    ? `<style xmlns="http://www.w3.org/1999/xhtml"><![CDATA[${cssText}]]></style>`
+    : '';
   const bgRect = backgroundColor
     ? `<rect width="100%" height="100%" fill="${backgroundColor}" />`
     : '';
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +
-    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"` +
+    `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xhtml="http://www.w3.org/1999/xhtml"` +
     ` width="${roundedWidth}" height="${roundedHeight}" viewBox="0 0 ${roundedWidth} ${roundedHeight}"` +
     `>` +
-    `${bgRect}<foreignObject x="0" y="0" width="${roundedWidth}" height="${roundedHeight}" style="width:${roundedWidth}px;height:${roundedHeight}px;" xmlns="http://www.w3.org/1999/xhtml">` +
-    `${serialized}</foreignObject></svg>`
+    `${bgRect}<foreignObject x="0" y="0" width="${roundedWidth}" height="${roundedHeight}" requiredExtensions="http://www.w3.org/1999/xhtml" style="width:${roundedWidth}px;height:${roundedHeight}px;" xmlns="http://www.w3.org/1999/xhtml">` +
+    `${styleBlock}${serialized}</foreignObject></svg>`
   );
 }
 
@@ -729,11 +932,7 @@ function isCanvasBlank(canvas: HTMLCanvasElement): boolean {
 function loadImage(url: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
-    try {
-      img.crossOrigin = 'anonymous';
-    } catch {
-      /* ignore */
-    }
+    img.decoding = 'async';
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('Не удалось отрисовать изображение'));
     img.src = url;
@@ -746,7 +945,7 @@ async function rasterizeSvg(
   height: number,
   pixelRatio: number,
   backgroundColor: string,
-): Promise<HTMLCanvasElement> {
+): Promise<{ canvas: HTMLCanvasElement; imageWidth: number; imageHeight: number }> {
   const win = getWindow();
   const canvas = win.document.createElement('canvas');
   const scaledWidth = Math.max(1, Math.round(width * pixelRatio));
@@ -760,19 +959,41 @@ async function rasterizeSvg(
     throw new Error('Не удалось создать контекст рисования');
   }
 
-  ctx.fillStyle = backgroundColor;
-  ctx.fillRect(0, 0, scaledWidth, scaledHeight);
-
   const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  try {
-    const img = await loadImage(url);
+  const dataUrl = `data:image/svg+xml;charset=utf-8,${encodeURIComponent(svgText)}`;
+
+  const attemptBitmap = async (): Promise<boolean> => {
+    if (typeof createImageBitmap !== 'function') {
+      return false;
+    }
+    try {
+      const bitmap = await createImageBitmap(blob);
+      ctx.clearRect(0, 0, scaledWidth, scaledHeight);
+      ctx.drawImage(bitmap, 0, 0, scaledWidth, scaledHeight);
+      bitmap.close();
+      return !isCanvasBlank(canvas);
+    } catch {
+      return false;
+    }
+  };
+
+  let rendered = await attemptBitmap();
+  if (!rendered) {
+    const img = await loadImage(dataUrl);
+    ctx.clearRect(0, 0, scaledWidth, scaledHeight);
     ctx.drawImage(img, 0, 0, scaledWidth, scaledHeight);
-  } finally {
-    URL.revokeObjectURL(url);
+    rendered = !isCanvasBlank(canvas);
+    if (!rendered) {
+      throw new Error('Не удалось отрисовать содержимое SVG');
+    }
   }
 
-  return canvas;
+  ctx.globalCompositeOperation = 'destination-over';
+  ctx.fillStyle = backgroundColor;
+  ctx.fillRect(0, 0, scaledWidth, scaledHeight);
+  ctx.globalCompositeOperation = 'source-over';
+
+  return { canvas, imageWidth: scaledWidth, imageHeight: scaledHeight };
 }
 
 export async function copyElementImageToClipboard(
@@ -792,7 +1013,13 @@ export async function copyElementImageToClipboard(
   const svgText = serializeCloneToSvg(node, width, height, backgroundColor);
 
   try {
-    const canvas = await rasterizeSvg(svgText, width, height, pixelRatio, backgroundColor);
+    const { canvas } = await rasterizeSvg(
+      svgText,
+      width,
+      height,
+      pixelRatio,
+      backgroundColor,
+    );
     if (isCanvasBlank(canvas)) {
       throw new Error('Получилось пустое изображение после рендеринга');
     }
