@@ -316,8 +316,8 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     let cancelled = false;
     setGptAvailable(null);
 
-    const id = equipment?.id ? String(equipment.id) : null;
-    if (!id) {
+    const equipmentId = equipment?.id ? String(equipment.id) : null;
+    if (!equipmentId) {
       setGptImages({ old: null, cryo: null });
       setGptAvailable(false);
       return;
@@ -340,10 +340,12 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       });
     }
 
+    const stableEquipmentId = equipmentId as string;
+
     async function resolveKey(key: GptImageKey): Promise<string | null> {
       const extensions = Array.from(GPT_IMAGE_EXTENSIONS);
       for (const ext of extensions) {
-        const candidate = buildGptImageUrl(id, key, ext);
+        const candidate = buildGptImageUrl(stableEquipmentId, key, ext);
         const ok = await probe(candidate);
         if (cancelled) return null;
         if (ok) return candidate;

@@ -508,31 +508,33 @@ function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
 
 async function writeBlobToClipboard(blob: Blob): Promise<void> {
   const win = getWindow();
-  const nav = win.navigator as Navigator & { ClipboardItem?: typeof ClipboardItem };
-  if (!nav.clipboard || typeof nav.clipboard.write !== 'function') {
+  const nav = win.navigator;
+  const clipboard = nav.clipboard;
+  if (!clipboard || typeof clipboard.write !== 'function') {
     throw new Error('Буфер обмена недоступен в этом браузере');
   }
-  const ClipboardItemCtor = win.ClipboardItem || (nav as any).ClipboardItem;
+  const ClipboardItemCtor = typeof ClipboardItem !== 'undefined' ? ClipboardItem : undefined;
   if (!ClipboardItemCtor) {
     throw new Error('Браузер не поддерживает сохранение изображений в буфер обмена');
   }
   const item = new ClipboardItemCtor({ [blob.type]: blob });
-  await nav.clipboard.write([item]);
+  await clipboard.write([item]);
 }
 
 async function writeSvgToClipboard(svgText: string): Promise<void> {
   const win = getWindow();
-  const nav = win.navigator as Navigator & { ClipboardItem?: typeof ClipboardItem };
-  if (!nav.clipboard || typeof nav.clipboard.write !== 'function') {
+  const nav = win.navigator;
+  const clipboard = nav.clipboard;
+  if (!clipboard || typeof clipboard.write !== 'function') {
     throw new Error('Буфер обмена недоступен в этом браузере');
   }
-  const ClipboardItemCtor = win.ClipboardItem || (nav as any).ClipboardItem;
+  const ClipboardItemCtor = typeof ClipboardItem !== 'undefined' ? ClipboardItem : undefined;
   if (!ClipboardItemCtor) {
     throw new Error('Браузер не поддерживает сохранение изображений в буфер обмена');
   }
   const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
   const item = new ClipboardItemCtor({ 'image/svg+xml': blob });
-  await nav.clipboard.write([item]);
+  await clipboard.write([item]);
 }
 
 function isSecurityError(error: unknown): boolean {
