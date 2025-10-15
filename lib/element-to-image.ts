@@ -121,6 +121,62 @@ function extractUrls(value: string): string[] {
   return urls;
 }
 
+function sanitizeExternalAttributes(element: Element): void {
+  const attributes = Array.from(element.attributes);
+  attributes.forEach((attr) => {
+    const name = attr.name;
+    const lowerName = name.toLowerCase();
+    const value = attr.value;
+
+    if (!value) return;
+    if (lowerName === 'style' || lowerName === 'class' || lowerName === 'id') return;
+    if (lowerName.startsWith('aria-')) return;
+    if (lowerName.startsWith('data-')) return;
+    if (lowerName === 'xmlns' || lowerName.startsWith('xmlns:') || lowerName.startsWith('xml:')) return;
+
+    if (lowerName === 'srcset') {
+      const tokens = value
+        .split(',')
+        .map((token) => token.trim().split(' ')[0])
+        .filter(Boolean);
+      if (tokens.some((token) => isProbablyExternal(token))) {
+        element.removeAttribute(name);
+      }
+      return;
+    }
+
+    if (
+      lowerName === 'href' ||
+      lowerName === 'xlink:href' ||
+      lowerName === 'src' ||
+      lowerName === 'poster' ||
+      lowerName === 'action' ||
+      lowerName === 'formaction' ||
+      lowerName === 'data'
+    ) {
+      if (!isProbablyExternal(value)) {
+        return;
+      }
+
+      if (lowerName === 'href' || lowerName === 'xlink:href') {
+        element.setAttribute(name, '#');
+        if (lowerName === 'xlink:href') {
+          element.setAttributeNS(XLINK_NS, 'href', '#');
+        }
+      } else if (lowerName === 'src' && element instanceof HTMLImageElement) {
+        element.setAttribute(name, TRANSPARENT_PIXEL);
+      } else {
+        element.removeAttribute(name);
+      }
+      return;
+    }
+
+    if (/https?:/i.test(value) || value.startsWith('//')) {
+      element.removeAttribute(name);
+    }
+  });
+}
+
 function gatherImageUrls(img: HTMLImageElement): string[] {
   const urls = new Set<string>();
   if (img.currentSrc) urls.add(img.currentSrc);
@@ -397,6 +453,18 @@ async function sanitizeElement(
   }
 
   await Promise.all(asyncTasks);
+
+  const attrQueue: Element[] = [clone];
+  while (attrQueue.length > 0) {
+    const current = attrQueue.shift()!;
+    if (current instanceof HTMLStyleElement || current instanceof HTMLLinkElement) {
+      current.remove();
+      continue;
+    }
+    sanitizeExternalAttributes(current);
+    const children = Array.from(current.children);
+    children.forEach((child) => attrQueue.push(child));
+  }
 
   return {
     node: clone,
