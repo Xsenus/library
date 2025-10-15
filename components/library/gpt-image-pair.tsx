@@ -3,12 +3,16 @@
 import { useEffect, useState } from 'react';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
+import {
+  buildGptImageUrl,
+  GPT_IMAGE_EXTENSIONS,
+  GPT_IMAGE_KEYS,
+  type GptImageKey,
+} from '@/lib/gpt-images';
 
-type Key = 'old' | 'cryo';
+type Key = GptImageKey;
 
 type StatusMap = Record<Key, boolean>;
-
-const GPT_IMAGES_BASE = process.env.NEXT_PUBLIC_GPT_IMAGES_BASE ?? '/static/';
 
 const LABELS: Record<Key, string> = {
   old: 'Традиционная очистка',
@@ -26,6 +30,7 @@ type Props = {
   className?: string;
   labelTone?: Partial<Record<Key, string>>;
   onStatusChange?: (status: StatusMap) => void;
+  prefetchedUrls?: Partial<Record<Key, string | null>>;
 };
 
 export function GptImagePair({
@@ -34,16 +39,14 @@ export function GptImagePair({
   className,
   labelTone,
   onStatusChange,
+  prefetchedUrls,
 }: Props) {
-  const id = equipmentId ? String(equipmentId) : null;
+  const hasEquipment = equipmentId != null;
   const [exists, setExists] = useState<Record<Key, boolean | null>>({ old: null, cryo: null });
-
-  const items: Array<{ key: Key; url: string }> = id
-    ? [
-        { key: 'old', url: `${GPT_IMAGES_BASE}${id}_old.jpg` },
-        { key: 'cryo', url: `${GPT_IMAGES_BASE}${id}_cryo.jpg` },
-      ]
-    : [];
+  const [resolvedUrls, setResolvedUrls] = useState<Record<Key, string | null>>({
+    old: null,
+    cryo: null,
+  });
 
   useEffect(() => {
     let cancelled = false;
@@ -65,20 +68,53 @@ export function GptImagePair({
       });
     }
 
+    const id = equipmentId != null ? String(equipmentId) : null;
+
     (async () => {
       if (!id) {
-        if (!cancelled) setExists({ old: false, cryo: false });
+        if (!cancelled) {
+          setExists({ old: false, cryo: false });
+          setResolvedUrls({ old: null, cryo: null });
+        }
         return;
       }
-      const [oldUrl, cryoUrl] = [`${GPT_IMAGES_BASE}${id}_old.jpg`, `${GPT_IMAGES_BASE}${id}_cryo.jpg`];
-      const [oldOk, cryoOk] = await Promise.all([probe(oldUrl), probe(cryoUrl)]);
-      if (!cancelled) setExists({ old: oldOk, cryo: cryoOk });
+      setExists({ old: null, cryo: null });
+      setResolvedUrls({ old: null, cryo: null });
+
+      async function resolveKey(key: Key, baseId: string): Promise<string | null> {
+        const prefetched = prefetchedUrls?.[key];
+        if (prefetched !== undefined) {
+          return prefetched;
+        }
+        for (const ext of GPT_IMAGE_EXTENSIONS) {
+          const candidate = buildGptImageUrl(baseId, key, ext);
+          const ok = await probe(candidate);
+          if (cancelled) return null;
+          if (ok) return candidate;
+        }
+        return null;
+      }
+
+      const results = await Promise.all(
+        GPT_IMAGE_KEYS.map(async (key) => ({ key, url: await resolveKey(key, id) })),
+      );
+      if (cancelled) return;
+
+      const nextUrls: Record<Key, string | null> = { old: null, cryo: null };
+      const nextExists: Record<Key, boolean> = { old: false, cryo: false };
+      for (const { key, url } of results) {
+        nextUrls[key] = url ?? null;
+        nextExists[key] = Boolean(url);
+      }
+
+      setResolvedUrls(nextUrls);
+      setExists({ old: nextExists.old, cryo: nextExists.cryo });
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [id]);
+  }, [equipmentId, prefetchedUrls]);
 
   useEffect(() => {
     if (!onStatusChange) return;
@@ -87,22 +123,18 @@ export function GptImagePair({
     onStatusChange({ old, cryo });
   }, [exists, onStatusChange]);
 
-  const renderTile = (key: Key, url: string) => {
+  const renderTile = (key: Key) => {
     const status = exists[key];
     const label = LABELS[key];
     const alt = ALTS[key];
     const tone = labelTone?.[key];
+    const url = resolvedUrls[key];
     const labelClassName = cn(
       'text-xs font-semibold uppercase tracking-wide',
       tone ?? 'text-muted-foreground',
     );
 
     const wrapperCls = 'relative h-[300px] w-full rounded-md overflow-hidden bg-muted';
-    const content = (
-      <div className={wrapperCls}>
-        <NextImage src={url} alt={alt} fill sizes="50vw" className="object-contain" unoptimized />
-      </div>
-    );
 
     if (status === null) {
       return (
@@ -113,7 +145,7 @@ export function GptImagePair({
       );
     }
 
-    if (status === false) {
+    if (!status || !url) {
       return (
         <div className="space-y-2" key={key}>
           <div className={labelClassName}>{label}</div>
@@ -133,14 +165,22 @@ export function GptImagePair({
             className="w-full transition hover:ring-1 hover:ring-primary/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
             onClick={() => onSelect(url)}
             title={label}>
-            {content}
+            <div className={wrapperCls}>
+              <NextImage src={url} alt={alt} fill sizes="50vw" className="object-contain" unoptimized />
+            </div>
           </button>
         ) : (
-          content
+          <div className={wrapperCls}>
+            <NextImage src={url} alt={alt} fill sizes="50vw" className="object-contain" unoptimized />
+          </div>
         )}
       </div>
     );
   };
 
-  return <div className={cn('grid gap-3 sm:grid-cols-2', className)}>{items.map(({ key, url }) => renderTile(key, url))}</div>;
+  return (
+    <div className={cn('grid gap-3 sm:grid-cols-2', className)}>
+      {hasEquipment ? GPT_IMAGE_KEYS.map((key) => renderTile(key)) : null}
+    </div>
+  );
 }

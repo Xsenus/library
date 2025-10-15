@@ -8,22 +8,26 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { ExternalLink, X, Copy, ArrowUpRight } from 'lucide-react';
+import { ExternalLink, X, Copy, ArrowUpRight, Camera, Loader2 } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
 // import { GoogleImagesCarousel } from './google-images-carousel';
 import type { OkvedByEquipment } from '@/lib/validators';
-import SquareImgButton from './square-img-button';
 import { GptImagePair } from './gpt-image-pair';
+import { copyElementImageToClipboard } from '@/lib/element-to-image';
+import {
+  buildGptImageUrl,
+  GPT_IMAGE_EXTENSIONS,
+  type GptImageKey,
+} from '@/lib/gpt-images';
 
 interface EquipmentCardProps {
   equipment: EquipmentDetail;
   onEsConfirmChange?: (equipmentId: number, confirmed: boolean) => void;
 }
 
-const GPT_IMAGES_BASE = process.env.NEXT_PUBLIC_GPT_IMAGES_BASE ?? '/static/';
 type ImgSection = 'google-images' | 'gpt-images';
 const OPEN_KEY = 'lib:img-accordion-open';
 const IMG_SECTIONS: ImgSection[] = ['google-images', 'gpt-images'];
@@ -139,15 +143,39 @@ const EsBadge = ({
 };
 
 export function EquipmentCard({ equipment }: EquipmentCardProps) {
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [showUtp, setShowUtp] = useState(false);
   const [showMail, setShowMail] = useState(false);
+  const [copyState, setCopyState] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [copyHint, setCopyHint] = useState<string | null>(null);
+  const copyResetTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  const scheduleCopyReset = () => {
+    if (copyResetTimer.current) {
+      clearTimeout(copyResetTimer.current);
+    }
+    copyResetTimer.current = setTimeout(() => {
+      setCopyState('idle');
+      setCopyHint(null);
+      copyResetTimer.current = null;
+    }, 3200);
+  };
+
+  useEffect(() => {
+    return () => {
+      if (copyResetTimer.current) {
+        clearTimeout(copyResetTimer.current);
+      }
+    };
+  }, []);
 
   // Храним/восстанавливаем массив открытых секций для каждой записи
   const [openSections, setOpenSections] = useImgAccordionState(equipment?.id);
 
   /** Доступность GPT-картинок: null = проверяем, false = нет, true = есть */
   const [gptAvailable, setGptAvailable] = useState<boolean | null>(null);
+  const [gptImages, setGptImages] = useState<Record<GptImageKey, string | null> | null>(null);
   /** Флаг «мы уже один раз авто-раскрыли GPT» для этой карточки */
   const [autoOpenedGPT, setAutoOpenedGPT] = useState(false);
 
@@ -248,18 +276,52 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   const blueBtn =
     'border border-blue-500 text-blue-600 bg-blue-50 hover:bg-blue-100 active:scale-[.98] transition justify-center';
 
+  const handleCopyCard = async () => {
+    if (!cardRef.current || copyState === 'loading') return;
+    setCopyState('loading');
+    setCopyHint(null);
+
+    try {
+      const { skippedImages, skippedBackgrounds, format } = await copyElementImageToClipboard(cardRef.current, {
+        pixelRatio: 2,
+        skipDataAttribute: 'data-copy-skip',
+      });
+
+      const skippedParts: string[] = [];
+      if (skippedImages > 0) skippedParts.push(`без ${skippedImages} внеш. изображ.`);
+      if (skippedBackgrounds > 0) skippedParts.push(`без ${skippedBackgrounds} фонов`);
+      if (format === 'svg') {
+        skippedParts.push('в формате SVG');
+      }
+
+      setCopyState('success');
+      setCopyHint(
+        skippedParts.length > 0
+          ? `Карточка скопирована (${skippedParts.join(', ')})`
+          : 'Карточка скопирована',
+      );
+      scheduleCopyReset();
+    } catch (error) {
+      console.error('Failed to copy equipment card', error);
+      const message =
+        error instanceof Error ? error.message : 'Не удалось скопировать карточку оборудования';
+      setCopyState('error');
+      setCopyHint(message);
+      scheduleCopyReset();
+    }
+  };
+
   /** ===== Проверка наличия GPT-картинок — до открытия секции ===== */
   useEffect(() => {
     let cancelled = false;
     setGptAvailable(null);
 
-    const id = equipment?.id ? String(equipment.id) : null;
-    if (!id) {
+    const equipmentId = equipment?.id ? String(equipment.id) : null;
+    if (!equipmentId) {
+      setGptImages({ old: null, cryo: null });
       setGptAvailable(false);
       return;
     }
-
-    const urls = [`${GPT_IMAGES_BASE}${id}_old.jpg`, `${GPT_IMAGES_BASE}${id}_cryo.jpg`];
 
     async function probe(url: string): Promise<boolean> {
       try {
@@ -278,10 +340,26 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
       });
     }
 
+    const stableEquipmentId = equipmentId as string;
+
+    async function resolveKey(key: GptImageKey): Promise<string | null> {
+      const extensions = Array.from(GPT_IMAGE_EXTENSIONS);
+      for (const ext of extensions) {
+        const candidate = buildGptImageUrl(stableEquipmentId, key, ext);
+        const ok = await probe(candidate);
+        if (cancelled) return null;
+        if (ok) return candidate;
+      }
+      return null;
+    }
+
+    setGptImages(null);
+
     (async () => {
-      const [a, b] = await Promise.all(urls.map((u) => probe(u)));
+      const [oldUrl, cryoUrl] = await Promise.all([resolveKey('old'), resolveKey('cryo')]);
       if (cancelled) return;
-      setGptAvailable(!!(a || b));
+      setGptImages({ old: oldUrl, cryo: cryoUrl });
+      setGptAvailable(Boolean(oldUrl || cryoUrl));
     })();
 
     return () => {
@@ -520,7 +598,43 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
 
   return (
     <div className="space-y-4 pb-[1cm]">
-      <Card>
+      <Card ref={cardRef} className="relative">
+        <div
+          data-copy-skip="1"
+          className="pointer-events-auto absolute right-4 top-4 z-10 flex items-center gap-2"
+        >
+          <Button
+            type="button"
+            variant="outline"
+            size="icon"
+            onClick={handleCopyCard}
+            title="Скопировать карточку в буфер обмена"
+            aria-label="Скопировать карточку в буфер обмена"
+            disabled={copyState === 'loading'}
+            className="shadow-sm"
+          >
+            {copyState === 'loading' ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Camera className="h-4 w-4" />
+            )}
+          </Button>
+          {copyHint && (
+            <span
+              data-copy-skip="1"
+              className={cn(
+                'rounded-md border px-2 py-1 text-xs shadow-sm backdrop-blur-sm',
+                copyState === 'error'
+                  ? 'border-red-500/40 bg-red-500/10 text-red-700 dark:text-red-400'
+                  : 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400',
+              )}
+              role="status"
+              aria-live="polite"
+            >
+              {copyHint}
+            </span>
+          )}
+        </div>
         <CardHeader className="p-3 sm:p-4 pb-2">
           <CardTitle
             className={cn('text-base font-semibold leading-6 transition-colors', titleToneCls)}>
@@ -553,7 +667,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           </div>
         </CardHeader>
 
-        <CardContent className="p-3 sm:p-4 pt-2 space-y-3">
+        <CardContent className="p-3 sm:p-4 pt-2 pb-5 space-y-3">
           {/* Описание устройства */}
           {equipment.description && (
             <div className="space-y-1.5">
@@ -632,6 +746,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                         equipmentId={equipment.id}
                         onSelect={(url) => setSelectedImage(url)}
                         labelTone={{ old: 'text-[#ef944d]', cryo: 'text-[#ef944d]' }}
+                        prefetchedUrls={gptImages ?? undefined}
                       />
                     ) : (
                       <div className="text-xs text-muted-foreground">ID оборудования не задан.</div>
@@ -698,28 +813,26 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           <Sep />
 
           {/* Ряд действий */}
-          <div className="flex flex-wrap items-center gap-1.5 pb-1">
-            <Button size="sm" onClick={() => setShowUtp(true)} className={blueBtn}>
-              📣 УТП
-            </Button>
-            <Button size="sm" onClick={() => setShowMail(true)} className={blueBtn}>
-              ✉ Письмо
-            </Button>
-            <Button size="sm" asChild className={blueBtn}>
-              <a href={googleImagesUrl} target="_blank" rel="noopener noreferrer">
+            <div className="flex flex-wrap items-center gap-1.5 pb-1">
+            <Button size="sm" asChild className={blueBtn} data-copy-skip="1">
+              <a
+                href={googleImagesUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-copy-skip="1"
+              >
                 Картинки Google
               </a>
             </Button>
-            <Button size="sm" asChild className={blueBtn}>
-              <a href={googleTextUrl} target="_blank" rel="noopener noreferrer">
+            <Button size="sm" asChild className={blueBtn} data-copy-skip="1">
+              <a
+                href={googleTextUrl}
+                target="_blank"
+                rel="noopener noreferrer"
+                data-copy-skip="1"
+              >
                 Описание Google
               </a>
-            </Button>
-            <Button size="sm" className={blueBtn} disabled={!equipment.company_id}>
-              Компания
-            </Button>{' '}
-            <Button size="sm" onClick={() => setShowText(true)} className={blueBtn}>
-              ТЕКСТ
             </Button>
           </div>
 
@@ -753,8 +866,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
               <table className="w-full text-[11px] leading-4">
                 <thead className="bg-muted/50">
                   <tr className="text-left">
-                    <th className="px-1 py-0.5 w-[30px] "></th>
-                    <th className="px-1 py-0.5 w-[40px]">Код</th>
+                    <th className="px-1 py-0.5 w-[60px]">Код</th>
                     <th className="px-1 py-0.5">Наименование</th>
                   </tr>
                 </thead>
@@ -778,20 +890,6 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                   {!okvedLoading &&
                     okvedList.map((row) => (
                       <tr key={row.id} className="border-t hover:bg-muted/40 leading-4">
-                        <td className="p-0 align-middle w-[30px]">
-                          <SquareImgButton
-                            icon="okved"
-                            title="Открыть ОКВЭД"
-                            onClick={() =>
-                              window.open(
-                                `/library?tab=okved&okved=${encodeURIComponent(row.okved_code)}`,
-                                '_blank',
-                              )
-                            }
-                            className="mx-auto my-[2px]"
-                            sizeClassName="h-7 w-7"
-                          />
-                        </td>
                         <td className="px-1 py-0.5 font-medium whitespace-nowrap">
                           {row.okved_code}
                         </td>
