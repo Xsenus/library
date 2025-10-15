@@ -81,6 +81,40 @@ type Counters = {
   backgrounds: number;
 };
 
+function measureElementDimensions(element: HTMLElement, win: Window): { width: number; height: number } {
+  const rect = element.getBoundingClientRect();
+  let width = rect.width;
+  let height = rect.height;
+
+  if (width === 0 || height === 0) {
+    const computed = win.getComputedStyle(element);
+    const parsedWidth = parseFloat(computed.width || '0');
+    const parsedHeight = parseFloat(computed.height || '0');
+    const fallbackWidths = [width, element.offsetWidth, element.clientWidth, element.scrollWidth, parsedWidth].filter(
+      (value) => typeof value === 'number' && !Number.isNaN(value),
+    ) as number[];
+    const fallbackHeights = [
+      height,
+      element.offsetHeight,
+      element.clientHeight,
+      element.scrollHeight,
+      parsedHeight,
+    ].filter((value) => typeof value === 'number' && !Number.isNaN(value)) as number[];
+
+    if (fallbackWidths.length > 0) {
+      width = Math.max(...fallbackWidths);
+    }
+    if (fallbackHeights.length > 0) {
+      height = Math.max(...fallbackHeights);
+    }
+  }
+
+  return {
+    width: Math.max(1, width),
+    height: Math.max(1, height),
+  };
+}
+
 function isTransparentColor(color: string | null | undefined): boolean {
   if (!color) return true;
   const normalized = color.trim().toLowerCase();
@@ -463,11 +497,11 @@ async function sanitizeElement(
   const skipAttr = options.skipDataAttribute ?? null;
   const queue: Array<{ original: Element; clone: Element }> = [{ original: root, clone }];
   const win = getWindow();
-  const rootRect = root.getBoundingClientRect();
+  const { width: rootWidth, height: rootHeight } = measureElementDimensions(root, win);
   const dataUrlCache = new Map<string, Promise<string>>();
   clone.style.boxSizing = 'border-box';
-  clone.style.width = `${rootRect.width}px`;
-  clone.style.height = `${rootRect.height}px`;
+  clone.style.width = `${rootWidth}px`;
+  clone.style.height = `${rootHeight}px`;
   clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
 
   const asyncTasks: Promise<void>[] = [];
@@ -594,8 +628,8 @@ async function sanitizeElement(
     node: clone,
     skippedImages: counters.images,
     skippedBackgrounds: counters.backgrounds,
-    width: rootRect.width,
-    height: rootRect.height,
+    width: rootWidth,
+    height: rootHeight,
   };
 }
 
