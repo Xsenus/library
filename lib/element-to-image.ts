@@ -513,7 +513,12 @@ async function writeBlobToClipboard(blob: Blob): Promise<void> {
   if (!clipboard || typeof clipboard.write !== 'function') {
     throw new Error('Буфер обмена недоступен в этом браузере');
   }
-  const ClipboardItemCtor = typeof ClipboardItem !== 'undefined' ? ClipboardItem : undefined;
+  const ClipboardItemCtor =
+    'ClipboardItem' in globalThis
+      ? ((globalThis as Record<string, unknown>)['ClipboardItem'] as
+          | { new (items: Record<string, Blob>): { readonly types?: readonly string[] } }
+          | undefined)
+      : undefined;
   if (!ClipboardItemCtor) {
     throw new Error('Браузер не поддерживает сохранение изображений в буфер обмена');
   }
@@ -528,7 +533,12 @@ async function writeSvgToClipboard(svgText: string): Promise<void> {
   if (!clipboard || typeof clipboard.write !== 'function') {
     throw new Error('Буфер обмена недоступен в этом браузере');
   }
-  const ClipboardItemCtor = typeof ClipboardItem !== 'undefined' ? ClipboardItem : undefined;
+  const ClipboardItemCtor =
+    'ClipboardItem' in globalThis
+      ? ((globalThis as Record<string, unknown>)['ClipboardItem'] as
+          | { new (items: Record<string, Blob>): { readonly types?: readonly string[] } }
+          | undefined)
+      : undefined;
   if (!ClipboardItemCtor) {
     throw new Error('Браузер не поддерживает сохранение изображений в буфер обмена');
   }

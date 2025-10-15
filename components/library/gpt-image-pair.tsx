@@ -41,7 +41,7 @@ export function GptImagePair({
   onStatusChange,
   prefetchedUrls,
 }: Props) {
-  const id = equipmentId ? String(equipmentId) : null;
+  const hasEquipment = equipmentId != null;
   const [exists, setExists] = useState<Record<Key, boolean | null>>({ old: null, cryo: null });
   const [resolvedUrls, setResolvedUrls] = useState<Record<Key, string | null>>({
     old: null,
@@ -68,6 +68,8 @@ export function GptImagePair({
       });
     }
 
+    const id = equipmentId != null ? String(equipmentId) : null;
+
     (async () => {
       if (!id) {
         if (!cancelled) {
@@ -79,13 +81,13 @@ export function GptImagePair({
       setExists({ old: null, cryo: null });
       setResolvedUrls({ old: null, cryo: null });
 
-      async function resolveKey(key: Key): Promise<string | null> {
+      async function resolveKey(key: Key, baseId: string): Promise<string | null> {
         const prefetched = prefetchedUrls?.[key];
         if (prefetched !== undefined) {
           return prefetched;
         }
         for (const ext of GPT_IMAGE_EXTENSIONS) {
-          const candidate = buildGptImageUrl(id, key, ext);
+          const candidate = buildGptImageUrl(baseId, key, ext);
           const ok = await probe(candidate);
           if (cancelled) return null;
           if (ok) return candidate;
@@ -94,7 +96,7 @@ export function GptImagePair({
       }
 
       const results = await Promise.all(
-        GPT_IMAGE_KEYS.map(async (key) => ({ key, url: await resolveKey(key) })),
+        GPT_IMAGE_KEYS.map(async (key) => ({ key, url: await resolveKey(key, id) })),
       );
       if (cancelled) return;
 
@@ -112,7 +114,7 @@ export function GptImagePair({
     return () => {
       cancelled = true;
     };
-  }, [id, prefetchedUrls]);
+  }, [equipmentId, prefetchedUrls]);
 
   useEffect(() => {
     if (!onStatusChange) return;
@@ -178,7 +180,7 @@ export function GptImagePair({
 
   return (
     <div className={cn('grid gap-3 sm:grid-cols-2', className)}>
-      {id ? GPT_IMAGE_KEYS.map((key) => renderTile(key)) : null}
+      {hasEquipment ? GPT_IMAGE_KEYS.map((key) => renderTile(key)) : null}
     </div>
   );
 }
