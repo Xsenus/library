@@ -17,6 +17,55 @@ const XLINK_NS = 'http://www.w3.org/1999/xlink';
 const URL_FUNCTION_REGEX = /url\(("|'|)([^"')]+)\1\)/gi;
 const GOOGLE_DOMAIN_REGEX = /(google|gstatic|googleapis|googleusercontent|googletag|doubleclick)\./i;
 const SAFE_FONT_STACK = 'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif';
+const URL_BASED_STYLE_PROPS: Array<keyof CSSStyleDeclaration> = [
+  'borderImage',
+  'borderImageSource',
+  'mask',
+  'maskImage',
+  'maskBorder',
+  'maskBorderSource',
+  'maskComposite',
+  'listStyleImage',
+  'cursor',
+  'filter',
+  'clipPath',
+  'shapeOutside',
+  'shapeImageThreshold',
+];
+
+async function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result as string);
+    reader.onerror = () => reject(new Error('Не удалось прочитать данные изображения'));
+    reader.readAsDataURL(blob);
+  });
+}
+
+async function fetchAsDataUrl(
+  url: string,
+  cache: Map<string, Promise<string>>,
+): Promise<string> {
+  const win = getWindow();
+  const absolute = new URL(url, win.location.href).toString();
+  if (!cache.has(absolute)) {
+    cache.set(
+      absolute,
+      (async () => {
+        const response = await fetch(absolute, {
+          credentials: 'include',
+          cache: 'no-store',
+        });
+        if (!response.ok) {
+          throw new Error(`Не удалось загрузить ресурс (${response.status})`);
+        }
+        const blob = await response.blob();
+        return blobToDataUrl(blob);
+      })(),
+    );
+  }
+  return cache.get(absolute)!;
+}
 
 type SanitizeResult = {
   node: HTMLElement;
@@ -100,66 +149,167 @@ function inlineComputedStyles(original: Element, clone: Element, fontStack: stri
     target.setProperty(prop, computed.getPropertyValue(prop));
   }
   target.setProperty('font-family', fontStack);
+
+  URL_BASED_STYLE_PROPS.forEach((prop) => {
+    const current = target[prop];
+    if (typeof current === 'string' && current.includes('url(')) {
+      // @ts-expect-error runtime style mutation
+      target[prop] = prop === 'cursor' ? 'auto' : 'none';
+    }
+  });
 }
 
-function sanitizeImage(
+async function sanitizeImage(
   original: HTMLImageElement,
   clone: HTMLImageElement,
   counters: Counters,
-): void {
+  dataUrlCache: Map<string, Promise<string>>,
+): Promise<void> {
   const urls = gatherImageUrls(original);
-  if (!urls.some((url) => isProbablyExternal(url))) {
-    return;
+  if (urls.length === 0) {
+    return Promise.resolve();
   }
 
-  counters.images += 1;
+  if (urls.some((url) => isProbablyExternal(url))) {
+    counters.images += 1;
+    clone.removeAttribute('srcset');
+    clone.setAttribute('src', TRANSPARENT_PIXEL);
+    return Promise.resolve();
+  }
+
+  const preferredUrl = original.currentSrc || original.src || urls[0];
+  if (!preferredUrl) {
+    return Promise.resolve();
+  }
+
   clone.removeAttribute('srcset');
-  clone.setAttribute('src', TRANSPARENT_PIXEL);
+  if (isDataUrl(preferredUrl)) {
+    clone.setAttribute('src', preferredUrl);
+    return Promise.resolve();
+  }
+  return fetchAsDataUrl(preferredUrl, dataUrlCache)
+    .then((dataUrl) => {
+      clone.setAttribute('src', dataUrl);
+    })
+    .catch(() => {
+      counters.images += 1;
+      clone.setAttribute('src', TRANSPARENT_PIXEL);
+    });
 }
 
-function sanitizeSvgImage(
+async function sanitizeSvgImage(
   original: SVGImageElement,
   clone: SVGImageElement,
   counters: Counters,
-): void {
+  dataUrlCache: Map<string, Promise<string>>,
+): Promise<void> {
   const href = original.href?.baseVal || original.getAttribute('href') || original.getAttributeNS(XLINK_NS, 'href');
-  if (!href || !isProbablyExternal(href)) {
-    return;
+  if (!href) {
+    return Promise.resolve();
   }
 
-  counters.images += 1;
-  clone.removeAttribute('href');
-  clone.removeAttributeNS(XLINK_NS, 'href');
+  if (isDataUrl(href)) {
+    clone.setAttributeNS(XLINK_NS, 'href', href);
+    clone.setAttribute('href', href);
+    return Promise.resolve();
+  }
+
+  if (isProbablyExternal(href)) {
+    counters.images += 1;
+    clone.removeAttribute('href');
+    clone.removeAttributeNS(XLINK_NS, 'href');
+    return Promise.resolve();
+  }
+
+  return fetchAsDataUrl(href, dataUrlCache)
+    .then((dataUrl) => {
+      clone.setAttributeNS(XLINK_NS, 'href', dataUrl);
+      clone.setAttribute('href', dataUrl);
+    })
+    .catch(() => {
+      counters.images += 1;
+      clone.removeAttribute('href');
+      clone.removeAttributeNS(XLINK_NS, 'href');
+    });
 }
 
-function sanitizeBackground(
+async function sanitizeBackground(
   original: Element,
   clone: Element,
   counters: Counters,
-): void {
+  dataUrlCache: Map<string, Promise<string>>,
+): Promise<void> {
   const win = getWindow();
   const computed = win.getComputedStyle(original);
   const backgroundImage = computed.backgroundImage;
   if (!backgroundImage || backgroundImage === 'none') {
-    return;
+    return Promise.resolve();
   }
 
   const urls = extractUrls(backgroundImage);
-  const toStrip = urls.filter((url) => isProbablyExternal(url));
-  if (toStrip.length === 0) {
-    return;
+  if (urls.length === 0) {
+    return Promise.resolve();
   }
 
-  counters.backgrounds += toStrip.length;
-  if ('style' in clone && clone.style) {
+  const external = urls.filter((url) => isProbablyExternal(url));
+  if (external.length > 0) {
+    counters.backgrounds += external.length;
+    if ('style' in clone && clone.style) {
+      const style = (clone as HTMLElement | SVGElement).style;
+      style.backgroundImage = 'none';
+      const bgColor = computed.backgroundColor && computed.backgroundColor !== 'rgba(0, 0, 0, 0)'
+        ? computed.backgroundColor
+        : 'transparent';
+      style.backgroundColor = bgColor;
+      style.background = bgColor;
+    }
+    return Promise.resolve();
+  }
+
+  if (!('style' in clone) || !clone.style) {
+    return Promise.resolve();
+  }
+
+  const replacements = urls.map(async (url) => {
+    if (isDataUrl(url)) {
+      return { originalUrl: url, dataUrl: url };
+    }
+    try {
+      const dataUrl = await fetchAsDataUrl(url, dataUrlCache);
+      return { originalUrl: url, dataUrl };
+    } catch {
+      counters.backgrounds += 1;
+      return { originalUrl: url, dataUrl: null };
+    }
+  });
+
+  return Promise.all(replacements).then((entries) => {
     const style = (clone as HTMLElement | SVGElement).style;
-    style.backgroundImage = 'none';
-    const bgColor = computed.backgroundColor && computed.backgroundColor !== 'rgba(0, 0, 0, 0)'
+    let bgValue = computed.backgroundImage;
+    let shorthand = computed.background;
+    const fallbackColor = computed.backgroundColor && computed.backgroundColor !== 'rgba(0, 0, 0, 0)'
       ? computed.backgroundColor
       : 'transparent';
-    style.backgroundColor = bgColor;
-    style.background = bgColor;
-  }
+
+    entries.forEach(({ originalUrl, dataUrl }) => {
+      if (!dataUrl) {
+        bgValue = 'none';
+        shorthand = fallbackColor;
+        return;
+      }
+      const escaped = originalUrl.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const regex = new RegExp(escaped, 'g');
+      bgValue = bgValue.replace(regex, dataUrl);
+      shorthand = shorthand.replace(regex, dataUrl);
+    });
+
+    style.backgroundImage = bgValue;
+    if (shorthand.includes('url(')) {
+      style.background = bgValue;
+    } else {
+      style.background = shorthand;
+    }
+  });
 }
 
 function shouldSkipNode(node: Element, skipAttr?: string | null): boolean {
@@ -170,17 +320,23 @@ function shouldSkipNode(node: Element, skipAttr?: string | null): boolean {
   return tag === 'script' || tag === 'iframe';
 }
 
-function sanitizeElement(root: HTMLElement, options: CopyImageOptions): SanitizeResult {
+async function sanitizeElement(
+  root: HTMLElement,
+  options: CopyImageOptions,
+): Promise<SanitizeResult> {
   const clone = root.cloneNode(true) as HTMLElement;
   const counters: Counters = { images: 0, backgrounds: 0 };
   const skipAttr = options.skipDataAttribute ?? null;
   const queue: Array<{ original: Element; clone: Element }> = [{ original: root, clone }];
   const win = getWindow();
   const rootRect = root.getBoundingClientRect();
+  const dataUrlCache = new Map<string, Promise<string>>();
   clone.style.boxSizing = 'border-box';
   clone.style.width = `${rootRect.width}px`;
   clone.style.height = `${rootRect.height}px`;
   clone.setAttribute('xmlns', 'http://www.w3.org/1999/xhtml');
+
+  const asyncTasks: Promise<void>[] = [];
 
   while (queue.length > 0) {
     const { original, clone: current } = queue.shift()!;
@@ -190,15 +346,20 @@ function sanitizeElement(root: HTMLElement, options: CopyImageOptions): Sanitize
       continue;
     }
 
+    if (current instanceof HTMLSourceElement) {
+      current.removeAttribute('srcset');
+      current.removeAttribute('src');
+    }
+
     inlineComputedStyles(original, current, SAFE_FONT_STACK);
-    sanitizeBackground(original, current, counters);
+    asyncTasks.push(sanitizeBackground(original, current, counters, dataUrlCache));
 
     if (original instanceof HTMLImageElement && current instanceof HTMLImageElement) {
-      sanitizeImage(original, current, counters);
+      asyncTasks.push(sanitizeImage(original, current, counters, dataUrlCache));
     }
 
     if (original instanceof SVGImageElement && current instanceof SVGImageElement) {
-      sanitizeSvgImage(original, current, counters);
+      asyncTasks.push(sanitizeSvgImage(original, current, counters, dataUrlCache));
     }
 
     if (original instanceof HTMLCanvasElement && current instanceof HTMLCanvasElement) {
@@ -233,6 +394,8 @@ function sanitizeElement(root: HTMLElement, options: CopyImageOptions): Sanitize
       }
     }
   }
+
+  await Promise.all(asyncTasks);
 
   return {
     node: clone,
@@ -355,7 +518,7 @@ export async function copyElementImageToClipboard(
     throw new Error('Невозможно сделать снимок на сервере');
   }
 
-  const { node, skippedImages, skippedBackgrounds, width, height } = sanitizeElement(element, options);
+  const { node, skippedImages, skippedBackgrounds, width, height } = await sanitizeElement(element, options);
   const pixelRatio = options.pixelRatio ?? getWindow().devicePixelRatio ?? 1;
   const backgroundColor = options.backgroundColor;
   const svgText = serializeCloneToSvg(node, width, height, backgroundColor);
