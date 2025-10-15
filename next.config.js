@@ -5,6 +5,25 @@ const nextConfig = {
   eslint: { ignoreDuringBuilds: true },
   images: { unoptimized: true },
 
+  // Разрешаем встраивание страниц /embed/* в iframe на внешних доменах.
+  async headers() {
+    return [
+      {
+        source: '/embed/:path*',
+        headers: [
+          {
+            key: 'Content-Security-Policy',
+            value: "frame-ancestors 'self' https: http:;",
+          },
+          {
+            key: 'X-Frame-Options',
+            value: 'ALLOWALL',
+          },
+        ],
+      },
+    ];
+  },
+
   webpack: (config, { dev }) => {
     config.ignoreWarnings = [
       ...(config.ignoreWarnings || []),
