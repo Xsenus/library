@@ -81,6 +81,59 @@ type Counters = {
   backgrounds: number;
 };
 
+function isTransparentColor(color: string | null | undefined): boolean {
+  if (!color) return true;
+  const normalized = color.trim().toLowerCase();
+  if (normalized === 'transparent') return true;
+  if (normalized === 'rgba(0, 0, 0, 0)' || normalized === 'rgba(0,0,0,0)') {
+    return true;
+  }
+  if (normalized === 'rgb(0 0 0 / 0)' || normalized === 'rgba(255, 255, 255, 0)') {
+    return true;
+  }
+  if (normalized.startsWith('rgba')) {
+    const alpha = normalized.substring(normalized.lastIndexOf(',') + 1).replace(')', '').trim();
+    if (parseFloat(alpha) === 0) {
+      return true;
+    }
+  }
+  if (normalized.startsWith('hsla')) {
+    const alpha = normalized.substring(normalized.lastIndexOf(',') + 1).replace(')', '').trim();
+    if (parseFloat(alpha) === 0) {
+      return true;
+    }
+  }
+  if (/\/\s*0(?:\.0+)?\)/.test(normalized)) {
+    return true;
+  }
+  return false;
+}
+
+function resolveBackgroundColor(element: HTMLElement): string {
+  const win = getWindow();
+  let current: HTMLElement | null = element;
+  while (current) {
+    const color = win.getComputedStyle(current).backgroundColor;
+    if (!isTransparentColor(color)) {
+      return color;
+    }
+    current = current.parentElement;
+  }
+
+  const doc = win.document.documentElement;
+  const docColor = win.getComputedStyle(doc).backgroundColor;
+  if (!isTransparentColor(docColor)) {
+    return docColor;
+  }
+
+  const bodyColor = win.getComputedStyle(win.document.body).backgroundColor;
+  if (!isTransparentColor(bodyColor)) {
+    return bodyColor;
+  }
+
+  return '#ffffff';
+}
+
 function getWindow(): Window {
   if (typeof window === 'undefined') {
     throw new Error('Element capture utilities can only run in a browser.');
@@ -594,16 +647,23 @@ async function canvasToBlob(canvas: HTMLCanvasElement): Promise<Blob> {
   });
 }
 
-function serializeCloneToSvg(node: HTMLElement, width: number, height: number, backgroundColor?: string): string {
+function serializeCloneToSvg(
+  node: HTMLElement,
+  width: number,
+  height: number,
+  backgroundColor?: string,
+): string {
   const serializer = new XMLSerializer();
   const serialized = serializer.serializeToString(node);
+  const roundedWidth = Math.max(1, Math.round(width));
+  const roundedHeight = Math.max(1, Math.round(height));
   const bgRect = backgroundColor
     ? `<rect width="100%" height="100%" fill="${backgroundColor}" />`
     : '';
   return (
     `<?xml version="1.0" encoding="UTF-8"?>` +
     `<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"` +
-    ` width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"` +
+    ` width="${roundedWidth}" height="${roundedHeight}" viewBox="0 0 ${roundedWidth} ${roundedHeight}"` +
     `>` +
     `${bgRect}<foreignObject x="0" y="0" width="100%" height="100%" requiredExtensions="http://www.w3.org/1999/xhtml">` +
     `${serialized}</foreignObject></svg>`
@@ -647,6 +707,7 @@ async function rasterizeSvg(
   width: number,
   height: number,
   pixelRatio: number,
+  backgroundColor: string,
 ): Promise<HTMLCanvasElement> {
   const win = getWindow();
   const canvas = win.document.createElement('canvas');
@@ -660,6 +721,9 @@ async function rasterizeSvg(
   if (!ctx) {
     throw new Error('Не удалось создать контекст рисования');
   }
+
+  ctx.fillStyle = backgroundColor;
+  ctx.fillRect(0, 0, scaledWidth, scaledHeight);
 
   const blob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' });
   const url = URL.createObjectURL(blob);
@@ -683,11 +747,14 @@ export async function copyElementImageToClipboard(
 
   const { node, skippedImages, skippedBackgrounds, width, height } = await sanitizeElement(element, options);
   const pixelRatio = options.pixelRatio ?? getWindow().devicePixelRatio ?? 1;
-  const backgroundColor = options.backgroundColor;
-  const svgText = serializeCloneToSvg(node, width, height, backgroundColor);
+  const backgroundColor = options.backgroundColor ?? resolveBackgroundColor(element);
+  if ('style' in node) {
+    (node as HTMLElement).style.backgroundColor = backgroundColor;
+  }
+  const svgText = serializeCloneToSvg(node.cloneNode(true) as HTMLElement, width, height, backgroundColor);
 
   try {
-    const canvas = await rasterizeSvg(svgText, width, height, pixelRatio);
+    const canvas = await rasterizeSvg(svgText, width, height, pixelRatio, backgroundColor);
     if (isCanvasBlank(canvas)) {
       throw new Error('Получилось пустое изображение после рендеринга');
     }
