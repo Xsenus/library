@@ -337,7 +337,9 @@ async function fetchImageAsDataUrl(url: string): Promise<string | null> {
         return null;
       }
 
-      const proxied = await fetchBlobAsDataUrl(buildProxyUrl(targetUrl.toString()));
+      const proxied = await fetchBlobAsDataUrl(buildProxyUrl(targetUrl.toString()), {
+        credentials: 'include',
+      });
       if (proxied) {
         return proxied;
       }
@@ -349,7 +351,11 @@ async function fetchImageAsDataUrl(url: string): Promise<string | null> {
 
   const result = await pending;
   imageDataUrlPending.delete(absoluteUrl);
-  imageDataUrlCache.set(absoluteUrl, result ?? null);
+  if (result) {
+    imageDataUrlCache.set(absoluteUrl, result);
+  } else {
+    imageDataUrlCache.delete(absoluteUrl);
+  }
   return result ?? null;
 }
 
