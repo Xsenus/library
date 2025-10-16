@@ -8,7 +8,7 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { ExternalLink, X, Copy, ArrowUpRight, Camera, Loader2 } from 'lucide-react';
+import { ExternalLink, X, Copy, Camera, Loader2 } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import NextImage from 'next/image';
@@ -22,6 +22,7 @@ import {
   GPT_IMAGE_EXTENSIONS,
   type GptImageKey,
 } from '@/lib/gpt-images';
+import SquareImgButton from './square-img-button';
 
 interface EquipmentCardProps {
   equipment: EquipmentDetail;
@@ -813,14 +814,27 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           <Sep />
 
           {/* Ряд действий */}
-            <div className="flex flex-wrap items-center gap-1.5 pb-1">
+          <div className="flex flex-wrap items-center gap-1.5 pb-1">
+            <Button
+              size="sm"
+              onClick={() => setShowUtp(true)}
+              className={blueBtn}
+              data-copy-skip="1">
+              📣 УТП
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setShowMail(true)}
+              className={blueBtn}
+              data-copy-skip="1">
+              ✉ Письмо
+            </Button>
             <Button size="sm" asChild className={blueBtn} data-copy-skip="1">
               <a
                 href={googleImagesUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                data-copy-skip="1"
-              >
+                data-copy-skip="1">
                 Картинки Google
               </a>
             </Button>
@@ -829,10 +843,23 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                 href={googleTextUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                data-copy-skip="1"
-              >
+                data-copy-skip="1">
                 Описание Google
               </a>
+            </Button>
+            <Button
+              size="sm"
+              className={blueBtn}
+              disabled={!equipment.company_id}
+              data-copy-skip="1">
+              Компания
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setShowText(true)}
+              className={blueBtn}
+              data-copy-skip="1">
+              ТЕКСТ
             </Button>
           </div>
 
@@ -866,6 +893,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
               <table className="w-full text-[11px] leading-4">
                 <thead className="bg-muted/50">
                   <tr className="text-left">
+                    <th className="px-1 py-0.5 w-[30px]" />
                     <th className="px-1 py-0.5 w-[60px]">Код</th>
                     <th className="px-1 py-0.5">Наименование</th>
                   </tr>
@@ -890,6 +918,20 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                   {!okvedLoading &&
                     okvedList.map((row) => (
                       <tr key={row.id} className="border-t hover:bg-muted/40 leading-4">
+                        <td className="p-0 align-middle">
+                          <SquareImgButton
+                            icon="okved"
+                            title="Открыть ОКВЭД"
+                            onClick={() =>
+                              window.open(
+                                `/library?tab=okved&okved=${encodeURIComponent(row.okved_code ?? '')}`,
+                                '_blank',
+                              )
+                            }
+                            className="mx-auto my-[2px]"
+                            sizeClassName="h-7 w-7"
+                          />
+                        </td>
                         <td className="px-1 py-0.5 font-medium whitespace-nowrap">
                           {row.okved_code}
                         </td>

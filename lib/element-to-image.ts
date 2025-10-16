@@ -31,6 +31,8 @@ interface Counters {
 }
 
 let cachedCssText: string | null = null;
+const imageDataUrlCache = new Map<string, string | null>();
+const imageDataUrlPending = new Map<string, Promise<string | null>>();
 
 function getWindow(): Window {
   if (typeof window === 'undefined') {
@@ -134,6 +136,7 @@ function sanitizeBackground(
   original: Element,
   clone: Element,
   counters: Counters,
+  tasks: Promise<void>[],
 ): void {
   if (!('style' in clone)) {
     return;
@@ -161,16 +164,53 @@ function sanitizeBackground(
     ? computed.backgroundColor
     : 'transparent';
 
-  style.backgroundImage = 'none';
-  style.background = fallbackColor;
-  style.backgroundColor = fallbackColor;
-  counters.backgrounds += externalUrls.length;
+  const task = (async () => {
+    const uniqueUrls = Array.from(new Set(externalUrls));
+    const results = await Promise.all(
+      uniqueUrls.map(async (url) => ({ url, dataUrl: await fetchImageAsDataUrl(url) })),
+    );
+
+    const failed = results.filter((result) => !result.dataUrl);
+    if (failed.length === 0) {
+      const replacements = new Map(results.map((result) => [result.url, result.dataUrl!]));
+      const replaceWithInlineData = (value: string): string => {
+        URL_FUNCTION_REGEX.lastIndex = 0;
+        return value.replace(URL_FUNCTION_REGEX, (match, quote, url) => {
+          const replacement = replacements.get(url);
+          if (!replacement) {
+            return match;
+          }
+          const q = quote || '"';
+          return `url(${q}${replacement}${q})`;
+        });
+      };
+
+      const sanitizedImage = replaceWithInlineData(backgroundImage);
+      style.backgroundImage = sanitizedImage;
+
+      const inlineBackground = style.background;
+      if (inlineBackground) {
+        style.background = replaceWithInlineData(inlineBackground);
+      }
+
+      style.backgroundColor = computed.backgroundColor || fallbackColor;
+      return;
+    }
+
+    counters.backgrounds += externalUrls.length;
+    style.backgroundImage = 'none';
+    style.background = fallbackColor;
+    style.backgroundColor = fallbackColor;
+  })();
+
+  tasks.push(task);
 }
 
 function sanitizeImage(
   original: HTMLImageElement,
   clone: HTMLImageElement,
   counters: Counters,
+  tasks: Promise<void>[],
 ): void {
   const candidates = new Set<string>();
   if (original.currentSrc) candidates.add(original.currentSrc);
@@ -189,9 +229,22 @@ function sanitizeImage(
 
   const hasExternal = Array.from(candidates).some((url) => isProbablyExternal(url));
   if (hasExternal) {
-    counters.images += 1;
+    const preferred = original.currentSrc || original.src || attrSrc || null;
     clone.removeAttribute('srcset');
     clone.src = TRANSPARENT_PIXEL;
+
+    if (!preferred) {
+      counters.images += 1;
+      return;
+    }
+
+    const task = inlineExternalImage(preferred, clone).then((ok) => {
+      if (!ok) {
+        counters.images += 1;
+        clone.src = TRANSPARENT_PIXEL;
+      }
+    });
+    tasks.push(task);
     return;
   }
 
@@ -201,6 +254,60 @@ function sanitizeImage(
     clone.src = preferred;
   }
   clone.crossOrigin = 'anonymous';
+}
+
+async function inlineExternalImage(url: string, target: HTMLImageElement): Promise<boolean> {
+  const dataUrl = await fetchImageAsDataUrl(url);
+  if (!dataUrl) {
+    return false;
+  }
+  target.src = dataUrl;
+  target.removeAttribute('crossorigin');
+  return true;
+}
+
+async function fetchImageAsDataUrl(url: string): Promise<string | null> {
+  if (imageDataUrlCache.has(url)) {
+    return imageDataUrlCache.get(url) ?? null;
+  }
+
+  let pending = imageDataUrlPending.get(url);
+  if (!pending) {
+    pending = (async () => {
+      try {
+        const response = await fetch(url, { mode: 'cors', credentials: 'omit' });
+        if (!response.ok) {
+          return null;
+        }
+        const blob = await response.blob();
+        const dataUrl = await blobToDataUrl(blob);
+        return dataUrl || null;
+      } catch {
+        return null;
+      }
+    })();
+    imageDataUrlPending.set(url, pending);
+  }
+
+  const result = await pending;
+  imageDataUrlPending.delete(url);
+  imageDataUrlCache.set(url, result ?? null);
+  return result ?? null;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        resolve('');
+      }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function replaceCanvas(
@@ -296,10 +403,10 @@ async function prepareClone(
       continue;
     }
 
-    sanitizeBackground(original, current, counters);
+    sanitizeBackground(original, current, counters, tasks);
 
     if (original instanceof HTMLImageElement && current instanceof HTMLImageElement) {
-      sanitizeImage(original, current, counters);
+      sanitizeImage(original, current, counters, tasks);
     } else if (original instanceof HTMLCanvasElement && current instanceof HTMLCanvasElement) {
       tasks.push(replaceCanvas(original, current, counters));
       continue;
