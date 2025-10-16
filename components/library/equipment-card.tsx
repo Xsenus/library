@@ -8,9 +8,9 @@ import {
   AccordionItem,
   AccordionTrigger,
 } from '@/components/ui/accordion';
-import { ExternalLink, X, Copy, ArrowUpRight, Camera, Loader2 } from 'lucide-react';
+import { ExternalLink, X, Copy, Camera, Loader2 } from 'lucide-react';
 import { EquipmentDetail } from '@/lib/validators';
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
 // import { GoogleImagesCarousel } from './google-images-carousel';
@@ -22,6 +22,7 @@ import {
   GPT_IMAGE_EXTENSIONS,
   type GptImageKey,
 } from '@/lib/gpt-images';
+import SquareImgButton from './square-img-button';
 
 interface EquipmentCardProps {
   equipment: EquipmentDetail;
@@ -191,12 +192,78 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     setAutoOpenedGPT(false);
   }, [equipment?.id]);
 
-  const imageUrls = equipment.images_url
-    ? equipment.images_url
-        .split(',')
-        .map((u) => u.trim())
-        .filter(Boolean)
-    : [];
+  const imageUrls = useMemo(() => {
+    if (!equipment.images_url) return [] as string[];
+    return equipment.images_url
+      .split(',')
+      .map((u) => u.trim())
+      .filter(Boolean);
+  }, [equipment.images_url]);
+
+  const buildProxyUrl = useCallback((url: string) => {
+    if (typeof window === 'undefined') return url;
+    try {
+      const proxy = new URL('/api/images/proxy', window.location.origin);
+      proxy.searchParams.set('url', new URL(url, window.location.href).toString());
+      return proxy.toString();
+    } catch {
+      return url;
+    }
+  }, []);
+
+  const normalizeImageUrlForDisplay = useCallback(
+    (url: string) => {
+      if (typeof window === 'undefined') return url;
+      if (!url) return url;
+      try {
+        const absolute = new URL(url, window.location.href);
+        if (absolute.pathname.startsWith('/api/images/proxy')) {
+          return absolute.toString();
+        }
+        if (absolute.origin !== window.location.origin) {
+          return buildProxyUrl(absolute.toString());
+        }
+        return absolute.toString();
+      } catch {
+        return url;
+      }
+    },
+    [buildProxyUrl],
+  );
+
+  const [displayImageUrls, setDisplayImageUrls] = useState<string[]>(() =>
+    imageUrls.map((url) => normalizeImageUrlForDisplay(url)),
+  );
+
+  useEffect(() => {
+    setDisplayImageUrls((prev) => {
+      const next = imageUrls.map((url) => normalizeImageUrlForDisplay(url));
+      if (prev.length === next.length && prev.every((value, idx) => value === next[idx])) {
+        return prev;
+      }
+      return next;
+    });
+  }, [imageUrls, normalizeImageUrlForDisplay]);
+
+  const ensureProxiedImage = useCallback(
+    (index: number) => {
+      setDisplayImageUrls((prev) => {
+        const next = [...prev];
+        const original = imageUrls[index];
+        if (!original) {
+          return prev;
+        }
+        const current = next[index];
+        const proxied = normalizeImageUrlForDisplay(original);
+        if (!proxied || current === proxied) {
+          return prev;
+        }
+        next[index] = proxied;
+        return next;
+      });
+    },
+    [imageUrls, normalizeImageUrlForDisplay],
+  );
 
   // CS — «Эффективность очистки (GPT)»
   const cs = equipment.clean_score ?? null;
@@ -282,10 +349,32 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     setCopyHint(null);
 
     try {
-      const { skippedImages, skippedBackgrounds, format } = await copyElementImageToClipboard(cardRef.current, {
-        pixelRatio: 2,
-        skipDataAttribute: 'data-copy-skip',
-      });
+      const rect = cardRef.current.getBoundingClientRect();
+      let preferredWidth = rect.width;
+
+      if (typeof window !== 'undefined') {
+        const viewport = window.innerWidth;
+        if (Number.isFinite(viewport) && viewport > 0) {
+          const wideTarget = Math.min(960, viewport - 64);
+          if (wideTarget > preferredWidth) {
+            preferredWidth = wideTarget;
+          }
+        } else if (preferredWidth < 960) {
+          preferredWidth = 960;
+        }
+      } else if (preferredWidth < 960) {
+        preferredWidth = 960;
+      }
+
+      const { skippedImages, skippedBackgrounds, format } = await copyElementImageToClipboard(
+        cardRef.current,
+        {
+          pixelRatio: 2,
+          skipDataAttribute: 'data-copy-skip',
+          preferredWidth,
+          maxWidth: preferredWidth,
+        },
+      );
 
       const skippedParts: string[] = [];
       if (skippedImages > 0) skippedParts.push(`без ${skippedImages} внеш. изображ.`);
@@ -597,7 +686,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   }, [equipment?.id]);
 
   return (
-    <div className="space-y-4 pb-[1cm]">
+    <div className="space-y-4 pb-6">
       <Card ref={cardRef} className="relative">
         <div
           data-copy-skip="1"
@@ -760,9 +849,9 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           )}
 
           {/* Изображения из базы */}
-          {imageUrls.length > 0 && (
+          {displayImageUrls.length > 0 && (
             <div className="grid grid-cols-3 gap-2">
-              {imageUrls.map((url, idx) => (
+              {displayImageUrls.map((url, idx) => (
                 <button
                   key={idx}
                   className="relative aspect-[4/3] bg-muted rounded-md overflow-hidden hover:ring-1 hover:ring-primary/40"
@@ -774,6 +863,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                     sizes="33vw"
                     className="object-cover"
                     unoptimized
+                    onError={() => ensureProxiedImage(idx)}
                   />
                 </button>
               ))}
@@ -813,14 +903,27 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
           <Sep />
 
           {/* Ряд действий */}
-            <div className="flex flex-wrap items-center gap-1.5 pb-1">
+          <div className="flex flex-wrap items-center gap-1.5 pb-1">
+            <Button
+              size="sm"
+              onClick={() => setShowUtp(true)}
+              className={blueBtn}
+              data-copy-skip="1">
+              📣 УТП
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setShowMail(true)}
+              className={blueBtn}
+              data-copy-skip="1">
+              ✉ Письмо
+            </Button>
             <Button size="sm" asChild className={blueBtn} data-copy-skip="1">
               <a
                 href={googleImagesUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                data-copy-skip="1"
-              >
+                data-copy-skip="1">
                 Картинки Google
               </a>
             </Button>
@@ -829,10 +932,23 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                 href={googleTextUrl}
                 target="_blank"
                 rel="noopener noreferrer"
-                data-copy-skip="1"
-              >
+                data-copy-skip="1">
                 Описание Google
               </a>
+            </Button>
+            <Button
+              size="sm"
+              className={blueBtn}
+              disabled={!equipment.company_id}
+              data-copy-skip="1">
+              Компания
+            </Button>
+            <Button
+              size="sm"
+              onClick={() => setShowText(true)}
+              className={blueBtn}
+              data-copy-skip="1">
+              ТЕКСТ
             </Button>
           </div>
 
@@ -866,6 +982,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
               <table className="w-full text-[11px] leading-4">
                 <thead className="bg-muted/50">
                   <tr className="text-left">
+                    <th className="px-1 py-0.5 w-[30px]" />
                     <th className="px-1 py-0.5 w-[60px]">Код</th>
                     <th className="px-1 py-0.5">Наименование</th>
                   </tr>
@@ -890,6 +1007,20 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
                   {!okvedLoading &&
                     okvedList.map((row) => (
                       <tr key={row.id} className="border-t hover:bg-muted/40 leading-4">
+                        <td className="p-0 align-middle">
+                          <SquareImgButton
+                            icon="okved"
+                            title="Открыть ОКВЭД"
+                            onClick={() =>
+                              window.open(
+                                `/library?tab=okved&okved=${encodeURIComponent(row.okved_code ?? '')}`,
+                                '_blank',
+                              )
+                            }
+                            className="mx-auto my-[2px]"
+                            sizeClassName="h-7 w-7"
+                          />
+                        </td>
                         <td className="px-1 py-0.5 font-medium whitespace-nowrap">
                           {row.okved_code}
                         </td>

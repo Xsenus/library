@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import NextImage from 'next/image';
 import { cn } from '@/lib/utils';
 import {
@@ -47,6 +47,25 @@ export function GptImagePair({
     old: null,
     cryo: null,
   });
+
+  const proxifyUrl = useCallback((url: string | null | undefined): string | null => {
+    if (!url) return null;
+    if (typeof window === 'undefined') return url;
+    try {
+      const absolute = new URL(url, window.location.href);
+      if (absolute.pathname.startsWith('/api/images/proxy')) {
+        return absolute.toString();
+      }
+      if (absolute.origin !== window.location.origin) {
+        const proxy = new URL('/api/images/proxy', window.location.origin);
+        proxy.searchParams.set('url', absolute.toString());
+        return proxy.toString();
+      }
+      return absolute.toString();
+    } catch {
+      return url;
+    }
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -103,7 +122,7 @@ export function GptImagePair({
       const nextUrls: Record<Key, string | null> = { old: null, cryo: null };
       const nextExists: Record<Key, boolean> = { old: false, cryo: false };
       for (const { key, url } of results) {
-        nextUrls[key] = url ?? null;
+        nextUrls[key] = proxifyUrl(url);
         nextExists[key] = Boolean(url);
       }
 
@@ -114,7 +133,7 @@ export function GptImagePair({
     return () => {
       cancelled = true;
     };
-  }, [equipmentId, prefetchedUrls]);
+  }, [equipmentId, prefetchedUrls, proxifyUrl]);
 
   useEffect(() => {
     if (!onStatusChange) return;
