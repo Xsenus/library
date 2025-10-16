@@ -163,8 +163,16 @@ export default async function EquipmentEmbedPage({
       <div className="mx-auto flex max-w-6xl flex-col gap-6">
         <Card className="shadow-sm border-slate-200">
           <CardHeader className="space-y-2">
-            <CardTitle className="text-xl font-semibold text-slate-900">
-              {equipment.equipment_name ?? 'Карточка оборудования'}
+            <CardTitle className="flex flex-wrap items-center gap-2 text-xl font-semibold text-slate-900">
+              <span className="leading-tight">
+                {equipment.equipment_name ?? 'Карточка оборудования'}
+                {equipment.id ? (
+                  <>
+                    {' '}
+                    <span className="text-sm font-normal text-slate-400">[{equipment.id}]</span>
+                  </>
+                ) : null}
+              </span>
             </CardTitle>
             {equipment.description_url && (
               <Link
