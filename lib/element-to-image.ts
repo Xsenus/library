@@ -10,10 +10,14 @@ export interface CopyImageOptions {
   backgroundColor?: string;
   pixelRatio?: number;
   skipDataAttribute?: string;
+  preferredWidth?: number;
+  minWidth?: number;
+  maxWidth?: number;
 }
 
 const TRANSPARENT_PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+const IMAGE_PROXY_ENDPOINT = '/api/images/proxy';
 const URL_FUNCTION_REGEX = /url\(("|'|)([^"')]+)\1\)/gi;
 const GOOGLE_DOMAIN_REGEX = /(google|gstatic|googleapis|googleusercontent|googletag|doubleclick)\./i;
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
@@ -31,6 +35,8 @@ interface Counters {
 }
 
 let cachedCssText: string | null = null;
+const imageDataUrlCache = new Map<string, string | null>();
+const imageDataUrlPending = new Map<string, Promise<string | null>>();
 
 function getWindow(): Window {
   if (typeof window === 'undefined') {
@@ -134,6 +140,7 @@ function sanitizeBackground(
   original: Element,
   clone: Element,
   counters: Counters,
+  tasks: Promise<void>[],
 ): void {
   if (!('style' in clone)) {
     return;
@@ -161,16 +168,53 @@ function sanitizeBackground(
     ? computed.backgroundColor
     : 'transparent';
 
-  style.backgroundImage = 'none';
-  style.background = fallbackColor;
-  style.backgroundColor = fallbackColor;
-  counters.backgrounds += externalUrls.length;
+  const task = (async () => {
+    const uniqueUrls = Array.from(new Set(externalUrls));
+    const results = await Promise.all(
+      uniqueUrls.map(async (url) => ({ url, dataUrl: await fetchImageAsDataUrl(url) })),
+    );
+
+    const failed = results.filter((result) => !result.dataUrl);
+    if (failed.length === 0) {
+      const replacements = new Map(results.map((result) => [result.url, result.dataUrl!]));
+      const replaceWithInlineData = (value: string): string => {
+        URL_FUNCTION_REGEX.lastIndex = 0;
+        return value.replace(URL_FUNCTION_REGEX, (match, quote, url) => {
+          const replacement = replacements.get(url);
+          if (!replacement) {
+            return match;
+          }
+          const q = quote || '"';
+          return `url(${q}${replacement}${q})`;
+        });
+      };
+
+      const sanitizedImage = replaceWithInlineData(backgroundImage);
+      style.backgroundImage = sanitizedImage;
+
+      const inlineBackground = style.background;
+      if (inlineBackground) {
+        style.background = replaceWithInlineData(inlineBackground);
+      }
+
+      style.backgroundColor = computed.backgroundColor || fallbackColor;
+      return;
+    }
+
+    counters.backgrounds += externalUrls.length;
+    style.backgroundImage = 'none';
+    style.background = fallbackColor;
+    style.backgroundColor = fallbackColor;
+  })();
+
+  tasks.push(task);
 }
 
 function sanitizeImage(
   original: HTMLImageElement,
   clone: HTMLImageElement,
   counters: Counters,
+  tasks: Promise<void>[],
 ): void {
   const candidates = new Set<string>();
   if (original.currentSrc) candidates.add(original.currentSrc);
@@ -189,9 +233,22 @@ function sanitizeImage(
 
   const hasExternal = Array.from(candidates).some((url) => isProbablyExternal(url));
   if (hasExternal) {
-    counters.images += 1;
+    const preferred = original.currentSrc || original.src || attrSrc || null;
     clone.removeAttribute('srcset');
     clone.src = TRANSPARENT_PIXEL;
+
+    if (!preferred) {
+      counters.images += 1;
+      return;
+    }
+
+    const task = inlineExternalImage(preferred, clone).then((ok) => {
+      if (!ok) {
+        counters.images += 1;
+        clone.src = TRANSPARENT_PIXEL;
+      }
+    });
+    tasks.push(task);
     return;
   }
 
@@ -201,6 +258,128 @@ function sanitizeImage(
     clone.src = preferred;
   }
   clone.crossOrigin = 'anonymous';
+}
+
+async function inlineExternalImage(url: string, target: HTMLImageElement): Promise<boolean> {
+  const dataUrl = await fetchImageAsDataUrl(url);
+  if (!dataUrl) {
+    return false;
+  }
+  target.src = dataUrl;
+  target.removeAttribute('crossorigin');
+  return true;
+}
+
+function toAbsoluteUrl(url: string): string {
+  try {
+    return new URL(url, getWindow().location.href).toString();
+  } catch {
+    return url;
+  }
+}
+
+function isSameOrigin(url: URL): boolean {
+  try {
+    return url.origin === getWindow().location.origin;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchBlobAsDataUrl(url: string, init?: RequestInit): Promise<string | null> {
+  try {
+    const response = await fetch(url, {
+      cache: 'no-store',
+      mode: 'cors',
+      ...init,
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const blob = await response.blob();
+    if (!blob || blob.size === 0) {
+      return null;
+    }
+    const dataUrl = await blobToDataUrl(blob);
+    return dataUrl || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildProxyUrl(url: string): string {
+  const win = getWindow();
+  const proxy = new URL(IMAGE_PROXY_ENDPOINT, win.location.origin);
+  proxy.searchParams.set('url', url);
+  return proxy.toString();
+}
+
+async function fetchImageAsDataUrl(url: string): Promise<string | null> {
+  const absoluteUrl = toAbsoluteUrl(url);
+
+  if (imageDataUrlCache.has(absoluteUrl)) {
+    return imageDataUrlCache.get(absoluteUrl) ?? null;
+  }
+
+  let pending = imageDataUrlPending.get(absoluteUrl);
+  if (!pending) {
+    pending = (async () => {
+      const targetUrl = new URL(absoluteUrl);
+      const sameOrigin = isSameOrigin(targetUrl);
+
+      const attempts: Array<() => Promise<string | null>> = [];
+
+      const attemptDirect = () =>
+        fetchBlobAsDataUrl(targetUrl.toString(), {
+          credentials: sameOrigin ? 'include' : 'omit',
+        });
+
+      const attemptProxy = () =>
+        fetchBlobAsDataUrl(buildProxyUrl(targetUrl.toString()), {
+          credentials: 'include',
+        });
+
+      if (sameOrigin || targetUrl.pathname.startsWith(IMAGE_PROXY_ENDPOINT)) {
+        attempts.push(attemptDirect);
+      } else {
+        attempts.push(attemptProxy, attemptDirect);
+      }
+
+      for (const attempt of attempts) {
+        const result = await attempt();
+        if (result) {
+          return result;
+        }
+      }
+
+      return null;
+    })();
+    imageDataUrlPending.set(absoluteUrl, pending);
+  }
+
+  const result = await pending;
+  imageDataUrlPending.delete(absoluteUrl);
+  if (result) {
+    imageDataUrlCache.set(absoluteUrl, result);
+  } else {
+    imageDataUrlCache.set(absoluteUrl, null);
+  }
+  return result ?? null;
+}
+
+function blobToDataUrl(blob: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      if (typeof reader.result === 'string') {
+        resolve(reader.result);
+      } else {
+        resolve('');
+      }
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(blob);
+  });
 }
 
 async function replaceCanvas(
@@ -296,10 +475,10 @@ async function prepareClone(
       continue;
     }
 
-    sanitizeBackground(original, current, counters);
+    sanitizeBackground(original, current, counters, tasks);
 
     if (original instanceof HTMLImageElement && current instanceof HTMLImageElement) {
-      sanitizeImage(original, current, counters);
+      sanitizeImage(original, current, counters, tasks);
     } else if (original instanceof HTMLCanvasElement && current instanceof HTMLCanvasElement) {
       tasks.push(replaceCanvas(original, current, counters));
       continue;
@@ -356,14 +535,89 @@ function resolveBackgroundColor(element: HTMLElement): string {
   return '#ffffff';
 }
 
-function measureElement(element: HTMLElement): { width: number; height: number } {
+function resolveTargetWidth(element: HTMLElement, options: CopyImageOptions): number {
   const rect = element.getBoundingClientRect();
-  const width = rect.width || element.offsetWidth || element.scrollWidth;
-  const height = rect.height || element.offsetHeight || element.scrollHeight;
-  return {
-    width: Math.max(1, Math.round(width)),
-    height: Math.max(1, Math.round(height)),
-  };
+  const fallbackWidth = rect.width || element.offsetWidth || element.scrollWidth || 0;
+  let targetWidth = fallbackWidth;
+
+  if (options.preferredWidth && options.preferredWidth > targetWidth) {
+    targetWidth = options.preferredWidth;
+  }
+
+  if (options.minWidth && options.minWidth > targetWidth) {
+    targetWidth = options.minWidth;
+  }
+
+  if (options.maxWidth && targetWidth > options.maxWidth) {
+    targetWidth = options.maxWidth;
+  }
+
+  return Math.max(1, Math.round(targetWidth || 1));
+}
+
+function layoutClone(
+  element: HTMLElement,
+  clone: HTMLElement,
+  options: CopyImageOptions,
+): { width: number; height: number } {
+  const win = getWindow();
+  const host = win.document.createElement('div');
+  host.style.position = 'fixed';
+  host.style.left = '-10000px';
+  host.style.top = '0';
+  host.style.visibility = 'hidden';
+  host.style.pointerEvents = 'none';
+  host.style.zIndex = '-1';
+  host.style.width = 'auto';
+  host.style.height = 'auto';
+  host.style.maxWidth = 'none';
+  host.style.maxHeight = 'none';
+  host.style.overflow = 'visible';
+
+  const targetWidth = resolveTargetWidth(element, options);
+  const originalRect = element.getBoundingClientRect();
+  const enlarge = targetWidth > Math.round(originalRect.width || 0);
+
+  clone.style.boxSizing = 'border-box';
+  clone.style.width = `${targetWidth}px`;
+  clone.style.height = 'auto';
+  clone.style.maxHeight = 'none';
+  clone.style.position = 'static';
+
+  if (enlarge) {
+    clone.style.minWidth = `${targetWidth}px`;
+    clone.style.maxWidth = `${targetWidth}px`;
+  } else {
+    clone.style.minWidth = '';
+    clone.style.maxWidth = '';
+  }
+
+  host.appendChild(clone);
+  win.document.body.appendChild(host);
+
+  let width = 1;
+  let height = 1;
+
+  try {
+    const measuredRect = clone.getBoundingClientRect();
+    width = Math.max(1, Math.round(measuredRect.width));
+    height = Math.max(1, Math.round(measuredRect.height));
+  } finally {
+    if (host.contains(clone)) {
+      host.removeChild(clone);
+    }
+    if (host.parentNode) {
+      host.parentNode.removeChild(host);
+    }
+  }
+
+  clone.style.width = `${width}px`;
+  clone.style.height = `${height}px`;
+  clone.style.minWidth = '';
+  clone.style.maxWidth = '';
+  clone.style.position = '';
+
+  return { width, height };
 }
 
 function getCombinedCssText(): string {
@@ -573,14 +827,11 @@ export async function copyElementImageToClipboard(
     throw new Error('Невозможно сделать снимок на сервере');
   }
 
+  const { clone, counters } = await prepareClone(element, options);
+  const { width, height } = layoutClone(element, clone, options);
+
   const pixelRatio = options.pixelRatio ?? getWindow().devicePixelRatio ?? 1;
   const backgroundColor = options.backgroundColor ?? resolveBackgroundColor(element);
-  const { width, height } = measureElement(element);
-
-  const { clone, counters } = await prepareClone(element, options);
-  clone.style.boxSizing = 'border-box';
-  clone.style.width = `${width}px`;
-  clone.style.height = `${height}px`;
 
   const svgText = serializeCloneToSvg(clone, width, height, backgroundColor);
 
