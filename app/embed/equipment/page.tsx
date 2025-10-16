@@ -166,10 +166,13 @@ export default async function EquipmentEmbedPage({
             <CardTitle className="flex flex-wrap items-center gap-2 text-xl font-semibold text-slate-900">
               <span className="leading-tight">
                 {equipment.equipment_name ?? 'Карточка оборудования'}
+                {equipment.id ? (
+                  <>
+                    {' '}
+                    <span className="text-sm font-normal text-slate-400">[{equipment.id}]</span>
+                  </>
+                ) : null}
               </span>
-              {equipment.id ? (
-                <span className="text-sm font-normal text-slate-400">ID {equipment.id}</span>
-              ) : null}
             </CardTitle>
             {equipment.description_url && (
               <Link
