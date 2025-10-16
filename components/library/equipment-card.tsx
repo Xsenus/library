@@ -283,10 +283,32 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
     setCopyHint(null);
 
     try {
-      const { skippedImages, skippedBackgrounds, format } = await copyElementImageToClipboard(cardRef.current, {
-        pixelRatio: 2,
-        skipDataAttribute: 'data-copy-skip',
-      });
+      const rect = cardRef.current.getBoundingClientRect();
+      let preferredWidth = rect.width;
+
+      if (typeof window !== 'undefined') {
+        const viewport = window.innerWidth;
+        if (Number.isFinite(viewport) && viewport > 0) {
+          const wideTarget = Math.min(960, viewport - 64);
+          if (wideTarget > preferredWidth) {
+            preferredWidth = wideTarget;
+          }
+        } else if (preferredWidth < 960) {
+          preferredWidth = 960;
+        }
+      } else if (preferredWidth < 960) {
+        preferredWidth = 960;
+      }
+
+      const { skippedImages, skippedBackgrounds, format } = await copyElementImageToClipboard(
+        cardRef.current,
+        {
+          pixelRatio: 2,
+          skipDataAttribute: 'data-copy-skip',
+          preferredWidth,
+          maxWidth: preferredWidth,
+        },
+      );
 
       const skippedParts: string[] = [];
       if (skippedImages > 0) skippedParts.push(`без ${skippedImages} внеш. изображ.`);
@@ -598,7 +620,7 @@ export function EquipmentCard({ equipment }: EquipmentCardProps) {
   }, [equipment?.id]);
 
   return (
-    <div className="space-y-4 pb-[1cm]">
+    <div className="space-y-4 pb-6">
       <Card ref={cardRef} className="relative">
         <div
           data-copy-skip="1"

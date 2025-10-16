@@ -27,9 +27,21 @@ export async function GET(req: NextRequest) {
       return new Response('Unsupported protocol', { status: 400 });
     }
 
+    const upstreamHeaders: Record<string, string> = {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36',
+      Accept: 'image/avif,image/webp,image/apng,image/*,*/*;q=0.8',
+      'Accept-Language': 'ru,en;q=0.9',
+    };
+
+    if (target.origin) {
+      upstreamHeaders.Referer = `${target.origin}/`;
+    }
+
     const upstream = await fetch(target.toString(), {
       cache: 'no-store',
       redirect: 'follow',
+      headers: upstreamHeaders,
     });
 
     if (!upstream.ok || !upstream.body) {

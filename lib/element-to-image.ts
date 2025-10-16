@@ -10,6 +10,9 @@ export interface CopyImageOptions {
   backgroundColor?: string;
   pixelRatio?: number;
   skipDataAttribute?: string;
+  preferredWidth?: number;
+  minWidth?: number;
+  maxWidth?: number;
 }
 
 const TRANSPARENT_PIXEL =
@@ -518,14 +521,89 @@ function resolveBackgroundColor(element: HTMLElement): string {
   return '#ffffff';
 }
 
-function measureElement(element: HTMLElement): { width: number; height: number } {
+function resolveTargetWidth(element: HTMLElement, options: CopyImageOptions): number {
   const rect = element.getBoundingClientRect();
-  const width = rect.width || element.offsetWidth || element.scrollWidth;
-  const height = rect.height || element.offsetHeight || element.scrollHeight;
-  return {
-    width: Math.max(1, Math.round(width)),
-    height: Math.max(1, Math.round(height)),
-  };
+  const fallbackWidth = rect.width || element.offsetWidth || element.scrollWidth || 0;
+  let targetWidth = fallbackWidth;
+
+  if (options.preferredWidth && options.preferredWidth > targetWidth) {
+    targetWidth = options.preferredWidth;
+  }
+
+  if (options.minWidth && options.minWidth > targetWidth) {
+    targetWidth = options.minWidth;
+  }
+
+  if (options.maxWidth && targetWidth > options.maxWidth) {
+    targetWidth = options.maxWidth;
+  }
+
+  return Math.max(1, Math.round(targetWidth || 1));
+}
+
+function layoutClone(
+  element: HTMLElement,
+  clone: HTMLElement,
+  options: CopyImageOptions,
+): { width: number; height: number } {
+  const win = getWindow();
+  const host = win.document.createElement('div');
+  host.style.position = 'fixed';
+  host.style.left = '-10000px';
+  host.style.top = '0';
+  host.style.visibility = 'hidden';
+  host.style.pointerEvents = 'none';
+  host.style.zIndex = '-1';
+  host.style.width = 'auto';
+  host.style.height = 'auto';
+  host.style.maxWidth = 'none';
+  host.style.maxHeight = 'none';
+  host.style.overflow = 'visible';
+
+  const targetWidth = resolveTargetWidth(element, options);
+  const originalRect = element.getBoundingClientRect();
+  const enlarge = targetWidth > Math.round(originalRect.width || 0);
+
+  clone.style.boxSizing = 'border-box';
+  clone.style.width = `${targetWidth}px`;
+  clone.style.height = 'auto';
+  clone.style.maxHeight = 'none';
+  clone.style.position = 'static';
+
+  if (enlarge) {
+    clone.style.minWidth = `${targetWidth}px`;
+    clone.style.maxWidth = `${targetWidth}px`;
+  } else {
+    clone.style.minWidth = '';
+    clone.style.maxWidth = '';
+  }
+
+  host.appendChild(clone);
+  win.document.body.appendChild(host);
+
+  let width = 1;
+  let height = 1;
+
+  try {
+    const measuredRect = clone.getBoundingClientRect();
+    width = Math.max(1, Math.round(measuredRect.width));
+    height = Math.max(1, Math.round(measuredRect.height));
+  } finally {
+    if (host.contains(clone)) {
+      host.removeChild(clone);
+    }
+    if (host.parentNode) {
+      host.parentNode.removeChild(host);
+    }
+  }
+
+  clone.style.width = `${width}px`;
+  clone.style.height = `${height}px`;
+  clone.style.minWidth = '';
+  clone.style.maxWidth = '';
+  clone.style.position = '';
+
+  return { width, height };
 }
 
 function getCombinedCssText(): string {
@@ -735,14 +813,11 @@ export async function copyElementImageToClipboard(
     throw new Error('Невозможно сделать снимок на сервере');
   }
 
+  const { clone, counters } = await prepareClone(element, options);
+  const { width, height } = layoutClone(element, clone, options);
+
   const pixelRatio = options.pixelRatio ?? getWindow().devicePixelRatio ?? 1;
   const backgroundColor = options.backgroundColor ?? resolveBackgroundColor(element);
-  const { width, height } = measureElement(element);
-
-  const { clone, counters } = await prepareClone(element, options);
-  clone.style.boxSizing = 'border-box';
-  clone.style.width = `${width}px`;
-  clone.style.height = `${height}px`;
 
   const svgText = serializeCloneToSvg(clone, width, height, backgroundColor);
 
