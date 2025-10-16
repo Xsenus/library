@@ -14,6 +14,7 @@ export interface CopyImageOptions {
 
 const TRANSPARENT_PIXEL =
   'data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==';
+const IMAGE_PROXY_ENDPOINT = '/api/images/proxy';
 const URL_FUNCTION_REGEX = /url\(("|'|)([^"')]+)\1\)/gi;
 const GOOGLE_DOMAIN_REGEX = /(google|gstatic|googleapis|googleusercontent|googletag|doubleclick)\./i;
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
@@ -266,32 +267,86 @@ async function inlineExternalImage(url: string, target: HTMLImageElement): Promi
   return true;
 }
 
+function toAbsoluteUrl(url: string): string {
+  try {
+    return new URL(url, getWindow().location.href).toString();
+  } catch {
+    return url;
+  }
+}
+
+function isSameOrigin(url: URL): boolean {
+  try {
+    return url.origin === getWindow().location.origin;
+  } catch {
+    return false;
+  }
+}
+
+async function fetchBlobAsDataUrl(url: string, init?: RequestInit): Promise<string | null> {
+  try {
+    const response = await fetch(url, {
+      cache: 'no-store',
+      mode: 'cors',
+      ...init,
+    });
+    if (!response.ok) {
+      return null;
+    }
+    const blob = await response.blob();
+    if (!blob || blob.size === 0) {
+      return null;
+    }
+    const dataUrl = await blobToDataUrl(blob);
+    return dataUrl || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildProxyUrl(url: string): string {
+  const win = getWindow();
+  const proxy = new URL(IMAGE_PROXY_ENDPOINT, win.location.origin);
+  proxy.searchParams.set('url', url);
+  return proxy.toString();
+}
+
 async function fetchImageAsDataUrl(url: string): Promise<string | null> {
-  if (imageDataUrlCache.has(url)) {
-    return imageDataUrlCache.get(url) ?? null;
+  const absoluteUrl = toAbsoluteUrl(url);
+
+  if (imageDataUrlCache.has(absoluteUrl)) {
+    return imageDataUrlCache.get(absoluteUrl) ?? null;
   }
 
-  let pending = imageDataUrlPending.get(url);
+  let pending = imageDataUrlPending.get(absoluteUrl);
   if (!pending) {
     pending = (async () => {
-      try {
-        const response = await fetch(url, { mode: 'cors', credentials: 'omit' });
-        if (!response.ok) {
-          return null;
-        }
-        const blob = await response.blob();
-        const dataUrl = await blobToDataUrl(blob);
-        return dataUrl || null;
-      } catch {
+      const targetUrl = new URL(absoluteUrl);
+      const includeCredentials = isSameOrigin(targetUrl);
+
+      const direct = await fetchBlobAsDataUrl(targetUrl.toString(), {
+        credentials: includeCredentials ? 'include' : 'omit',
+      });
+      if (direct) {
+        return direct;
+      }
+      if (targetUrl.pathname.startsWith(IMAGE_PROXY_ENDPOINT)) {
         return null;
       }
+
+      const proxied = await fetchBlobAsDataUrl(buildProxyUrl(targetUrl.toString()));
+      if (proxied) {
+        return proxied;
+      }
+
+      return null;
     })();
-    imageDataUrlPending.set(url, pending);
+    imageDataUrlPending.set(absoluteUrl, pending);
   }
 
   const result = await pending;
-  imageDataUrlPending.delete(url);
-  imageDataUrlCache.set(url, result ?? null);
+  imageDataUrlPending.delete(absoluteUrl);
+  imageDataUrlCache.set(absoluteUrl, result ?? null);
   return result ?? null;
 }
 
