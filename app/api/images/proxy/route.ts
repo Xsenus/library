@@ -6,6 +6,15 @@ const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36';
 const DEFAULT_ACCEPT = 'image/avif,image/webp,image/png,image/svg+xml,image/*,*/*;q=0.8';
+const FORWARDED_CREDENTIAL_HEADERS: Array<[string, string]> = [
+  ['cookie', 'Cookie'],
+  ['authorization', 'Authorization'],
+  ['x-api-key', 'x-api-key'],
+  ['x-access-token', 'X-Access-Token'],
+  ['x-client-info', 'X-Client-Info'],
+  ['x-xsrf-token', 'X-XSRF-Token'],
+  ['x-csrf-token', 'X-CSRF-Token'],
+];
 
 function isAllowedUrl(url: URL): boolean {
   return ALLOWED_PROTOCOLS.has(url.protocol);
@@ -39,6 +48,7 @@ function buildBaseHeaders(req: NextRequest, target: URL, secFetchSite: string): 
   headers.set('User-Agent', userAgent);
   headers.set('Accept', DEFAULT_ACCEPT);
   headers.set('Accept-Language', acceptLanguage);
+  headers.set('Accept-Encoding', 'gzip, deflate, br');
   headers.set('Pragma', 'no-cache');
   headers.set('Cache-Control', 'no-cache');
   headers.set('Connection', 'keep-alive');
@@ -52,6 +62,19 @@ function buildBaseHeaders(req: NextRequest, target: URL, secFetchSite: string): 
   }
 
   return headers;
+}
+
+function applyCredentialHeaders(req: NextRequest, headers: Headers, secFetchSite: string): void {
+  if (secFetchSite === 'cross-site') {
+    return;
+  }
+
+  for (const [incoming, outgoing] of FORWARDED_CREDENTIAL_HEADERS) {
+    const value = req.headers.get(incoming);
+    if (value) {
+      headers.set(outgoing, value);
+    }
+  }
 }
 
 async function tryFetch(url: URL, headers: Headers): Promise<Response | null> {
@@ -87,6 +110,7 @@ export async function GET(req: NextRequest) {
 
     const secFetchSite = resolveSecFetchSite(requestUrl, target);
     const baseHeaders = buildBaseHeaders(req, target, secFetchSite);
+    applyCredentialHeaders(req, baseHeaders, secFetchSite);
 
     const refererCandidates: Array<string | null> = [];
 

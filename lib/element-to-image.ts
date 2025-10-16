@@ -35,8 +35,15 @@ interface Counters {
 }
 
 let cachedCssText: string | null = null;
-const imageDataUrlCache = new Map<string, string | null>();
+interface ImageDataCacheEntry {
+  value: string | null;
+  expiresAt: number;
+}
+
+const imageDataUrlCache = new Map<string, ImageDataCacheEntry>();
 const imageDataUrlPending = new Map<string, Promise<string | null>>();
+const SUCCESS_CACHE_TTL_MS = 5 * 60 * 1000;
+const FAILURE_CACHE_TTL_MS = 60 * 1000;
 
 function getWindow(): Window {
   if (typeof window === 'undefined') {
@@ -314,11 +321,29 @@ function buildProxyUrl(url: string): string {
   return proxy.toString();
 }
 
+function readImageCache(url: string): string | null | undefined {
+  const entry = imageDataUrlCache.get(url);
+  if (!entry) {
+    return undefined;
+  }
+  if (entry.expiresAt < Date.now()) {
+    imageDataUrlCache.delete(url);
+    return undefined;
+  }
+  return entry.value;
+}
+
+function storeImageCache(url: string, value: string | null): void {
+  const ttl = value !== null ? SUCCESS_CACHE_TTL_MS : FAILURE_CACHE_TTL_MS;
+  imageDataUrlCache.set(url, { value, expiresAt: Date.now() + ttl });
+}
+
 async function fetchImageAsDataUrl(url: string): Promise<string | null> {
   const absoluteUrl = toAbsoluteUrl(url);
 
-  if (imageDataUrlCache.has(absoluteUrl)) {
-    return imageDataUrlCache.get(absoluteUrl) ?? null;
+  const cached = readImageCache(absoluteUrl);
+  if (cached !== undefined) {
+    return cached;
   }
 
   let pending = imageDataUrlPending.get(absoluteUrl);
@@ -351,12 +376,8 @@ async function fetchImageAsDataUrl(url: string): Promise<string | null> {
 
   const result = await pending;
   imageDataUrlPending.delete(absoluteUrl);
-  if (result) {
-    imageDataUrlCache.set(absoluteUrl, result);
-  } else {
-    imageDataUrlCache.delete(absoluteUrl);
-  }
-  return result ?? null;
+  storeImageCache(absoluteUrl, result);
+  return result;
 }
 
 function blobToDataUrl(blob: Blob): Promise<string> {
