@@ -164,7 +164,13 @@ export async function POST(req: NextRequest) {
       let r: any;
       try {
         r = await b24BatchJson(cmd, 0);
-      } catch (err) {
+      } catch (err: any) {
+        const message = err?.message || String(err);
+        console.error('Bitrix batch error while fetching companies:', {
+          message,
+          inns: pack,
+          commands: cmd,
+        });
         bitrixError = bitrixError ?? err;
         break;
       }
@@ -230,7 +236,13 @@ export async function POST(req: NextRequest) {
       let r: any;
       try {
         r = await b24BatchJson(cmd, 0);
-      } catch (err) {
+      } catch (err: any) {
+        const message = err?.message || String(err);
+        console.error('Bitrix batch error while fetching users:', {
+          message,
+          userIds: pack,
+          commands: cmd,
+        });
         bitrixError = bitrixError ?? err;
         break;
       }
