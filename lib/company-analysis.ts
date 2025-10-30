@@ -35,25 +35,25 @@ async function ensureSchema() {
       `);
 
       await db.query(`
-        DO $$
+        DO $do$
         BEGIN
           IF NOT EXISTS (
             SELECT 1 FROM pg_proc WHERE proname = 'company_analysis_state_touch'
           ) THEN
             CREATE FUNCTION company_analysis_state_touch()
-            RETURNS TRIGGER AS $$
+            RETURNS TRIGGER AS $fn$
             BEGIN
               NEW.updated_at = NOW();
               RETURN NEW;
             END;
-            $$ LANGUAGE plpgsql;
+            $fn$ LANGUAGE plpgsql;
           END IF;
-        END
-        $$;
+        END;
+        $do$;
       `);
 
       await db.query(`
-        DO $$
+        DO $do$
         BEGIN
           IF NOT EXISTS (
             SELECT 1 FROM pg_trigger WHERE tgname = 'company_analysis_state_touch_trg'
@@ -63,8 +63,8 @@ async function ensureSchema() {
             FOR EACH ROW
             EXECUTE FUNCTION company_analysis_state_touch();
           END IF;
-        END
-        $$;
+        END;
+        $do$;
       `);
     })();
   }

@@ -111,7 +111,7 @@ function mergeAnalysisRows(
   existing: AnalysisRow | null,
   incoming: Partial<AnalysisRow> & { inn?: string },
 ): AnalysisRow {
-  const base = existing ? { ...existing } : buildEmptyAnalysisRow(incoming.inn ?? existing?.inn ?? '');
+  const base = existing ? { ...existing } : buildEmptyAnalysisRow(incoming.inn ?? '');
   const inn = (incoming.inn ?? base.inn ?? '').trim();
   const flags = { ...(base.flags ?? {}), ...(incoming.flags ?? {}) } as NonNullable<AnalysisRow['flags']>;
 
@@ -597,13 +597,13 @@ export default function OkvedTab() {
     setSelectedInns((prev) => {
       let changed = false;
       const next = new Set<string>();
-      for (const inn of prev) {
+      prev.forEach((inn) => {
         if (valid.has(inn)) {
           next.add(inn);
         } else {
           changed = true;
         }
-      }
+      });
       if (!changed && next.size === prev.size) return prev;
       return next;
     });
@@ -1525,19 +1525,29 @@ export default function OkvedTab() {
                         const status = analysis.status ?? 'idle';
                         const statusLabel = STATUS_LABELS[status] ?? status;
                         const progressValue = Math.max(0, Math.min(100, analysis.progress ?? 0));
-                        const stageLabel = PIPELINE_STEPS.find((step) => step.id === (analysis.stage ?? ''))
-                          ?.label;
-                        const seriesRevenue = [
-                          company.revenue_3,
-                          company.revenue_2,
-                          company.revenue_1,
-                          company.revenue,
+                        const stageLabel =
+                          PIPELINE_STEPS.find((step) => step.id === (analysis.stage ?? ''))?.label;
+                        const seriesRevenue: [
+                          number | null | undefined,
+                          number | null | undefined,
+                          number | null | undefined,
+                          number | null | undefined,
+                        ] = [
+                          company.revenue_3 ?? null,
+                          company.revenue_2 ?? null,
+                          company.revenue_1 ?? null,
+                          company.revenue ?? null,
                         ];
-                        const seriesIncome = [
-                          company.income_3,
-                          company.income_2,
-                          company.income_1,
-                          company.income,
+                        const seriesIncome: [
+                          number | null | undefined,
+                          number | null | undefined,
+                          number | null | undefined,
+                          number | null | undefined,
+                        ] = [
+                          company.income_3 ?? null,
+                          company.income_2 ?? null,
+                          company.income_1 ?? null,
+                          company.income ?? null,
                         ];
                         const isActual = (company.year ?? 0) === lastYear;
                         const resp = responsibles[company.inn];
