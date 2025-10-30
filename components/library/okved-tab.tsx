@@ -27,14 +27,17 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip';
 import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select';
+  DropdownMenu,
+  DropdownMenuTrigger,
+  DropdownMenuContent,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuItem,
+} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { X, Play, Square, Loader2, Info, AlertCircle } from 'lucide-react';
+import { X, Play, Square, Loader2, Info, AlertCircle, SlidersHorizontal } from 'lucide-react';
 import InlineRevenueBars from './inline-revenue-bar';
 import SquareImgButton from './square-img-button';
 
@@ -772,6 +775,19 @@ export default function OkvedTab() {
     return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'));
   }, [analysisState, companies]);
 
+  const analysisFiltersApplied = useMemo(
+    () => analysisIndustryFilter !== 'all' || analysisOkvedFilter !== 'all',
+    [analysisIndustryFilter, analysisOkvedFilter],
+  );
+
+  const analysisFilterSummary = useMemo(() => {
+    if (!analysisFiltersApplied) return 'Фильтры не заданы';
+    const parts: string[] = [];
+    if (analysisIndustryFilter !== 'all') parts.push(analysisIndustryFilter);
+    if (analysisOkvedFilter !== 'all') parts.push(analysisOkvedFilter);
+    return parts.join(' · ');
+  }, [analysisFiltersApplied, analysisIndustryFilter, analysisOkvedFilter]);
+
   const filteredCompanies = useMemo(() => {
     return companies.filter((company) => {
       const state = analysisState[company.inn] ?? buildAnalysisRowFromCompany(company);
@@ -1428,36 +1444,78 @@ export default function OkvedTab() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-2">
-              <Select
-                value={analysisIndustryFilter}
-                onValueChange={(value) => setAnalysisIndustryFilter(value)}>
-                <SelectTrigger className="h-8 w-[240px] text-xs">
-                  <SelectValue placeholder="Фильтр по отраслям" />
-                </SelectTrigger>
-                <SelectContent className="max-h-60 text-sm">
-                  <SelectItem value="all">Все отрасли</SelectItem>
-                  {industryFilterOptions.map((option) => (
-                    <SelectItem key={option} value={option} className="whitespace-normal">
-                      {option}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            <div className="flex flex-wrap items-center gap-3">
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 gap-2 px-3 text-xs"
+                    title="Настроить фильтры анализа">
+                    <SlidersHorizontal className="h-4 w-4" />
+                    Фильтры анализа
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end" className="w-72 text-xs">
+                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Фильтр по отраслям
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={analysisIndustryFilter}
+                    onValueChange={(value) => setAnalysisIndustryFilter(value)}
+                    className="max-h-48 overflow-y-auto">
+                    <DropdownMenuRadioItem value="all">Все отрасли</DropdownMenuRadioItem>
+                    {industryFilterOptions.map((option) => (
+                      <DropdownMenuRadioItem key={option} value={option} className="whitespace-normal">
+                        {option}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
 
-              <Select value={analysisOkvedFilter} onValueChange={(value) => setAnalysisOkvedFilter(value)}>
-                <SelectTrigger className="h-8 w-[280px] text-xs">
-                  <SelectValue placeholder="Фильтр по ОКВЭД" />
-                </SelectTrigger>
-                <SelectContent className="max-h-60 text-sm">
-                  <SelectItem value="all">Все ОКВЭДы</SelectItem>
-                  {okvedFilterOptions.map((option) => (
-                    <SelectItem key={option} value={option} className="whitespace-normal">
-                      {option}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+                  <DropdownMenuSeparator />
+
+                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                    Фильтр по ОКВЭД
+                  </DropdownMenuLabel>
+                  <DropdownMenuRadioGroup
+                    value={analysisOkvedFilter}
+                    onValueChange={(value) => setAnalysisOkvedFilter(value)}
+                    className="max-h-48 overflow-y-auto">
+                    <DropdownMenuRadioItem value="all">Все ОКВЭДы</DropdownMenuRadioItem>
+                    {okvedFilterOptions.map((option) => (
+                      <DropdownMenuRadioItem key={option} value={option} className="whitespace-normal">
+                        {option}
+                      </DropdownMenuRadioItem>
+                    ))}
+                  </DropdownMenuRadioGroup>
+
+                  {analysisFiltersApplied && (
+                    <>
+                      <DropdownMenuSeparator />
+                      <DropdownMenuItem
+                        onSelect={(event) => {
+                          event.preventDefault();
+                          setAnalysisIndustryFilter('all');
+                          setAnalysisOkvedFilter('all');
+                        }}
+                        className="text-xs">
+                        Сбросить фильтры
+                      </DropdownMenuItem>
+                    </>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span className="font-medium text-foreground">Активно:</span>
+                {analysisFiltersApplied ? (
+                  <Badge variant="outline" className="max-w-[260px] truncate font-normal">
+                    {analysisFilterSummary}
+                  </Badge>
+                ) : (
+                  <span>Фильтры не заданы</span>
+                )}
+              </div>
             </div>
 
             <div className="relative w-full overflow-auto">
@@ -1474,17 +1532,17 @@ export default function OkvedTab() {
                         />
                       </th>
                       <th className="py-1 px-2 w-[42px]"></th>
-                      <th className="py-1 px-2 w-[160px]">Анализ</th>
-                      <th className="py-1 px-2 whitespace-nowrap">ИНН</th>
+                      <th className="py-1 px-2 w-[160px] text-center">Анализ</th>
+                      <th className="py-1 px-2 whitespace-nowrap text-center">ИНН</th>
                       <th className="py-1 px-2 text-left">Название</th>
                       <th className="py-1 px-2 text-left">Сайты</th>
                       <th className="py-1 px-2 text-left">Имейлы</th>
-                      <th className="py-1 px-2 whitespace-nowrap">Дата запуска</th>
-                      <th className="py-1 px-2 whitespace-nowrap">Время запуска</th>
-                      <th className="py-1 px-2 whitespace-nowrap">Длительность</th>
-                      <th className="py-1 px-2 whitespace-nowrap">Попытки</th>
-                      <th className="py-1 px-2 whitespace-nowrap">Оценка</th>
-                      <th className="py-1 px-2">Инфо</th>
+                      <th className="py-1 px-2 whitespace-nowrap text-center">Дата запуска</th>
+                      <th className="py-1 px-2 whitespace-nowrap text-center">Время запуска</th>
+                      <th className="py-1 px-2 whitespace-nowrap text-center">Длительность</th>
+                      <th className="py-1 px-2 whitespace-nowrap text-center">Попытки</th>
+                      <th className="py-1 px-2 whitespace-nowrap text-center">Оценка</th>
+                      <th className="py-1 px-2 text-center">Инфо</th>
                       <th
                         className="py-1 px-3 cursor-pointer select-none"
                         title="Сортировать по выручке"
@@ -1603,10 +1661,10 @@ export default function OkvedTab() {
                                 sizeClassName="h-7 w-7"
                               />
                             </td>
-                            <td className="py-1 px-2 text-center">
+                            <td className="py-1 px-2 align-middle">
                               {status === 'running' || status === 'stopping' ? (
-                                <div className="flex flex-col items-center gap-1">
-                                  <Progress value={progressValue} className="h-2 w-28" />
+                                <div className="flex min-h-[92px] flex-col items-center justify-center gap-2 text-center">
+                                  <Progress value={progressValue} className="h-2 w-24" />
                                   <div className="text-[10px] text-muted-foreground">
                                     {stageLabel ?? 'Выполнение'}
                                   </div>
@@ -1615,22 +1673,24 @@ export default function OkvedTab() {
                                     size="icon"
                                     className="h-7 w-7"
                                     disabled={busy}
-                                    onClick={() => handleStopSingle(company.inn)}>
+                                    onClick={() => handleStopSingle(company.inn)}
+                                    aria-label="Остановить анализ">
                                     <Square className="h-3.5 w-3.5" />
                                   </Button>
                                 </div>
                               ) : status === 'queued' ? (
-                                <div className="flex flex-col items-center gap-1">
+                                <div className="flex min-h-[92px] flex-col items-center justify-center gap-2 text-center">
                                   <Badge className={cn('text-[10px] uppercase', statusBadgeClass(status))}>
                                     {statusLabel}
                                   </Badge>
-                                  <div className="flex items-center gap-1">
+                                  <div className="flex items-center justify-center gap-1">
                                     <Button
                                       variant="ghost"
                                       size="icon"
                                       className="h-7 w-7"
                                       disabled={busy}
-                                      onClick={() => handleStartSingle(company.inn)}>
+                                      onClick={() => handleStartSingle(company.inn)}
+                                      aria-label="Запустить анализ">
                                       <Play className="h-4 w-4" />
                                     </Button>
                                     <Button
@@ -1638,24 +1698,28 @@ export default function OkvedTab() {
                                       size="icon"
                                       className="h-7 w-7"
                                       disabled={busy}
-                                      onClick={() => handleStopSingle(company.inn)}>
+                                      onClick={() => handleStopSingle(company.inn)}
+                                      aria-label="Остановить анализ">
                                       <Square className="h-3.5 w-3.5" />
                                     </Button>
                                   </div>
                                 </div>
                               ) : (
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-7 w-7"
-                                  disabled={busy}
-                                  onClick={() => handleStartSingle(company.inn)}>
-                                  {busy ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Play className="h-4 w-4" />
-                                  )}
-                                </Button>
+                                <div className="flex min-h-[92px] items-center justify-center">
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    disabled={busy}
+                                    onClick={() => handleStartSingle(company.inn)}
+                                    aria-label="Запустить анализ">
+                                    {busy ? (
+                                      <Loader2 className="h-4 w-4 animate-spin" />
+                                    ) : (
+                                      <Play className="h-4 w-4" />
+                                    )}
+                                  </Button>
+                                </div>
                               )}
                             </td>
                             <td className="py-1 px-2 whitespace-nowrap align-middle">{company.inn}</td>
