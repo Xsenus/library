@@ -41,6 +41,10 @@ type EnumMap = Map<number, EnumMapVal>;
 let enumCache: { field: string; map: EnumMap; exp: number } | null =
   (globalThis as any).__ENUM_CACHE__ ?? null;
 (globalThis as any).__ENUM_CACHE__ = enumCache;
+
+type DisabledState = { until: number; reason: string; message: string } | null;
+let disabledState: DisabledState = (globalThis as any).__RESP_DISABLED__ ?? null;
+(globalThis as any).__RESP_DISABLED__ = disabledState;
 // ───────────────────────────────────────────────────────────────────────────
 
 const notEmpty = (s: string) => !!s && s.trim().length > 0;
@@ -113,6 +117,21 @@ export async function POST(req: NextRequest) {
     const body = (await req.json().catch(() => null)) as { inns?: string[] } | null;
     const innsRaw = Array.isArray(body?.inns) ? body!.inns! : [];
 
+    const now = Date.now();
+    if (disabledState && disabledState.until > now) {
+      if (debug) {
+        console.warn(
+          'Bitrix responsibles disabled — reusing cached failure:',
+          disabledState.message,
+        );
+      }
+      return NextResponse.json({
+        ok: true,
+        items: [],
+        warning: disabledState.reason,
+      });
+    }
+
     const entryMap = new Map<
       string,
       { raw: string; normalized: string | null }
@@ -140,11 +159,11 @@ export async function POST(req: NextRequest) {
       ),
     );
 
-    const now = Date.now();
+    const nowCache = Date.now();
     const toFind: string[] = [];
     for (const key of searchKeys) {
       const c = cache.get(key);
-      if (!c || c.exp <= now) {
+      if (!c || c.exp <= nowCache) {
         toFind.push(key);
       }
     }
@@ -359,6 +378,9 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    disabledState = null;
+    (globalThis as any).__RESP_DISABLED__ = disabledState;
+
     return NextResponse.json({
       ok: true,
       items,
@@ -367,7 +389,25 @@ export async function POST(req: NextRequest) {
         : undefined,
     });
   } catch (e: any) {
+    const message = e?.message ? String(e.message) : 'internal error';
+    const lower = message.toLowerCase();
+    const isAuthError =
+      lower.includes('invalid_credentials') ||
+      lower.includes('webhook not configured') ||
+      lower.includes('invalid request credentials') ||
+      lower.includes('expired token') ||
+      lower.includes('unauthorized') ||
+      lower.includes('invalid client');
+
+    if (isAuthError) {
+      const until = Date.now() + 5 * 60_000;
+      disabledState = { until, reason: 'bitrix_auth', message };
+      (globalThis as any).__RESP_DISABLED__ = disabledState;
+      console.warn('Bitrix responsibles temporarily disabled:', message);
+      return NextResponse.json({ ok: true, items: [], warning: 'bitrix_auth' });
+    }
+
     console.error('responsibles (JSON batch) failed:', e);
-    return NextResponse.json({ ok: false, error: e?.message || 'internal error' }, { status: 500 });
+    return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
 }
