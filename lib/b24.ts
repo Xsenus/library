@@ -1,6 +1,7 @@
 // lib/b24.ts
 const WEBHOOK = process.env.B24_WEBHOOK_URL ?? '';
 const PORTAL_ORIGIN = process.env.B24_PORTAL_ORIGIN ?? '';
+const SLASH_COLLAPSE_RE = new RegExp('(?<!:)//+', 'g');
 
 if (!WEBHOOK) console.warn('B24_WEBHOOK_URL is not set');
 if (!PORTAL_ORIGIN) console.warn('B24_PORTAL_ORIGIN is not set');
@@ -21,7 +22,8 @@ export async function b24Call<T = unknown>(
 ): Promise<T> {
   if (!WEBHOOK) throw new Error('B24 webhook not configured');
   const body = toFormUrlEncoded(params);
-  const r = await fetch(`${WEBHOOK}${method}.json`, {
+  const url = resolveWebhookUrl(method);
+  const r = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
     body,
@@ -36,7 +38,8 @@ export async function b24Call<T = unknown>(
 /** JSON-вариант batch */
 export async function b24BatchJson(cmd: Record<string, string>, halt = 0): Promise<any> {
   if (!WEBHOOK) throw new Error('B24 webhook not configured');
-  const r = await fetch(`${WEBHOOK}batch.json`, {
+  const url = resolveWebhookUrl('batch');
+  const r = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ halt, cmd }),
@@ -81,4 +84,35 @@ export function chunk<T>(arr: T[], n: number): T[][] {
   const out: T[][] = [];
   for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n));
   return out;
+}
+
+function resolveWebhookUrl(method: string): string {
+  const marker = '{{method}}';
+  const methodPath = method.endsWith('.json') ? method : `${method}.json`;
+
+  const trimmed = WEBHOOK.trim();
+  if (!trimmed) throw new Error('B24 webhook not configured');
+
+  if (trimmed.includes(marker)) {
+    return trimmed.replace(new RegExp(marker, 'g'), methodPath);
+  }
+
+  try {
+    const url = new URL(trimmed);
+    if (!url.pathname.endsWith('.json')) {
+      const basePath = url.pathname.endsWith('/') ? url.pathname : `${url.pathname}/`;
+      const rawPath = `${basePath}${methodPath}`;
+      url.pathname = rawPath.replace(SLASH_COLLAPSE_RE, '/');
+    }
+    return url.toString();
+  } catch {
+    const [base, query] = trimmed.split('?', 2);
+    const baseWithSlash = base.endsWith('/') || base.endsWith('?') || base.endsWith('&')
+      ? base
+      : `${base}/`;
+    const rawPath = `${baseWithSlash}${methodPath}`;
+    const normalized = rawPath.replace(SLASH_COLLAPSE_RE, '/');
+    if (query === undefined || query === '') return normalized;
+    return `${normalized}?${query}`;
+  }
 }
