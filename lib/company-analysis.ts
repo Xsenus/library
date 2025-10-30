@@ -283,8 +283,33 @@ export async function stopCompanyAnalysis(inns: string[]): Promise<CompanyAnalys
     `
       UPDATE company_analysis_state
       SET
-        stop_requested = TRUE,
-        status = CASE WHEN status = 'running' THEN 'stopping' ELSE status END
+        stop_requested = CASE
+          WHEN status IN ('running', 'stopping', 'queued') THEN FALSE
+          ELSE stop_requested
+        END,
+        status = CASE
+          WHEN status IN ('running', 'stopping', 'queued') THEN 'idle'
+          ELSE status
+        END,
+        stage = CASE
+          WHEN status IN ('running', 'stopping', 'queued') THEN NULL
+          ELSE stage
+        END,
+        progress = CASE
+          WHEN status IN ('running', 'stopping', 'queued') THEN 0
+          ELSE progress
+        END,
+        last_finished_at = CASE
+          WHEN status IN ('running', 'stopping', 'queued') THEN NOW()
+          ELSE last_finished_at
+        END,
+        duration_seconds = CASE
+          WHEN status IN ('running', 'stopping', 'queued') THEN CASE
+            WHEN last_started_at IS NULL THEN duration_seconds
+            ELSE GREATEST(0, EXTRACT(EPOCH FROM (NOW() - last_started_at))::int)
+          END
+          ELSE duration_seconds
+        END
       WHERE inn = ANY($1::text[])
       RETURNING *
     `,

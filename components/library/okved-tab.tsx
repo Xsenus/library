@@ -175,6 +175,14 @@ function ensureHttp(url: string): string {
   return `https://${trimmed}`;
 }
 
+function normalizeInn(value: string | null | undefined): string {
+  if (!value) return '';
+  const trimmed = value.toString().trim();
+  if (!trimmed) return '';
+  const digits = trimmed.replace(/[^0-9]/g, '');
+  return digits.length > 0 ? digits : trimmed;
+}
+
 function statusBadgeClass(status: string): string {
   switch (status) {
     case 'success':
@@ -1007,7 +1015,12 @@ export default function OkvedTab() {
   }, [loadCompanies]);
 
   useEffect(() => {
-    const inns = companies.map((c) => c.inn).filter(Boolean);
+    const innSet = new Set<string>();
+    for (const company of companies) {
+      const key = normalizeInn(company?.inn);
+      if (key) innSet.add(key);
+    }
+    const inns = Array.from(innSet);
     if (inns.length === 0) {
       setResponsibles({});
       return;
@@ -1019,6 +1032,7 @@ export default function OkvedTab() {
         const r = await fetch('/api/b24/responsibles', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
+          credentials: 'include',
           body: JSON.stringify({ inns }),
           signal: ac.signal,
         });
@@ -1027,7 +1041,9 @@ export default function OkvedTab() {
 
         const map: Record<string, RespInfo> = {};
         for (const it of j.items || []) {
-          map[it.inn] = {
+          const key = normalizeInn(it.inn);
+          if (!key) continue;
+          map[key] = {
             assignedById: it.assignedById,
             assignedName: it.assignedName,
             colorId: it.colorId,
@@ -1035,11 +1051,17 @@ export default function OkvedTab() {
             colorXmlId: it.colorXmlId,
           };
         }
-        setResponsibles(map);
+        setResponsibles((prev) => {
+          const next: Record<string, RespInfo> = {};
+          for (const innKey of inns) {
+            const current = map[innKey] ?? prev[innKey];
+            if (current) next[innKey] = current;
+          }
+          return next;
+        });
       } catch (e: any) {
         if (e?.name !== 'AbortError') {
           console.error('load responsibles failed', e);
-          setResponsibles({});
         }
       } finally {
         setRespLoading(false);
@@ -1634,7 +1656,8 @@ export default function OkvedTab() {
                           company.income ?? null,
                         ];
                         const isActual = (company.year ?? 0) === lastYear;
-                        const resp = responsibles[company.inn];
+                        const innKey = normalizeInn(company.inn) || company.inn;
+                        const resp = responsibles[innKey];
                         const rowColorClass = colorRowClass(resp?.colorLabel, resp?.colorXmlId);
                         const rowBg = colorRowBg(resp?.colorLabel, resp?.colorXmlId);
                         const hasColor = !!rowBg;
@@ -1789,49 +1812,53 @@ export default function OkvedTab() {
                                 </div>
                               </div>
                             </td>
-                            <td className="py-1 px-2 text-left text-xs align-top">
-                              {websitesToShow.length === 0 ? (
-                                <span className="text-muted-foreground">—</span>
-                              ) : (
-                                <div className="flex max-h-24 flex-col gap-0.5 overflow-y-auto pr-1">
-                                  {websitesToShow.map((site) => (
-                                    <a
-                                      key={site}
-                                      href={ensureHttp(site)}
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                      className="text-blue-600 hover:underline break-words">
-                                      {site}
-                                    </a>
-                                  ))}
-                                  {extraWebsites > 0 && (
-                                    <span className="text-[10px] text-muted-foreground">
-                                      + ещё {extraWebsites}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
+                            <td className="py-1 px-2 align-middle">
+                              <div className="flex min-h-[92px] flex-col justify-center text-left">
+                                {websitesToShow.length === 0 ? (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                ) : (
+                                  <div className="flex max-h-24 flex-col gap-0.5 overflow-y-auto pr-1 text-xs">
+                                    {websitesToShow.map((site) => (
+                                      <a
+                                        key={site}
+                                        href={ensureHttp(site)}
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                        className="break-words text-blue-600 hover:underline">
+                                        {site}
+                                      </a>
+                                    ))}
+                                    {extraWebsites > 0 && (
+                                      <span className="text-[10px] text-muted-foreground">
+                                        + ещё {extraWebsites}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                             </td>
-                            <td className="py-1 px-2 text-left text-xs align-top">
-                              {emailsToShow.length === 0 ? (
-                                <span className="text-muted-foreground">—</span>
-                              ) : (
-                                <div className="flex max-h-24 flex-col gap-0.5 overflow-y-auto pr-1">
-                                  {emailsToShow.map((email) => (
-                                    <a
-                                      key={email}
-                                      href={`mailto:${email}`}
-                                      className="text-blue-600 hover:underline break-words">
-                                      {email}
-                                    </a>
-                                  ))}
-                                  {extraEmails > 0 && (
-                                    <span className="text-[10px] text-muted-foreground">
-                                      + ещё {extraEmails}
-                                    </span>
-                                  )}
-                                </div>
-                              )}
+                            <td className="py-1 px-2 align-middle">
+                              <div className="flex min-h-[92px] flex-col justify-center text-left">
+                                {emailsToShow.length === 0 ? (
+                                  <span className="text-xs text-muted-foreground">—</span>
+                                ) : (
+                                  <div className="flex max-h-24 flex-col gap-0.5 overflow-y-auto pr-1 text-xs">
+                                    {emailsToShow.map((email) => (
+                                      <a
+                                        key={email}
+                                        href={`mailto:${email}`}
+                                        className="break-words text-blue-600 hover:underline">
+                                        {email}
+                                      </a>
+                                    ))}
+                                    {extraEmails > 0 && (
+                                      <span className="text-[10px] text-muted-foreground">
+                                        + ещё {extraEmails}
+                                      </span>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                             </td>
                             <td className="py-1 px-2 whitespace-nowrap align-middle">
                               {formatDate(analysis.last_started_at)}
