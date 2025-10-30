@@ -843,6 +843,15 @@ export default function OkvedTab() {
     [analysisState],
   );
 
+  const pollInns = useMemo(() => {
+    if (activeInns.length === 0) return [] as string[];
+    const uniq = Array.from(new Set(activeInns.map((inn) => inn.trim()).filter(Boolean)));
+    uniq.sort();
+    return uniq;
+  }, [activeInns]);
+
+  const pollKey = useMemo(() => pollInns.join('|'), [pollInns]);
+
   const canStop = useMemo(() => {
     if (selectedInns.size > 0) {
       return Array.from(selectedInns).some((inn) => {
@@ -858,20 +867,37 @@ export default function OkvedTab() {
   const dialogInfo = dialogAnalysis?.info ?? null;
 
   useEffect(() => {
-    if (activeInns.length === 0) return;
-    const inns = [...activeInns];
+    if (!pollKey) return;
+
+    const inns = pollKey.split('|').filter(Boolean);
+    if (inns.length === 0) return;
+    let timer: number | undefined;
     let cancelled = false;
-    const poll = async () => {
+
+    const tick = async () => {
       if (cancelled) return;
-      await refreshAnalysis(inns);
+      try {
+        await refreshAnalysis(inns);
+      } finally {
+        if (!cancelled) {
+          timer = window.setTimeout(tick, 8000);
+        }
+      }
     };
-    poll();
-    const id = window.setInterval(poll, 8000);
+
+    void refreshAnalysis(inns).finally(() => {
+      if (!cancelled) {
+        timer = window.setTimeout(tick, 8000);
+      }
+    });
+
     return () => {
       cancelled = true;
-      window.clearInterval(id);
+      if (timer) {
+        window.clearTimeout(timer);
+      }
     };
-  }, [activeInns, refreshAnalysis]);
+  }, [pollKey, refreshAnalysis]);
 
   const activeOkved = useMemo(
     () => (okved ? okveds.find((o) => o.okved_code === okved) ?? null : null),
@@ -1630,7 +1656,7 @@ export default function OkvedTab() {
                           <tr
                             key={`${company.inn}-${company.year ?? ''}`}
                             className={cn(
-                              'border-b align-top',
+                              'border-b transition-colors',
                               hasColor
                                 ? 'transition-[filter] hover:brightness-95 dark:hover:brightness-110'
                                 : 'hover:bg-muted/40',
@@ -1723,15 +1749,19 @@ export default function OkvedTab() {
                               )}
                             </td>
                             <td className="py-1 px-2 whitespace-nowrap align-middle">{company.inn}</td>
-                            <td className="py-1 px-2 text-left">
-                              <div className="flex flex-col gap-1">
-                                <div className={cn(isFailure && 'text-red-600 font-semibold')}>
+                            <td className="py-1 px-2 align-middle">
+                              <div className="flex flex-col gap-1 leading-tight">
+                                <div
+                                  className={cn(
+                                    'text-sm font-medium text-foreground break-words',
+                                    isFailure && 'text-red-600',
+                                  )}>
                                   {company.short_name}
                                 </div>
-                                <div className="flex flex-wrap items-center gap-2">
+                                <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
                                   <Badge
                                     className={cn(
-                                      'text-[10px] font-medium uppercase',
+                                      'text-[10px] font-semibold uppercase tracking-wide',
                                       statusBadgeClass(status),
                                     )}>
                                     {statusLabel}
@@ -1759,7 +1789,7 @@ export default function OkvedTab() {
                                 </div>
                               </div>
                             </td>
-                            <td className="py-1 px-2 text-left text-xs">
+                            <td className="py-1 px-2 text-left text-xs align-top">
                               {websitesToShow.length === 0 ? (
                                 <span className="text-muted-foreground">—</span>
                               ) : (
@@ -1782,7 +1812,7 @@ export default function OkvedTab() {
                                 </div>
                               )}
                             </td>
-                            <td className="py-1 px-2 text-left text-xs">
+                            <td className="py-1 px-2 text-left text-xs align-top">
                               {emailsToShow.length === 0 ? (
                                 <span className="text-muted-foreground">—</span>
                               ) : (
@@ -1866,7 +1896,7 @@ export default function OkvedTab() {
                             <td className="py-1 px-2 whitespace-nowrap text-center align-middle">
                               {resp?.assignedName ?? (respLoading ? '…' : '—')}
                             </td>
-                            <td className="py-1 px-2 text-left text-[10px] text-muted-foreground">
+                            <td className="py-1 px-2 text-left text-[10px] text-muted-foreground align-top">
                               {company.address ?? '—'}
                             </td>
                           </tr>
