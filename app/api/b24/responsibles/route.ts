@@ -42,11 +42,6 @@ let enumCache: { field: string; map: EnumMap; exp: number } | null =
   (globalThis as any).__ENUM_CACHE__ ?? null;
 (globalThis as any).__ENUM_CACHE__ = enumCache;
 
-type DisabledState = { until: number; reason: string; message: string } | null;
-let disabledState: DisabledState = (globalThis as any).__RESP_DISABLED__ ?? null;
-(globalThis as any).__RESP_DISABLED__ = disabledState;
-// ───────────────────────────────────────────────────────────────────────────
-
 const notEmpty = (s: string) => !!s && s.trim().length > 0;
 const core = (r: any) => (r?.result?.result ?? {}) as Record<string, any>;
 
@@ -116,21 +111,6 @@ export async function POST(req: NextRequest) {
     const debug = req.nextUrl.searchParams.get('debug') === '1';
     const body = (await req.json().catch(() => null)) as { inns?: string[] } | null;
     const innsRaw = Array.isArray(body?.inns) ? body!.inns! : [];
-
-    const now = Date.now();
-    if (disabledState && disabledState.until > now) {
-      if (debug) {
-        console.warn(
-          'Bitrix responsibles disabled — reusing cached failure:',
-          disabledState.message,
-        );
-      }
-      return NextResponse.json({
-        ok: true,
-        items: [],
-        warning: disabledState.reason,
-      });
-    }
 
     const entryMap = new Map<
       string,
@@ -378,9 +358,6 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    disabledState = null;
-    (globalThis as any).__RESP_DISABLED__ = disabledState;
-
     return NextResponse.json({
       ok: true,
       items,
@@ -390,23 +367,6 @@ export async function POST(req: NextRequest) {
     });
   } catch (e: any) {
     const message = e?.message ? String(e.message) : 'internal error';
-    const lower = message.toLowerCase();
-    const isAuthError =
-      lower.includes('invalid_credentials') ||
-      lower.includes('webhook not configured') ||
-      lower.includes('invalid request credentials') ||
-      lower.includes('expired token') ||
-      lower.includes('unauthorized') ||
-      lower.includes('invalid client');
-
-    if (isAuthError) {
-      const until = Date.now() + 5 * 60_000;
-      disabledState = { until, reason: 'bitrix_auth', message };
-      (globalThis as any).__RESP_DISABLED__ = disabledState;
-      console.warn('Bitrix responsibles temporarily disabled:', message);
-      return NextResponse.json({ ok: true, items: [], warning: 'bitrix_auth' });
-    }
-
     console.error('responsibles (JSON batch) failed:', e);
     return NextResponse.json({ ok: false, error: message }, { status: 500 });
   }
