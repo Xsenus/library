@@ -117,7 +117,20 @@ export async function POST(req: NextRequest) {
       else toFind.push(inn);
     }
 
-    const enumMap = await getEnumMapForColorField(debug);
+    let enumMap: EnumMap;
+    let enumMapError: any = null;
+    try {
+      enumMap = await getEnumMapForColorField(debug);
+    } catch (err) {
+      enumMapError = err;
+      if (enumCache?.map) {
+        enumMap = enumCache.map;
+      } else {
+        throw err;
+      }
+    }
+
+    let bitrixError: any = null;
 
     const innToCompany: Record<
       string,
@@ -148,7 +161,13 @@ export async function POST(req: NextRequest) {
         innKeys[inn] = keys;
       }
 
-      const r = await b24BatchJson(cmd, 0);
+      let r: any;
+      try {
+        r = await b24BatchJson(cmd, 0);
+      } catch (err) {
+        bitrixError = bitrixError ?? err;
+        break;
+      }
       const buckets = core(r);
 
       for (const inn of pack) {
@@ -208,7 +227,13 @@ export async function POST(req: NextRequest) {
         if (debug) userCmdPreview.push(`${k}: ${cmd[k]}`);
       }
 
-      const r = await b24BatchJson(cmd, 0);
+      let r: any;
+      try {
+        r = await b24BatchJson(cmd, 0);
+      } catch (err) {
+        bitrixError = bitrixError ?? err;
+        break;
+      }
       const buckets = core(r);
 
       for (const { key: k, uid } of keys) {
@@ -250,13 +275,29 @@ export async function POST(req: NextRequest) {
         colorLabel,
         colorXmlId,
       };
-      cache.set(inn, { value: item, exp: Date.now() + TTL_MS });
+      if (info) {
+        cache.set(inn, { value: item, exp: Date.now() + TTL_MS });
+      }
       return item;
     });
+
+    if (bitrixError) {
+      console.warn('Bitrix responsibles request partially failed:', bitrixError);
+    }
+    if (enumMapError) {
+      console.warn('Bitrix color map request fell back to cache:', enumMapError);
+    }
 
     return NextResponse.json({
       ok: true,
       items,
+      warning:
+        bitrixError || enumMapError
+          ? {
+              code: 'bitrix_partial_failure',
+              message: (bitrixError || enumMapError)?.message || 'Bitrix request failed',
+            }
+          : undefined,
       debug: debug
         ? { ufFieldsTried: UF_LIST, previewCmd, userCmd: userCmdPreview, colorField: COLOR_FIELD }
         : undefined,
