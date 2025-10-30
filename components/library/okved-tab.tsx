@@ -26,18 +26,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip';
-import {
-  DropdownMenu,
-  DropdownMenuTrigger,
-  DropdownMenuContent,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuItem,
-} from '@/components/ui/dropdown-menu';
 import { cn } from '@/lib/utils';
-import { X, Play, Square, Loader2, Info, AlertCircle, SlidersHorizontal } from 'lucide-react';
+import { X, Play, Square, Loader2, Info, AlertCircle } from 'lucide-react';
 import InlineRevenueBars from './inline-revenue-bar';
 import SquareImgButton from './square-img-button';
 
@@ -404,8 +394,6 @@ export default function OkvedTab() {
     serverError: false,
     noDomain: false,
   });
-  const [analysisIndustryFilter, setAnalysisIndustryFilter] = useState<string>('all');
-  const [analysisOkvedFilter, setAnalysisOkvedFilter] = useState<string>('all');
   const [infoDialog, setInfoDialog] = useState<{ company: OkvedCompany; analysis: AnalysisRow } | null>(
     null,
   );
@@ -764,58 +752,15 @@ export default function OkvedTab() {
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
   const isAll = okved === '';
 
-  const industryFilterOptions = useMemo(() => {
-    const set = new Set<string>();
-    Object.values(analysisState).forEach((row) => {
-      const val = row?.info?.enterprise_class?.trim();
-      if (val) set.add(val);
-    });
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'));
-  }, [analysisState]);
-
-  const okvedFilterOptions = useMemo(() => {
-    const set = new Set<string>();
-    for (const company of companies) {
-      const row = analysisState[company.inn];
-      const val = (row?.info?.main_okved ?? company.main_okved ?? '').trim();
-      if (val) set.add(val);
-    }
-    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'));
-  }, [analysisState, companies]);
-
-  const analysisFiltersApplied = useMemo(
-    () => analysisIndustryFilter !== 'all' || analysisOkvedFilter !== 'all',
-    [analysisIndustryFilter, analysisOkvedFilter],
-  );
-
-  const analysisFilterSummary = useMemo(() => {
-    if (!analysisFiltersApplied) return 'Фильтры не заданы';
-    const parts: string[] = [];
-    if (analysisIndustryFilter !== 'all') parts.push(analysisIndustryFilter);
-    if (analysisOkvedFilter !== 'all') parts.push(analysisOkvedFilter);
-    return parts.join(' · ');
-  }, [analysisFiltersApplied, analysisIndustryFilter, analysisOkvedFilter]);
-
   const filteredCompanies = useMemo(() => {
     return companies.filter((company) => {
       const state = analysisState[company.inn] ?? buildAnalysisRowFromCompany(company);
       if (statusFilters.success && !state?.flags?.analysis_ok) return false;
       if (statusFilters.serverError && !state?.flags?.server_error) return false;
       if (statusFilters.noDomain && !state?.flags?.no_valid_site) return false;
-
-      if (analysisIndustryFilter !== 'all') {
-        const industry = state?.info?.enterprise_class?.trim();
-        if (!industry || industry !== analysisIndustryFilter) return false;
-      }
-
-      if (analysisOkvedFilter !== 'all') {
-        const okvedValue = (state?.info?.main_okved ?? company.main_okved ?? '').trim();
-        if (!okvedValue || okvedValue !== analysisOkvedFilter) return false;
-      }
-
       return true;
     });
-  }, [companies, analysisState, statusFilters, analysisIndustryFilter, analysisOkvedFilter]);
+  }, [companies, analysisState, statusFilters]);
 
   const toggleSelectAll = useCallback(
     (checked: boolean) => {
@@ -1017,8 +962,8 @@ export default function OkvedTab() {
   useEffect(() => {
     const innSet = new Set<string>();
     for (const company of companies) {
-      const key = normalizeInn(company?.inn);
-      if (key) innSet.add(key);
+      const raw = (company?.inn ?? '').toString().trim();
+      if (raw) innSet.add(raw);
     }
     const inns = Array.from(innSet);
     if (inns.length === 0) {
@@ -1041,24 +986,22 @@ export default function OkvedTab() {
 
         const map: Record<string, RespInfo> = {};
         for (const it of j.items || []) {
-          const key = normalizeInn(it.inn);
-          if (!key) continue;
-          map[key] = {
+          const rawInn = (it?.inn ?? '').toString().trim();
+          const normalizedInn = normalizeInn(rawInn);
+          if (!rawInn && !normalizedInn) continue;
+          const value: RespInfo = {
             assignedById: it.assignedById,
             assignedName: it.assignedName,
             colorId: it.colorId,
             colorLabel: it.colorLabel,
             colorXmlId: it.colorXmlId,
           };
-        }
-        setResponsibles((prev) => {
-          const next: Record<string, RespInfo> = {};
-          for (const innKey of inns) {
-            const current = map[innKey] ?? prev[innKey];
-            if (current) next[innKey] = current;
+          if (rawInn) map[rawInn] = value;
+          if (normalizedInn && normalizedInn !== rawInn) {
+            map[normalizedInn] = value;
           }
-          return next;
-        });
+        }
+        setResponsibles(map);
       } catch (e: any) {
         if (e?.name !== 'AbortError') {
           console.error('load responsibles failed', e);
@@ -1492,80 +1435,6 @@ export default function OkvedTab() {
               </div>
             </div>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-8 gap-2 px-3 text-xs"
-                    title="Настроить фильтры анализа">
-                    <SlidersHorizontal className="h-4 w-4" />
-                    Фильтры анализа
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-72 text-xs">
-                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    Фильтр по отраслям
-                  </DropdownMenuLabel>
-                  <DropdownMenuRadioGroup
-                    value={analysisIndustryFilter}
-                    onValueChange={(value) => setAnalysisIndustryFilter(value)}
-                    className="max-h-48 overflow-y-auto">
-                    <DropdownMenuRadioItem value="all">Все отрасли</DropdownMenuRadioItem>
-                    {industryFilterOptions.map((option) => (
-                      <DropdownMenuRadioItem key={option} value={option} className="whitespace-normal">
-                        {option}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-
-                  <DropdownMenuSeparator />
-
-                  <DropdownMenuLabel className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                    Фильтр по ОКВЭД
-                  </DropdownMenuLabel>
-                  <DropdownMenuRadioGroup
-                    value={analysisOkvedFilter}
-                    onValueChange={(value) => setAnalysisOkvedFilter(value)}
-                    className="max-h-48 overflow-y-auto">
-                    <DropdownMenuRadioItem value="all">Все ОКВЭДы</DropdownMenuRadioItem>
-                    {okvedFilterOptions.map((option) => (
-                      <DropdownMenuRadioItem key={option} value={option} className="whitespace-normal">
-                        {option}
-                      </DropdownMenuRadioItem>
-                    ))}
-                  </DropdownMenuRadioGroup>
-
-                  {analysisFiltersApplied && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuItem
-                        onSelect={(event) => {
-                          event.preventDefault();
-                          setAnalysisIndustryFilter('all');
-                          setAnalysisOkvedFilter('all');
-                        }}
-                        className="text-xs">
-                        Сбросить фильтры
-                      </DropdownMenuItem>
-                    </>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="font-medium text-foreground">Активно:</span>
-                {analysisFiltersApplied ? (
-                  <Badge variant="outline" className="max-w-[260px] truncate font-normal">
-                    {analysisFilterSummary}
-                  </Badge>
-                ) : (
-                  <span>Фильтры не заданы</span>
-                )}
-              </div>
-            </div>
-
             <div className="relative w-full overflow-auto">
               <TooltipProvider delayDuration={150}>
                 <table className="w-full min-w-[1200px] text-[13px]">
@@ -1656,8 +1525,9 @@ export default function OkvedTab() {
                           company.income ?? null,
                         ];
                         const isActual = (company.year ?? 0) === lastYear;
-                        const innKey = normalizeInn(company.inn) || company.inn;
-                        const resp = responsibles[innKey];
+                        const rawInn = (company.inn ?? '').toString().trim();
+                        const normalizedInn = normalizeInn(company.inn);
+                        const resp = responsibles[rawInn] ?? (normalizedInn ? responsibles[normalizedInn] : undefined);
                         const rowColorClass = colorRowClass(resp?.colorLabel, resp?.colorXmlId);
                         const rowBg = colorRowBg(resp?.colorLabel, resp?.colorXmlId);
                         const hasColor = !!rowBg;
