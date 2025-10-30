@@ -1,5 +1,76 @@
 import { z } from 'zod';
 
+const stringArraySchema = z.array(z.string());
+
+export const companyAnalysisProductSchema = z.object({
+  name: z.string(),
+  tnved: stringArraySchema.nullable().optional(),
+});
+export type CompanyAnalysisProduct = z.infer<typeof companyAnalysisProductSchema>;
+
+export const companyAnalysisInfoSchema = z
+  .object({
+    match_level: z.string().nullable().optional(),
+    enterprise_class: z.string().nullable().optional(),
+    top_equipment: stringArraySchema.nullable().optional(),
+    main_okved: z.string().nullable().optional(),
+    parsing_domain: z.string().nullable().optional(),
+    okved_match_ai: z.string().nullable().optional(),
+    site_ai_description: z.string().nullable().optional(),
+    products: z.array(companyAnalysisProductSchema).nullable().optional(),
+    site_products_summary: z.string().nullable().optional(),
+  })
+  .partial();
+export type CompanyAnalysisInfo = z.infer<typeof companyAnalysisInfoSchema>;
+
+export const companyAnalysisFlagsSchema = z
+  .object({
+    analysis_ok: z.boolean().optional(),
+    server_error: z.boolean().optional(),
+    no_valid_site: z.boolean().optional(),
+  })
+  .partial();
+export type CompanyAnalysisFlags = z.infer<typeof companyAnalysisFlagsSchema>;
+
+export const companyAnalysisStatusEnum = z.enum([
+  'idle',
+  'queued',
+  'running',
+  'success',
+  'failed',
+  'stopping',
+]);
+
+export const companyAnalysisStateSchema = z
+  .object({
+    status: companyAnalysisStatusEnum.default('idle'),
+    stage: z.string().nullable().optional(),
+    progress: z.coerce.number().min(0).max(100).nullable().optional(),
+    last_started_at: z.string().nullable().optional(),
+    last_finished_at: z.string().nullable().optional(),
+    duration_seconds: z.coerce.number().nullable().optional(),
+    attempts: z.coerce.number().nullable().optional(),
+    rating: z.coerce.number().nullable().optional(),
+    stop_requested: z.boolean().optional(),
+    info: companyAnalysisInfoSchema.nullable().optional(),
+    flags: companyAnalysisFlagsSchema.optional(),
+  })
+  .partial();
+export type CompanyAnalysisState = z.infer<typeof companyAnalysisStateSchema>;
+
+export const companyAnalysisRowSchema = companyAnalysisStateSchema.extend({
+  inn: z.string(),
+  websites: stringArraySchema
+    .nullable()
+    .optional()
+    .transform((v) => (Array.isArray(v) ? v : [] as string[])),
+  emails: stringArraySchema
+    .nullable()
+    .optional()
+    .transform((v) => (Array.isArray(v) ? v : [] as string[])),
+});
+export type CompanyAnalysisRow = z.infer<typeof companyAnalysisRowSchema>;
+
 // Pagination
 export const paginationSchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -204,6 +275,8 @@ export const okvedCompanySchema = z.object({
   address: z.string().nullable(),
   branch_count: z.coerce.number().nullable(),
 
+  main_okved: z.string().nullable().optional(),
+
   year: z.coerce.number().nullable(),
 
   // текущее
@@ -219,6 +292,15 @@ export const okvedCompanySchema = z.object({
   income_3: z.coerce.number().nullable().optional(),
 
   employee_count: z.coerce.number().nullable().optional(),
+  websites: stringArraySchema
+    .nullable()
+    .optional()
+    .transform((v) => (Array.isArray(v) ? v : [] as string[])),
+  emails: stringArraySchema
+    .nullable()
+    .optional()
+    .transform((v) => (Array.isArray(v) ? v : [] as string[])),
+  analysis_state: companyAnalysisStateSchema.nullable().optional(),
 });
 export type OkvedCompany = z.infer<typeof okvedCompanySchema>;
 

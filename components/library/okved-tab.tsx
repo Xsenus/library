@@ -2,11 +2,39 @@
 
 import { useEffect, useMemo, useRef, useState, useCallback } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { okvedMainSchema, type OkvedCompany } from '@/lib/validators';
+import {
+  okvedMainSchema,
+  type OkvedCompany,
+  type CompanyAnalysisRow,
+} from '@/lib/validators';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
-import { X } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Progress } from '@/components/ui/progress';
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Badge } from '@/components/ui/badge';
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select';
+import { cn } from '@/lib/utils';
+import { X, Play, Square, Loader2, Info, AlertCircle } from 'lucide-react';
 import InlineRevenueBars from './inline-revenue-bar';
 import SquareImgButton from './square-img-button';
 
@@ -25,6 +53,178 @@ type ListResponse<T> = {
   page: number;
   totalPages: number;
 };
+
+type AnalysisRow = CompanyAnalysisRow;
+
+const PIPELINE_STEPS: { id: string; label: string }[] = [
+  { id: 'init', label: 'Подготовка' },
+  { id: 'domains', label: 'Домены' },
+  { id: 'parsing', label: 'Парсинг' },
+  { id: 'ai', label: 'AI' },
+  { id: 'saving', label: 'Сохранение' },
+];
+
+const STATUS_LABELS: Record<string, string> = {
+  idle: 'Готово',
+  queued: 'В очереди',
+  running: 'В работе',
+  success: 'Успех',
+  failed: 'Ошибка',
+  stopping: 'Остановка',
+};
+
+function buildEmptyAnalysisRow(inn: string): AnalysisRow {
+  return {
+    inn,
+    websites: [],
+    emails: [],
+    status: 'idle',
+    stage: null,
+    progress: 0,
+    last_started_at: null,
+    last_finished_at: null,
+    duration_seconds: null,
+    attempts: null,
+    rating: null,
+    stop_requested: false,
+    info: null,
+    flags: {},
+  };
+}
+
+function normalizeClientArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .map((v) => (typeof v === 'string' ? v : String(v ?? '')).trim())
+      .filter((v) => v.length > 0);
+  }
+  if (typeof value === 'string') {
+    return value
+      .split(/[,;\n]+/)
+      .map((v) => v.trim())
+      .filter((v) => v.length > 0);
+  }
+  return [];
+}
+
+function mergeAnalysisRows(
+  existing: AnalysisRow | null,
+  incoming: Partial<AnalysisRow> & { inn?: string },
+): AnalysisRow {
+  const base = existing ? { ...existing } : buildEmptyAnalysisRow(incoming.inn ?? existing?.inn ?? '');
+  const inn = (incoming.inn ?? base.inn ?? '').trim();
+  const flags = { ...(base.flags ?? {}), ...(incoming.flags ?? {}) } as NonNullable<AnalysisRow['flags']>;
+
+  return {
+    inn,
+    websites:
+      incoming.websites !== undefined
+        ? normalizeClientArray(incoming.websites)
+        : normalizeClientArray(base.websites),
+    emails:
+      incoming.emails !== undefined
+        ? normalizeClientArray(incoming.emails)
+        : normalizeClientArray(base.emails),
+    status: incoming.status ?? base.status ?? 'idle',
+    stage: incoming.stage ?? base.stage ?? null,
+    progress:
+      incoming.progress ?? (typeof base.progress === 'number' ? base.progress : 0),
+    last_started_at: incoming.last_started_at ?? base.last_started_at ?? null,
+    last_finished_at: incoming.last_finished_at ?? base.last_finished_at ?? null,
+    duration_seconds: incoming.duration_seconds ?? base.duration_seconds ?? null,
+    attempts: incoming.attempts ?? base.attempts ?? null,
+    rating: incoming.rating ?? base.rating ?? null,
+    stop_requested: incoming.stop_requested ?? base.stop_requested ?? false,
+    info: incoming.info ?? base.info ?? null,
+    flags,
+  };
+}
+
+function buildAnalysisRowFromCompany(company: OkvedCompany): AnalysisRow {
+  const base = buildEmptyAnalysisRow(company.inn);
+  const incoming: Partial<AnalysisRow> & { inn?: string } = {
+    inn: company.inn,
+    websites: company.websites ?? [],
+    emails: company.emails ?? [],
+  };
+  if (company.analysis_state) {
+    const st = company.analysis_state;
+    incoming.status = st.status ?? 'idle';
+    incoming.stage = st.stage ?? null;
+    incoming.progress = st.progress ?? 0;
+    incoming.last_started_at = st.last_started_at ?? null;
+    incoming.last_finished_at = st.last_finished_at ?? null;
+    incoming.duration_seconds = st.duration_seconds ?? null;
+    incoming.attempts = st.attempts ?? null;
+    incoming.rating = st.rating ?? null;
+    incoming.stop_requested = st.stop_requested ?? false;
+    incoming.info = st.info ?? null;
+    incoming.flags = st.flags ?? {};
+  }
+  return mergeAnalysisRows(base, incoming);
+}
+
+function ensureHttp(url: string): string {
+  const trimmed = url.trim();
+  if (!trimmed) return '#';
+  if (/^https?:\/\//i.test(trimmed)) return trimmed;
+  if (/^\/\//.test(trimmed)) return `https:${trimmed}`;
+  return `https://${trimmed}`;
+}
+
+function statusBadgeClass(status: string): string {
+  switch (status) {
+    case 'success':
+      return 'bg-emerald-100 text-emerald-700';
+    case 'failed':
+      return 'bg-red-100 text-red-700';
+    case 'running':
+      return 'bg-blue-100 text-blue-700';
+    case 'queued':
+      return 'bg-amber-100 text-amber-700';
+    case 'stopping':
+      return 'bg-rose-100 text-rose-700';
+    default:
+      return 'bg-slate-100 text-slate-700';
+  }
+}
+
+function formatDate(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('ru-RU').format(date);
+}
+
+function formatTime(iso: string | null | undefined): string {
+  if (!iso) return '—';
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '—';
+  return new Intl.DateTimeFormat('ru-RU', { hour: '2-digit', minute: '2-digit' }).format(date);
+}
+
+function formatDuration(seconds: number | null | undefined): string {
+  if (!seconds || seconds <= 0) return '—';
+  if (seconds < 60) return `${seconds.toFixed(0)} с`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.floor(seconds % 60);
+  if (mins >= 60) {
+    const hours = Math.floor(mins / 60);
+    const remMins = mins % 60;
+    return `${hours} ч ${remMins} мин`;
+  }
+  return secs > 0 ? `${mins} мин ${secs} с` : `${mins} мин`;
+}
+
+function formatAttempts(attempts: number | null | undefined): string {
+  if (attempts == null) return '—';
+  return attempts.toString();
+}
+
+function formatRating(rating: number | null | undefined): string {
+  if (rating == null) return '—';
+  return Number(rating).toFixed(2);
+}
 
 // ——— стили подсветки выбранного фильтра ———
 const ACTIVE_ROW =
@@ -183,6 +383,21 @@ export default function OkvedTab() {
 
   const [responsibles, setResponsibles] = useState<Record<string, RespInfo>>({});
   const [respLoading, setRespLoading] = useState(false);
+
+  const [analysisState, setAnalysisState] = useState<Record<string, AnalysisRow>>({});
+  const [selectedInns, setSelectedInns] = useState<Set<string>>(new Set());
+  const [busyInns, setBusyInns] = useState<Set<string>>(new Set());
+  const [globalActionLoading, setGlobalActionLoading] = useState(false);
+  const [statusFilters, setStatusFilters] = useState({
+    success: false,
+    serverError: false,
+    noDomain: false,
+  });
+  const [analysisIndustryFilter, setAnalysisIndustryFilter] = useState<string>('all');
+  const [analysisOkvedFilter, setAnalysisOkvedFilter] = useState<string>('all');
+  const [infoDialog, setInfoDialog] = useState<{ company: OkvedCompany; analysis: AnalysisRow } | null>(
+    null,
+  );
 
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     if (typeof window === 'undefined') return DEFAULT_SIDEBAR;
@@ -365,8 +580,282 @@ export default function OkvedTab() {
     pageSize,
   ]);
 
+  useEffect(() => {
+    setAnalysisState((prev) => {
+      const next: Record<string, AnalysisRow> = {};
+      for (const company of companies) {
+        const prevRow = prev[company.inn];
+        const fromCompany = buildAnalysisRowFromCompany(company);
+        next[company.inn] = prevRow ? mergeAnalysisRows(prevRow, fromCompany) : fromCompany;
+      }
+      return next;
+    });
+  }, [companies]);
+
+  useEffect(() => {
+    const valid = new Set(companies.map((c) => c.inn));
+    setSelectedInns((prev) => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const inn of prev) {
+        if (valid.has(inn)) {
+          next.add(inn);
+        } else {
+          changed = true;
+        }
+      }
+      if (!changed && next.size === prev.size) return prev;
+      return next;
+    });
+  }, [companies]);
+
+  const applyAnalysisUpdate = useCallback((rows: Partial<AnalysisRow>[] | null | undefined) => {
+    if (!rows || rows.length === 0) return;
+    setAnalysisState((prev) => {
+      const next: Record<string, AnalysisRow> = { ...prev };
+      for (const raw of rows) {
+        if (!raw) continue;
+        const inn = (raw as AnalysisRow).inn ?? '';
+        if (!inn) continue;
+        const prevRow = next[inn] ?? buildEmptyAnalysisRow(inn);
+        next[inn] = mergeAnalysisRows(prevRow, raw as Partial<AnalysisRow> & { inn?: string });
+      }
+      return next;
+    });
+  }, []);
+
+  const markBusy = useCallback((inns: string[], busy: boolean) => {
+    if (!inns.length) return;
+    setBusyInns((prev) => {
+      const next = new Set(prev);
+      for (const inn of inns) {
+        if (busy) next.add(inn);
+        else next.delete(inn);
+      }
+      return next;
+    });
+  }, []);
+
+  const postJson = useCallback(async (url: string, payload: any) => {
+    const res = await fetch(url, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload ?? {}),
+    });
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}`);
+    }
+    return res.json();
+  }, []);
+
+  const refreshAnalysis = useCallback(
+    async (inns: string[]) => {
+      const unique = Array.from(new Set(inns.filter((v) => typeof v === 'string' && v.trim())));
+      if (unique.length === 0) return;
+      const params = new URLSearchParams();
+      for (const inn of unique) params.append('inn', inn);
+      try {
+        const res = await fetch(`/api/analysis/state?${params.toString()}`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (Array.isArray(data?.items)) {
+          applyAnalysisUpdate(data.items as Partial<AnalysisRow>[]);
+        }
+      } catch (error) {
+        console.error('refreshAnalysis failed', error);
+      }
+    },
+    [applyAnalysisUpdate],
+  );
+
+  const collectStopInns = useCallback(() => {
+    if (selectedInns.size > 0) {
+      return Array.from(selectedInns).filter((inn) => {
+        const state = analysisState[inn];
+        return state && ['running', 'queued', 'stopping'].includes(state.status ?? '');
+      });
+    }
+    return Object.values(analysisState)
+      .filter((state) => state && ['running', 'queued', 'stopping'].includes(state.status ?? ''))
+      .map((state) => state.inn);
+  }, [analysisState, selectedInns]);
+
+  const handleStartSelected = useCallback(async () => {
+    const inns = Array.from(selectedInns);
+    if (!inns.length) return;
+    setGlobalActionLoading(true);
+    markBusy(inns, true);
+    try {
+      const data = await postJson('/api/analysis/start', { inns });
+      applyAnalysisUpdate(data?.items ?? []);
+      await refreshAnalysis(inns);
+    } catch (error) {
+      console.error('handleStartSelected failed', error);
+    } finally {
+      markBusy(inns, false);
+      setGlobalActionLoading(false);
+    }
+  }, [selectedInns, postJson, applyAnalysisUpdate, refreshAnalysis, markBusy]);
+
+  const handleStartSingle = useCallback(
+    async (inn: string) => {
+      if (!inn) return;
+      markBusy([inn], true);
+      try {
+        const data = await postJson('/api/analysis/start', { inns: [inn] });
+        applyAnalysisUpdate(data?.items ?? []);
+        await refreshAnalysis([inn]);
+      } catch (error) {
+        console.error('handleStartSingle failed', error);
+      } finally {
+        markBusy([inn], false);
+      }
+    },
+    [postJson, applyAnalysisUpdate, refreshAnalysis, markBusy],
+  );
+
+  const handleStopSelected = useCallback(async () => {
+    const inns = collectStopInns();
+    if (inns.length === 0) return;
+    setGlobalActionLoading(true);
+    markBusy(inns, true);
+    try {
+      const data = await postJson('/api/analysis/stop', { inns });
+      applyAnalysisUpdate(data?.items ?? []);
+      await refreshAnalysis(inns);
+    } catch (error) {
+      console.error('handleStopSelected failed', error);
+    } finally {
+      markBusy(inns, false);
+      setGlobalActionLoading(false);
+    }
+  }, [collectStopInns, postJson, applyAnalysisUpdate, refreshAnalysis, markBusy]);
+
+  const handleStopSingle = useCallback(
+    async (inn: string) => {
+      if (!inn) return;
+      markBusy([inn], true);
+      try {
+        const data = await postJson('/api/analysis/stop', { inns: [inn] });
+        applyAnalysisUpdate(data?.items ?? []);
+        await refreshAnalysis([inn]);
+      } catch (error) {
+        console.error('handleStopSingle failed', error);
+      } finally {
+        markBusy([inn], false);
+      }
+    },
+    [postJson, applyAnalysisUpdate, refreshAnalysis, markBusy],
+  );
+
+  const toggleSelectAll = useCallback(
+    (checked: boolean) => {
+      if (checked) {
+        setSelectedInns(new Set(filteredCompanies.map((company) => company.inn)));
+      } else {
+        setSelectedInns(new Set());
+      }
+    },
+    [filteredCompanies],
+  );
+
+  const toggleSelectInn = useCallback((inn: string, checked: boolean) => {
+    setSelectedInns((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(inn);
+      else next.delete(inn);
+      return next;
+    });
+  }, []);
+
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
   const isAll = okved === '';
+
+  const industryFilterOptions = useMemo(() => {
+    const set = new Set<string>();
+    Object.values(analysisState).forEach((row) => {
+      const val = row?.info?.enterprise_class?.trim();
+      if (val) set.add(val);
+    });
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'));
+  }, [analysisState]);
+
+  const okvedFilterOptions = useMemo(() => {
+    const set = new Set<string>();
+    for (const company of companies) {
+      const row = analysisState[company.inn];
+      const val = (row?.info?.main_okved ?? company.main_okved ?? '').trim();
+      if (val) set.add(val);
+    }
+    return Array.from(set).sort((a, b) => a.localeCompare(b, 'ru'));
+  }, [analysisState, companies]);
+
+  const filteredCompanies = useMemo(() => {
+    return companies.filter((company) => {
+      const state = analysisState[company.inn] ?? buildAnalysisRowFromCompany(company);
+      if (statusFilters.success && !state?.flags?.analysis_ok) return false;
+      if (statusFilters.serverError && !state?.flags?.server_error) return false;
+      if (statusFilters.noDomain && !state?.flags?.no_valid_site) return false;
+
+      if (analysisIndustryFilter !== 'all') {
+        const industry = state?.info?.enterprise_class?.trim();
+        if (!industry || industry !== analysisIndustryFilter) return false;
+      }
+
+      if (analysisOkvedFilter !== 'all') {
+        const okvedValue = (state?.info?.main_okved ?? company.main_okved ?? '').trim();
+        if (!okvedValue || okvedValue !== analysisOkvedFilter) return false;
+      }
+
+      return true;
+    });
+  }, [companies, analysisState, statusFilters, analysisIndustryFilter, analysisOkvedFilter]);
+
+  const hasSelection = selectedInns.size > 0;
+  const allSelected =
+    filteredCompanies.length > 0 && filteredCompanies.every((company) => selectedInns.has(company.inn));
+  const someSelected = !allSelected && filteredCompanies.some((company) => selectedInns.has(company.inn));
+  const headerCheckboxValue: boolean | 'indeterminate' = allSelected ? true : someSelected ? 'indeterminate' : false;
+
+  const activeInns = useMemo(
+    () =>
+      Object.values(analysisState)
+        .filter((row) => row && ['running', 'queued', 'stopping'].includes(row.status ?? ''))
+        .map((row) => row.inn),
+    [analysisState],
+  );
+
+  const canStop = useMemo(() => {
+    if (selectedInns.size > 0) {
+      return Array.from(selectedInns).some((inn) => {
+        const state = analysisState[inn];
+        return state && ['running', 'queued', 'stopping'].includes(state.status ?? '');
+      });
+    }
+    return activeInns.length > 0;
+  }, [selectedInns, analysisState, activeInns]);
+
+  const dialogCompany = infoDialog?.company ?? null;
+  const dialogAnalysis = infoDialog?.analysis ?? null;
+  const dialogInfo = dialogAnalysis?.info ?? null;
+
+  useEffect(() => {
+    if (activeInns.length === 0) return;
+    const inns = [...activeInns];
+    let cancelled = false;
+    const poll = async () => {
+      if (cancelled) return;
+      await refreshAnalysis(inns);
+    };
+    poll();
+    const id = window.setInterval(poll, 8000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(id);
+    };
+  }, [activeInns, refreshAnalysis]);
 
   const activeOkved = useMemo(
     () => (okved ? okveds.find((o) => o.okved_code === okved) ?? null : null),
@@ -879,154 +1368,443 @@ export default function OkvedTab() {
             </div>
           </CardHeader>
 
-          <CardContent className="p-3">
+          <CardContent className="p-3 space-y-3">
+            <div className="flex flex-col gap-2 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  size="sm"
+                  className="h-8"
+                  disabled={!hasSelection || globalActionLoading}
+                  onClick={handleStartSelected}>
+                  {globalActionLoading ? (
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  ) : (
+                    <Play className="mr-2 h-4 w-4" />
+                  )}
+                  ЗАПУСК АНАЛИЗА ДЛЯ ВЫБРАННЫХ КОМПАНИЙ
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8"
+                  disabled={!canStop || globalActionLoading}
+                  onClick={handleStopSelected}>
+                  <Square className="mr-2 h-4 w-4" />
+                  ОСТАНОВИТЬ АНАЛИЗ
+                </Button>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3 text-[12px] text-muted-foreground">
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    className="h-4 w-4"
+                    checked={statusFilters.success}
+                    onCheckedChange={(value) =>
+                      setStatusFilters((prev) => ({ ...prev, success: value === true }))
+                    }
+                  />
+                  Успешные анализы
+                </label>
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    className="h-4 w-4"
+                    checked={statusFilters.serverError}
+                    onCheckedChange={(value) =>
+                      setStatusFilters((prev) => ({ ...prev, serverError: value === true }))
+                    }
+                  />
+                  Сервер был недоступен
+                </label>
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    className="h-4 w-4"
+                    checked={statusFilters.noDomain}
+                    onCheckedChange={(value) =>
+                      setStatusFilters((prev) => ({ ...prev, noDomain: value === true }))
+                    }
+                  />
+                  Не было доступных доменов
+                </label>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Select
+                value={analysisIndustryFilter}
+                onValueChange={(value) => setAnalysisIndustryFilter(value)}>
+                <SelectTrigger className="h-8 w-[240px] text-xs">
+                  <SelectValue placeholder="Фильтр по отраслям" />
+                </SelectTrigger>
+                <SelectContent className="max-h-60 text-sm">
+                  <SelectItem value="all">Все отрасли</SelectItem>
+                  {industryFilterOptions.map((option) => (
+                    <SelectItem key={option} value={option} className="whitespace-normal">
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+
+              <Select value={analysisOkvedFilter} onValueChange={(value) => setAnalysisOkvedFilter(value)}>
+                <SelectTrigger className="h-8 w-[280px] text-xs">
+                  <SelectValue placeholder="Фильтр по ОКВЭД" />
+                </SelectTrigger>
+                <SelectContent className="max-h-60 text-sm">
+                  <SelectItem value="all">Все ОКВЭДы</SelectItem>
+                  {okvedFilterOptions.map((option) => (
+                    <SelectItem key={option} value={option} className="whitespace-normal">
+                      {option}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+
             <div className="relative w-full overflow-auto">
-              <table className="w-full text-[13px]">
-                <thead className="[&_tr]:border-b">
-                  <tr className="text-center">
-                    <th className="py-1 pr-2 w-[35px]"></th>
-                    <th className="py-1 pr-2">ИНН</th>
-                    <th className="py-1 pr-2">Название</th>
-                    <th
-                      className="py-1 pr-3 cursor-pointer select-none"
-                      title="Сортировать по выручке"
-                      onClick={() => {
-                        setSortKey((s) => (s === 'revenue_desc' ? 'revenue_asc' : 'revenue_desc'));
-                        setPage(1);
-                      }}>
-                      Выручка, млн
-                      <span className="ml-1 text-[11px] text-muted-foreground">
-                        {sortKey === 'revenue_desc' ? '↓' : '↑'}
-                      </span>
-                    </th>
-                    <th className="py-1 pr-2">Штат</th>
-                    <th className="py-1 pr-2">Филиалы</th>
-                    <th className="py-1 pr-2">Год</th>
-                    <th className="py-1 pr-2">Ответственный</th>
-                    <th className="py-1 pl-2">Адрес</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {loading && (
-                    <tr>
-                      <td colSpan={9} className="py-6 text-center text-muted-foreground text-xs">
-                        Загрузка…
-                      </td>
+              <TooltipProvider delayDuration={150}>
+                <table className="w-full min-w-[1200px] text-[13px]">
+                  <thead className="[&_tr]:border-b">
+                    <tr className="text-center">
+                      <th className="py-1 px-2 w-[32px] align-middle">
+                        <Checkbox
+                          className="mx-auto"
+                          checked={headerCheckboxValue}
+                          disabled={filteredCompanies.length === 0}
+                          onCheckedChange={(value) => toggleSelectAll(value === true)}
+                        />
+                      </th>
+                      <th className="py-1 px-2 w-[42px]"></th>
+                      <th className="py-1 px-2 w-[160px]">Анализ</th>
+                      <th className="py-1 px-2 whitespace-nowrap">ИНН</th>
+                      <th className="py-1 px-2 text-left">Название</th>
+                      <th className="py-1 px-2 text-left">Сайты</th>
+                      <th className="py-1 px-2 text-left">Имейлы</th>
+                      <th className="py-1 px-2 whitespace-nowrap">Дата запуска</th>
+                      <th className="py-1 px-2 whitespace-nowrap">Время запуска</th>
+                      <th className="py-1 px-2 whitespace-nowrap">Длительность</th>
+                      <th className="py-1 px-2 whitespace-nowrap">Попытки</th>
+                      <th className="py-1 px-2 whitespace-nowrap">Оценка</th>
+                      <th className="py-1 px-2">Инфо</th>
+                      <th
+                        className="py-1 px-3 cursor-pointer select-none"
+                        title="Сортировать по выручке"
+                        onClick={() => {
+                          setSortKey((s) => (s === 'revenue_desc' ? 'revenue_asc' : 'revenue_desc'));
+                          setPage(1);
+                        }}>
+                        Выручка, млн
+                        <span className="ml-1 text-[11px] text-muted-foreground">
+                          {sortKey === 'revenue_desc' ? '↓' : '↑'}
+                        </span>
+                      </th>
+                      <th className="py-1 px-2">Штат</th>
+                      <th className="py-1 px-2">Филиалы</th>
+                      <th className="py-1 px-2">Год</th>
+                      <th className="py-1 px-2">Ответственный</th>
+                      <th className="py-1 px-2 text-left">Адрес</th>
                     </tr>
-                  )}
-                  {!loading && companies.length === 0 && (
-                    <tr>
-                      <td colSpan={9} className="py-6 text-center text-muted-foreground text-xs">
-                        Нет данных
-                      </td>
-                    </tr>
-                  )}
-                  {!loading &&
-                    companies.map((c) => {
-                      const seriesRevenue = [c.revenue_3, c.revenue_2, c.revenue_1, c.revenue];
-                      const seriesIncome = [c.income_3, c.income_2, c.income_1, c.income];
+                  </thead>
+                  <tbody>
+                    {loading && (
+                      <tr>
+                        <td colSpan={19} className="py-6 text-center text-muted-foreground text-xs">
+                          Загрузка…
+                        </td>
+                      </tr>
+                    )}
+                    {!loading && filteredCompanies.length === 0 && (
+                      <tr>
+                        <td colSpan={19} className="py-6 text-center text-muted-foreground text-xs">
+                          Нет данных
+                        </td>
+                      </tr>
+                    )}
+                    {!loading &&
+                      filteredCompanies.map((company) => {
+                        const analysis = analysisState[company.inn] ?? buildAnalysisRowFromCompany(company);
+                        const status = analysis.status ?? 'idle';
+                        const statusLabel = STATUS_LABELS[status] ?? status;
+                        const progressValue = Math.max(0, Math.min(100, analysis.progress ?? 0));
+                        const stageLabel = PIPELINE_STEPS.find((step) => step.id === (analysis.stage ?? ''))
+                          ?.label;
+                        const seriesRevenue = [
+                          company.revenue_3,
+                          company.revenue_2,
+                          company.revenue_1,
+                          company.revenue,
+                        ];
+                        const seriesIncome = [
+                          company.income_3,
+                          company.income_2,
+                          company.income_1,
+                          company.income,
+                        ];
+                        const isActual = (company.year ?? 0) === lastYear;
+                        const resp = responsibles[company.inn];
+                        const rowColorClass = colorRowClass(resp?.colorLabel, resp?.colorXmlId);
+                        const rowBg = colorRowBg(resp?.colorLabel, resp?.colorXmlId);
+                        const hasColor = !!rowBg;
+                        const selected = selectedInns.has(company.inn);
+                        const busy = busyInns.has(company.inn) || globalActionLoading;
+                        const isFailure =
+                          status === 'failed' ||
+                          !!analysis.flags?.server_error ||
+                          !!analysis.flags?.no_valid_site;
+                        const websites = analysis.websites ?? [];
+                        const emails = analysis.emails ?? [];
+                        const websitesToShow = websites.slice(0, 4);
+                        const extraWebsites = Math.max(0, websites.length - websitesToShow.length);
+                        const emailsToShow = emails.slice(0, 4);
+                        const extraEmails = Math.max(0, emails.length - emailsToShow.length);
+                        const infoAvailable = analysis.info && Object.keys(analysis.info ?? {}).length > 0;
 
-                      const isActual = (c.year ?? 0) === lastYear;
-
-                      const resp = responsibles[c.inn];
-                      const rowColorClass = colorRowClass(resp?.colorLabel, resp?.colorXmlId);
-                      const rowBg = colorRowBg(resp?.colorLabel, resp?.colorXmlId);
-                      const hasColor = !!rowBg;
-
-                      return (
-                        <tr
-                          key={`${c.inn}-${c.year}`}
-                          className={[
-                            'border-b',
-                            hasColor
-                              ? 'transition-[filter] hover:brightness-95 dark:hover:brightness-110'
-                              : 'hover:bg-muted/40',
-                            rowColorClass ?? '',
-                          ].join(' ')}
-                          style={hasColor ? { backgroundColor: rowBg } : undefined}
-                          title={resp?.colorLabel ? `Цвет: ${resp.colorLabel}` : undefined}>
-                          <td className="py-0.5 pr-2 align-middle text-center">
-                            <SquareImgButton
-                              icon="bitrix"
-                              title="Открыть карточку компании в Bitrix24"
-                              onClick={() =>
-                                window.open(
-                                  `/api/b24/resolve-company?inn=${encodeURIComponent(
-                                    c.inn,
-                                  )}&mode=pick`,
-                                  '_blank',
-                                  'noopener',
-                                )
-                              }
-                              className="mx-auto my-[2px]"
-                              sizeClassName="h-7 w-7"
-                            />
-                          </td>
-
-                          <td className="py-0.5 pr-2 whitespace-nowrap">{c.inn}</td>
-                          <td className="py-0.5 pr-3">{c.short_name}</td>
-
-                          {/* мини-график + цифра рядом */}
-                          <td className="py-0.5 pr-3 align-middle">
-                            <div className="flex items-center gap-2">
-                              <div className="w-[100px] h-[45px] shrink-0 overflow-hidden">
-                                <InlineRevenueBars
-                                  mode="stack"
-                                  revenue={[c.revenue_3, c.revenue_2, c.revenue_1, c.revenue]}
-                                  income={[c.income_3, c.income_2, c.income_1, c.income]}
-                                  year={c.year}
-                                />
+                        return (
+                          <tr
+                            key={`${company.inn}-${company.year ?? ''}`}
+                            className={cn(
+                              'border-b align-top',
+                              hasColor
+                                ? 'transition-[filter] hover:brightness-95 dark:hover:brightness-110'
+                                : 'hover:bg-muted/40',
+                              rowColorClass ?? '',
+                            )}
+                            style={hasColor ? { backgroundColor: rowBg } : undefined}>
+                            <td className="py-1 px-2 text-center align-middle">
+                              <Checkbox
+                                className="mx-auto"
+                                checked={selected}
+                                onCheckedChange={(value) => toggleSelectInn(company.inn, value === true)}
+                              />
+                            </td>
+                            <td className="py-1 px-2 text-center align-middle">
+                              <SquareImgButton
+                                icon="bitrix"
+                                title="Открыть карточку компании в Bitrix24"
+                                onClick={() =>
+                                  window.open(
+                                    `/api/b24/resolve-company?inn=${encodeURIComponent(
+                                      company.inn,
+                                    )}&mode=pick`,
+                                    '_blank',
+                                    'noopener',
+                                  )
+                                }
+                                className="mx-auto my-[2px]"
+                                sizeClassName="h-7 w-7"
+                              />
+                            </td>
+                            <td className="py-1 px-2 text-center">
+                              {status === 'running' || status === 'stopping' ? (
+                                <div className="flex flex-col items-center gap-1">
+                                  <Progress value={progressValue} className="h-2 w-28" />
+                                  <div className="text-[10px] text-muted-foreground">
+                                    {stageLabel ?? 'Выполнение'}
+                                  </div>
+                                  <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-7 w-7"
+                                    disabled={busy}
+                                    onClick={() => handleStopSingle(company.inn)}>
+                                    <Square className="h-3.5 w-3.5" />
+                                  </Button>
+                                </div>
+                              ) : status === 'queued' ? (
+                                <div className="flex flex-col items-center gap-1">
+                                  <Badge className={cn('text-[10px] uppercase', statusBadgeClass(status))}>
+                                    {statusLabel}
+                                  </Badge>
+                                  <div className="flex items-center gap-1">
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      disabled={busy}
+                                      onClick={() => handleStartSingle(company.inn)}>
+                                      <Play className="h-4 w-4" />
+                                    </Button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-7 w-7"
+                                      disabled={busy}
+                                      onClick={() => handleStopSingle(company.inn)}>
+                                      <Square className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="icon"
+                                  className="h-7 w-7"
+                                  disabled={busy}
+                                  onClick={() => handleStartSingle(company.inn)}>
+                                  {busy ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Play className="h-4 w-4" />
+                                  )}
+                                </Button>
+                              )}
+                            </td>
+                            <td className="py-1 px-2 whitespace-nowrap align-middle">{company.inn}</td>
+                            <td className="py-1 px-2 text-left">
+                              <div className="flex flex-col gap-1">
+                                <div className={cn(isFailure && 'text-red-600 font-semibold')}>
+                                  {company.short_name}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge
+                                    className={cn(
+                                      'text-[10px] font-medium uppercase',
+                                      statusBadgeClass(status),
+                                    )}>
+                                    {statusLabel}
+                                  </Badge>
+                                  {analysis.flags?.server_error && (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <AlertCircle className="h-4 w-4 text-red-500" />
+                                      </TooltipTrigger>
+                                      <TooltipContent className="text-xs">
+                                        Сервер был недоступен
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  )}
+                                  {analysis.flags?.no_valid_site && (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <AlertCircle className="h-4 w-4 text-amber-500" />
+                                      </TooltipTrigger>
+                                      <TooltipContent className="text-xs">
+                                        Не найден подходящий домен
+                                      </TooltipContent>
+                                    </Tooltip>
+                                  )}
+                                </div>
                               </div>
-                              <div className="text-right tabular-nums w-[56px]">
-                                {isLg()
-                                  ? revenueMln(c.revenue)
-                                  : revenueMln(c.income as number | null)}
+                            </td>
+                            <td className="py-1 px-2 text-left text-xs">
+                              {websitesToShow.length === 0 ? (
+                                <span className="text-muted-foreground">—</span>
+                              ) : (
+                                <div className="flex max-h-24 flex-col gap-0.5 overflow-y-auto pr-1">
+                                  {websitesToShow.map((site) => (
+                                    <a
+                                      key={site}
+                                      href={ensureHttp(site)}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-blue-600 hover:underline break-words">
+                                      {site}
+                                    </a>
+                                  ))}
+                                  {extraWebsites > 0 && (
+                                    <span className="text-[10px] text-muted-foreground">
+                                      + ещё {extraWebsites}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-1 px-2 text-left text-xs">
+                              {emailsToShow.length === 0 ? (
+                                <span className="text-muted-foreground">—</span>
+                              ) : (
+                                <div className="flex max-h-24 flex-col gap-0.5 overflow-y-auto pr-1">
+                                  {emailsToShow.map((email) => (
+                                    <a
+                                      key={email}
+                                      href={`mailto:${email}`}
+                                      className="text-blue-600 hover:underline break-words">
+                                      {email}
+                                    </a>
+                                  ))}
+                                  {extraEmails > 0 && (
+                                    <span className="text-[10px] text-muted-foreground">
+                                      + ещё {extraEmails}
+                                    </span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            <td className="py-1 px-2 whitespace-nowrap align-middle">
+                              {formatDate(analysis.last_started_at)}
+                            </td>
+                            <td className="py-1 px-2 whitespace-nowrap align-middle">
+                              {formatTime(analysis.last_started_at)}
+                            </td>
+                            <td className="py-1 px-2 whitespace-nowrap align-middle">
+                              {formatDuration(analysis.duration_seconds)}
+                            </td>
+                            <td className="py-1 px-2 text-center align-middle">
+                              {formatAttempts(analysis.attempts)}
+                            </td>
+                            <td className="py-1 px-2 text-center align-middle">
+                              {formatRating(analysis.rating)}
+                            </td>
+                            <td className="py-1 px-2 text-center align-middle">
+                              <Button
+                                variant="ghost"
+                                size="icon"
+                                className="h-7 w-7"
+                                disabled={!infoAvailable}
+                                onClick={() => setInfoDialog({ company, analysis })}>
+                                <Info className="h-4 w-4" />
+                              </Button>
+                            </td>
+                            <td className="py-1 px-3 align-middle">
+                              <div className="flex items-center gap-2">
+                                <div className="w-[100px] h-[45px] shrink-0 overflow-hidden">
+                                  <InlineRevenueBars
+                                    mode="stack"
+                                    revenue={seriesRevenue}
+                                    income={seriesIncome}
+                                    year={company.year}
+                                  />
+                                </div>
+                                <div className="text-right tabular-nums w-[56px]">
+                                  {isLg()
+                                    ? revenueMln(company.revenue)
+                                    : revenueMln(company.income as number | null)}
+                                </div>
                               </div>
-                            </div>
-                          </td>
-
-                          {/* Штат */}
-                          <td className="py-0.5 pr-3 text-center">
-                            {formatEmployees(getEmployeeCount(c))}
-                          </td>
-
-                          {/* Филиалы */}
-                          <td className="py-0.5 pr-3 text-center">{c.branch_count ?? '—'}</td>
-
-                          {/* Год */}
-                          <td className="py-0.5 pr-2 text-center">
-                            <span
-                              className={`inline-block px-1.5 py-0.5 rounded border ${
-                                isActual
-                                  ? 'border-transparent text-foreground'
-                                  : 'border-red-400 text-red-600'
-                              }`}
-                              title={
-                                isActual ? 'Последний закрытый год' : 'Не последний закрытый год'
-                              }>
-                              {c.year ?? '—'}
-                            </span>
-                          </td>
-
-                          {/* Ответственный */}
-                          <td className="py-0.5 pr-3 whitespace-nowrap text-center">
-                            {resp?.assignedName ?? (respLoading ? '…' : '—')}
-                          </td>
-
-                          {/* Адрес — последний столбец, уменьшенный и более серый */}
-                          <td className="py-0.5 pl-2 text-[10px] text-muted-foreground opacity-90">
-                            {c.address ?? '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                </tbody>
-              </table>
+                            </td>
+                            <td className="py-1 px-2 text-center align-middle">
+                              {formatEmployees(getEmployeeCount(company))}
+                            </td>
+                            <td className="py-1 px-2 text-center align-middle">
+                              {company.branch_count ?? '—'}
+                            </td>
+                            <td className="py-1 px-2 text-center align-middle">
+                              <span
+                                className={cn(
+                                  'inline-block rounded border px-1.5 py-0.5',
+                                  isActual
+                                    ? 'border-transparent text-foreground'
+                                    : 'border-red-400 text-red-600',
+                                )}
+                                title={isActual ? 'Последний закрытый год' : 'Не последний закрытый год'}>
+                                {company.year ?? '—'}
+                              </span>
+                            </td>
+                            <td className="py-1 px-2 whitespace-nowrap text-center align-middle">
+                              {resp?.assignedName ?? (respLoading ? '…' : '—')}
+                            </td>
+                            <td className="py-1 px-2 text-left text-[10px] text-muted-foreground">
+                              {company.address ?? '—'}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                  </tbody>
+                </table>
+              </TooltipProvider>
             </div>
 
             {pages > 0 && (
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pt-2">
-                {/* Выбор размера страницы */}
                 <div className="flex items-center gap-2">
                   <label htmlFor="page-size" className="text-[11px] text-muted-foreground">
                     На странице:
@@ -1048,7 +1826,6 @@ export default function OkvedTab() {
                   </select>
                 </div>
 
-                {/* Пагинация */}
                 <div className="flex items-center justify-end gap-2">
                   <Button
                     variant="secondary"
@@ -1071,6 +1848,94 @@ export default function OkvedTab() {
               </div>
             )}
           </CardContent>
+
+          <Dialog open={!!infoDialog} onOpenChange={(open) => !open && setInfoDialog(null)}>
+            <DialogContent className="max-w-3xl">
+              <DialogHeader>
+                <DialogTitle>{dialogCompany?.short_name ?? 'Информация о компании'}</DialogTitle>
+                <DialogDescription>
+                  {dialogCompany ? `ИНН ${dialogCompany.inn}` : 'Подробности анализа'}
+                </DialogDescription>
+              </DialogHeader>
+
+              <div className="space-y-3 text-sm leading-relaxed">
+                <div>
+                  <div className="font-semibold">Уровень соответствия и класс предприятия</div>
+                  <div className="text-muted-foreground">
+                    {dialogInfo?.match_level || dialogInfo?.enterprise_class
+                      ? [dialogInfo?.match_level, dialogInfo?.enterprise_class]
+                          .filter(Boolean)
+                          .join(' · ')
+                      : '—'}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="font-semibold">Основной ОКВЭД (DaData)</div>
+                  <div className="text-muted-foreground">
+                    {dialogInfo?.main_okved ?? dialogCompany?.main_okved ?? '—'}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="font-semibold">Домен для парсинга</div>
+                  <div className="text-muted-foreground">
+                    {dialogInfo?.parsing_domain ?? '—'}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="font-semibold">
+                    Соответствие ИИ-описания сайта и основного ОКВЭД
+                  </div>
+                  <div className="text-muted-foreground">
+                    {dialogInfo?.okved_match_ai ?? '—'}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="font-semibold">ИИ-описание сайта</div>
+                  <div className="whitespace-pre-wrap text-muted-foreground">
+                    {dialogInfo?.site_ai_description ?? '—'}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="font-semibold">Топ-10 оборудований</div>
+                  {dialogInfo?.top_equipment && dialogInfo.top_equipment.length > 0 ? (
+                    <ul className="list-disc pl-5 text-muted-foreground">
+                      {dialogInfo.top_equipment.map((item, idx) => (
+                        <li key={`${item}-${idx}`}>{item}</li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="text-muted-foreground">—</div>
+                  )}
+                </div>
+
+                <div>
+                  <div className="font-semibold">Виды продукции и ТНВЭД</div>
+                  {dialogInfo?.products && dialogInfo.products.length > 0 ? (
+                    <ul className="list-disc pl-5 text-muted-foreground space-y-1">
+                      {dialogInfo.products.map((product, idx) => (
+                        <li key={`${product.name}-${idx}`}>
+                          <span className="font-medium text-foreground">{product.name}</span>
+                          {product.tnved && product.tnved.length > 0 && (
+                            <span className="block text-xs text-muted-foreground">
+                              ТНВЭД: {product.tnved.join(', ')}
+                            </span>
+                          )}
+                        </li>
+                      ))}
+                    </ul>
+                  ) : (
+                    <div className="text-muted-foreground">—</div>
+                  )}
+                </div>
+              </div>
+            </DialogContent>
+          </Dialog>
+
         </Card>
       </div>
     </div>

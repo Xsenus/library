@@ -2,7 +2,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
 import { db } from '@/lib/db';
-import { okvedCompaniesQuerySchema, okvedCompanySchema } from '@/lib/validators';
+import {
+  okvedCompaniesQuerySchema,
+  okvedCompanySchema,
+  type CompanyAnalysisRow,
+  type CompanyAnalysisState,
+} from '@/lib/validators';
+import { getCompanyAnalysisStateMap } from '@/lib/company-analysis';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -28,6 +34,14 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
   const roots = rows.map((r) => r.root).filter(Boolean);
   rootsCache.set(industryId, { roots, ts: now });
   return roots;
+}
+
+function stripAnalysisState(
+  state: CompanyAnalysisRow | undefined,
+): CompanyAnalysisState | null {
+  if (!state) return null;
+  const { inn: _inn, websites: _web, emails: _mail, ...rest } = state;
+  return rest;
 }
 
 export async function GET(request: NextRequest) {
@@ -165,6 +179,7 @@ export async function GET(request: NextRequest) {
         d.short_name,
         d.address,
         d.branch_count,
+        d.main_okved,
         d.year,
         d.revenue,
         d.income,
@@ -187,8 +202,21 @@ export async function GET(request: NextRequest) {
     const dataRes = await dbBitrix.query(dataSql, [...args, offset, base.pageSize]);
     const items = dataRes.rows.map((r: any) => okvedCompanySchema.parse(r));
 
+    const analysisMap = await getCompanyAnalysisStateMap(items.map((item) => item.inn));
+
+    const withAnalysis = items.map((item) => {
+      const state = analysisMap.get(item.inn);
+      const analysisState = stripAnalysisState(state);
+      return {
+        ...item,
+        websites: state?.websites ?? item.websites ?? [],
+        emails: state?.emails ?? item.emails ?? [],
+        analysis_state: analysisState,
+      };
+    });
+
     return NextResponse.json({
-      items,
+      items: withAnalysis,
       total,
       page: base.page,
       pageSize: base.pageSize,
