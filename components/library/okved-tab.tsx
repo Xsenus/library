@@ -750,26 +750,6 @@ export default function OkvedTab() {
     [postJson, applyAnalysisUpdate, refreshAnalysis, markBusy],
   );
 
-  const toggleSelectAll = useCallback(
-    (checked: boolean) => {
-      if (checked) {
-        setSelectedInns(new Set(filteredCompanies.map((company) => company.inn)));
-      } else {
-        setSelectedInns(new Set());
-      }
-    },
-    [filteredCompanies],
-  );
-
-  const toggleSelectInn = useCallback((inn: string, checked: boolean) => {
-    setSelectedInns((prev) => {
-      const next = new Set(prev);
-      if (checked) next.add(inn);
-      else next.delete(inn);
-      return next;
-    });
-  }, []);
-
   const pages = useMemo(() => Math.max(1, Math.ceil(total / pageSize)), [total, pageSize]);
   const isAll = okved === '';
 
@@ -812,6 +792,26 @@ export default function OkvedTab() {
       return true;
     });
   }, [companies, analysisState, statusFilters, analysisIndustryFilter, analysisOkvedFilter]);
+
+  const toggleSelectAll = useCallback(
+    (checked: boolean) => {
+      if (checked) {
+        setSelectedInns(new Set(filteredCompanies.map((company) => company.inn)));
+      } else {
+        setSelectedInns(new Set());
+      }
+    },
+    [filteredCompanies],
+  );
+
+  const toggleSelectInn = useCallback((inn: string, checked: boolean) => {
+    setSelectedInns((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(inn);
+      else next.delete(inn);
+      return next;
+    });
+  }, []);
 
   const hasSelection = selectedInns.size > 0;
   const allSelected =
