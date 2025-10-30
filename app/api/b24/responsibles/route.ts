@@ -46,6 +46,15 @@ let enumCache: { field: string; map: EnumMap; exp: number } | null =
 const notEmpty = (s: string) => !!s && s.trim().length > 0;
 const core = (r: any) => (r?.result?.result ?? {}) as Record<string, any>;
 
+function normalizeInn(value: string | null | undefined): string | null {
+  if (!value) return null;
+  const trimmed = value.toString().trim();
+  if (!trimmed) return null;
+  const digits = trimmed.replace(/[^0-9]/g, '');
+  if (digits.length >= 10) return digits;
+  return trimmed.length ? trimmed : null;
+}
+
 let seq = 0;
 const nextKey = (p: string) => `${p}${++seq}`;
 
@@ -103,18 +112,41 @@ export async function POST(req: NextRequest) {
     const debug = req.nextUrl.searchParams.get('debug') === '1';
     const body = (await req.json().catch(() => null)) as { inns?: string[] } | null;
     const innsRaw = Array.isArray(body?.inns) ? body!.inns! : [];
-    const inns = Array.from(
-      new Set(innsRaw.map((s) => (s ?? '').toString().trim()).filter(notEmpty)),
+
+    const entryMap = new Map<
+      string,
+      { raw: string; normalized: string | null }
+    >();
+
+    for (const inn of innsRaw) {
+      const raw = (inn ?? '').toString().trim();
+      if (!notEmpty(raw)) continue;
+      if (!entryMap.has(raw)) {
+        entryMap.set(raw, { raw, normalized: normalizeInn(raw) });
+      }
+    }
+
+    if (entryMap.size === 0) {
+      return NextResponse.json({ ok: true, items: [] });
+    }
+
+    const searchKeys = Array.from(
+      new Set(
+        Array.from(entryMap.values())
+          .flatMap((entry) =>
+            [entry.raw, entry.normalized].filter((v): v is string => notEmpty(v ?? '')),
+          )
+          .filter(notEmpty),
+      ),
     );
-    if (!inns.length) return NextResponse.json({ ok: true, items: [] });
 
     const now = Date.now();
-    const cached: Record<string, RespItem> = {};
     const toFind: string[] = [];
-    for (const inn of inns) {
-      const c = cache.get(inn);
-      if (c && c.exp > now) cached[inn] = c.value;
-      else toFind.push(inn);
+    for (const key of searchKeys) {
+      const c = cache.get(key);
+      if (!c || c.exp <= now) {
+        toFind.push(key);
+      }
     }
 
     const enumMap = await getEnumMapForColorField(debug);
@@ -222,11 +254,13 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    const items: RespItem[] = inns.map((inn) => {
-      if (cached[inn]) return cached[inn];
-      const info = innToCompany[inn];
-      const assignedById = info?.ASSIGNED_BY_ID;
-      const assignedName = assignedById ? userIdToName[assignedById] : undefined;
+    const items: RespItem[] = [];
+
+    const ensureCached = (
+      key: string,
+      info: { ID: string; ASSIGNED_BY_ID?: number; COLOR_ID?: number | null } | undefined,
+    ) => {
+      if (!info) return;
 
       let colorId: number | undefined = undefined;
       let colorLabel: string | undefined = undefined;
@@ -241,8 +275,72 @@ export async function POST(req: NextRequest) {
         }
       }
 
+      const assignedById = info?.ASSIGNED_BY_ID;
+      const assignedName = assignedById ? userIdToName[assignedById] : undefined;
+
+      cache.set(key, {
+        value: {
+          inn: key,
+          companyId: info?.ID,
+          assignedById,
+          assignedName,
+          colorId,
+          colorLabel,
+          colorXmlId,
+        },
+        exp: Date.now() + TTL_MS,
+      });
+    };
+
+    for (const key of Object.keys(innToCompany)) {
+      ensureCached(key, innToCompany[key]);
+    }
+
+    for (const entry of entryMap.values()) {
+      const cachedRaw = cache.get(entry.raw);
+      const cachedNormalized = entry.normalized ? cache.get(entry.normalized) : null;
+      const cachedValue =
+        (cachedRaw && cachedRaw.exp > Date.now() ? cachedRaw.value : undefined) ??
+        (cachedNormalized && cachedNormalized.exp > Date.now() ? cachedNormalized.value : undefined);
+
+      if (cachedValue) {
+        items.push({ ...cachedValue, inn: entry.raw });
+        if (!cachedRaw && cachedNormalized && cachedNormalized.exp > Date.now()) {
+          cache.set(entry.raw, {
+            value: { ...cachedNormalized.value, inn: entry.raw },
+            exp: cachedNormalized.exp,
+          });
+        }
+        continue;
+      }
+
+      const info =
+        innToCompany[entry.raw] ??
+        (entry.normalized ? innToCompany[entry.normalized] : undefined);
+
+      if (!info) {
+        items.push({ inn: entry.raw });
+        continue;
+      }
+
+      let colorId: number | undefined = undefined;
+      let colorLabel: string | undefined = undefined;
+      let colorXmlId: string | undefined = undefined;
+
+      if (Number.isFinite(info?.COLOR_ID as number)) {
+        const row = enumMap.get(info!.COLOR_ID!);
+        if (row) {
+          colorId = row.id;
+          colorLabel = row.value;
+          colorXmlId = row.xmlId;
+        }
+      }
+
+      const assignedById = info?.ASSIGNED_BY_ID;
+      const assignedName = assignedById ? userIdToName[assignedById] : undefined;
+
       const item: RespItem = {
-        inn,
+        inn: entry.raw,
         companyId: info?.ID,
         assignedById,
         assignedName,
@@ -250,9 +348,16 @@ export async function POST(req: NextRequest) {
         colorLabel,
         colorXmlId,
       };
-      cache.set(inn, { value: item, exp: Date.now() + TTL_MS });
-      return item;
-    });
+
+      items.push(item);
+      cache.set(entry.raw, { value: { ...item, inn: entry.raw }, exp: Date.now() + TTL_MS });
+      if (entry.normalized && entry.normalized !== entry.raw) {
+        cache.set(entry.normalized, {
+          value: { ...item, inn: entry.normalized },
+          exp: Date.now() + TTL_MS,
+        });
+      }
+    }
 
     return NextResponse.json({
       ok: true,

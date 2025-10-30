@@ -1452,8 +1452,8 @@ export default function OkvedTab() {
                       <th className="py-1 px-2 w-[160px] text-center">Анализ</th>
                       <th className="py-1 px-2 whitespace-nowrap text-center">ИНН</th>
                       <th className="py-1 px-2 text-left">Название</th>
-                      <th className="py-1 px-2 text-left">Сайты</th>
-                      <th className="py-1 px-2 text-left">Имейлы</th>
+                      <th className="py-1 px-2 w-[210px] text-center">Сайты</th>
+                      <th className="py-1 px-2 w-[210px] text-center">Имейлы</th>
                       <th className="py-1 px-2 whitespace-nowrap text-center">Дата запуска</th>
                       <th className="py-1 px-2 whitespace-nowrap text-center">Время запуска</th>
                       <th className="py-1 px-2 whitespace-nowrap text-center">Длительность</th>
@@ -1682,19 +1682,19 @@ export default function OkvedTab() {
                                 </div>
                               </div>
                             </td>
-                            <td className="py-1 px-2 align-middle">
-                              <div className="flex min-h-[92px] flex-col justify-center text-left">
+                            <td className="py-1 px-2 align-middle text-center">
+                              <div className="flex min-h-[92px] w-full flex-col items-center justify-center gap-1 text-center">
                                 {websitesToShow.length === 0 ? (
                                   <span className="text-xs text-muted-foreground">—</span>
                                 ) : (
-                                  <div className="flex max-h-24 flex-col gap-0.5 overflow-y-auto pr-1 text-xs">
+                                  <div className="flex max-h-24 w-full flex-col items-center gap-0.5 overflow-y-auto px-1 text-xs">
                                     {websitesToShow.map((site) => (
                                       <a
                                         key={site}
                                         href={ensureHttp(site)}
                                         target="_blank"
                                         rel="noopener noreferrer"
-                                        className="break-words text-blue-600 hover:underline">
+                                        className="max-w-full break-words text-blue-600 hover:underline">
                                         {site}
                                       </a>
                                     ))}
@@ -1707,17 +1707,17 @@ export default function OkvedTab() {
                                 )}
                               </div>
                             </td>
-                            <td className="py-1 px-2 align-middle">
-                              <div className="flex min-h-[92px] flex-col justify-center text-left">
+                            <td className="py-1 px-2 align-middle text-center">
+                              <div className="flex min-h-[92px] w-full flex-col items-center justify-center gap-1 text-center">
                                 {emailsToShow.length === 0 ? (
                                   <span className="text-xs text-muted-foreground">—</span>
                                 ) : (
-                                  <div className="flex max-h-24 flex-col gap-0.5 overflow-y-auto pr-1 text-xs">
+                                  <div className="flex max-h-24 w-full flex-col items-center gap-0.5 overflow-y-auto px-1 text-xs">
                                     {emailsToShow.map((email) => (
                                       <a
                                         key={email}
                                         href={`mailto:${email}`}
-                                        className="break-words text-blue-600 hover:underline">
+                                        className="max-w-full break-words text-blue-600 hover:underline">
                                         {email}
                                       </a>
                                     ))}
