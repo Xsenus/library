@@ -200,7 +200,7 @@ export default function AiCompanyAnalysisTab() {
   const [search, setSearch] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [industryId, setIndustryId] = useState<string>('all');
-  const [okvedCode, setOkvedCode] = useState('');
+  const [okvedCode, setOkvedCode] = useState<string | undefined>(undefined);
   const [industries, setIndustries] = useState<Industry[]>([]);
   const [industriesLoading, setIndustriesLoading] = useState(false);
   const [okvedOptions, setOkvedOptions] = useState<Array<{ id: number; okved_code: string; okved_main: string }>>([]);
@@ -474,12 +474,16 @@ export default function AiCompanyAnalysisTab() {
             </div>
             <div className="flex items-center gap-2">
               <span className="text-xs text-muted-foreground">ОКВЭД:</span>
-              <Select value={okvedCode} onValueChange={(value) => setOkvedCode(value)}>
+              <Select
+                value={okvedCode}
+                onValueChange={(value) =>
+                  setOkvedCode(value === '__all__' ? undefined : value)
+                }>
                 <SelectTrigger className="h-9 min-w-[200px] text-sm">
                   <SelectValue placeholder="Все коды" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">Все коды</SelectItem>
+                  <SelectItem value="__all__">Все коды</SelectItem>
                   {okvedOptions.map((item) => (
                     <SelectItem key={item.id} value={item.okved_code}>
                       {item.okved_code} — {item.okved_main}
