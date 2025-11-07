@@ -250,10 +250,12 @@ export default function AiCompanyAnalysisTab() {
   const [runInn, setRunInn] = useState<string | null>(null);
   const [stopLoading, setStopLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
+  const [autoRefreshRemaining, setAutoRefreshRemaining] = useState<number | null>(null);
   const autoRefreshDeadlineRef = useRef<number>(0);
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set());
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
+  const [stopSignalAt, setStopSignalAt] = useState<number | null>(null);
 
   const debouncedSearch = useDebounce(search, 400);
   const { toast } = useToast();
@@ -279,6 +281,13 @@ export default function AiCompanyAnalysisTab() {
 
   const isRefreshing = loading || isPending;
   const okvedSelectValue = okvedCode ?? '__all__';
+  const autoRefreshLabel = useMemo(() => {
+    if (autoRefreshRemaining == null) return 'Автообновление';
+    const totalSeconds = Math.max(0, Math.ceil(autoRefreshRemaining / 1000));
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `Автообновление · ${minutes}:${seconds.toString().padStart(2, '0')}`;
+  }, [autoRefreshRemaining]);
 
   const fetchCompanies = useCallback(
     async (pageParam: number, pageSizeParam: number) => {
@@ -295,12 +304,24 @@ export default function AiCompanyAnalysisTab() {
         const res = await fetch(`/api/ai-analysis/companies?${params.toString()}`, { cache: 'no-store' });
         if (!res.ok) throw new Error(`Request failed with ${res.status}`);
         const data = (await res.json()) as FetchResponse;
+        const items = Array.isArray(data.items) ? (data.items as AiCompany[]) : [];
+        const hasActive = items.some((item) => {
+          const state = computeCompanyState(item);
+          return state.running || state.queued;
+        });
+
         startTransition(() => {
-          setCompanies(Array.isArray(data.items) ? data.items : []);
+          setCompanies(items);
           setTotal(typeof data.total === 'number' ? data.total : 0);
           setAvailable(data.available ?? {});
           setLastLoadedAt(new Date().toISOString());
         });
+
+        if (!hasActive) {
+          autoRefreshDeadlineRef.current = 0;
+          setAutoRefresh(false);
+          setAutoRefreshRemaining(null);
+        }
       } catch (error) {
         console.error('Failed to load AI analysis companies:', error);
         toast({
@@ -314,6 +335,9 @@ export default function AiCompanyAnalysisTab() {
           setAvailable({});
           setLastLoadedAt(null);
         });
+        autoRefreshDeadlineRef.current = 0;
+        setAutoRefresh(false);
+        setAutoRefreshRemaining(null);
       } finally {
         setLoading(false);
       }
@@ -326,7 +350,9 @@ export default function AiCompanyAnalysisTab() {
   }, [fetchCompanies, page, pageSize]);
 
   const scheduleAutoRefresh = useCallback(() => {
-    autoRefreshDeadlineRef.current = Date.now() + 2 * 60 * 1000;
+    const deadline = Date.now() + 2 * 60 * 1000;
+    autoRefreshDeadlineRef.current = deadline;
+    setAutoRefreshRemaining(deadline - Date.now());
     setAutoRefresh(true);
   }, []);
 
@@ -338,12 +364,30 @@ export default function AiCompanyAnalysisTab() {
     async function loadIndustries() {
       try {
         setIndustriesLoading(true);
-        const res = await fetch('/api/industries?page=1&pageSize=200', { cache: 'no-store' });
-        if (!res.ok) {
-          throw new Error(`Failed with ${res.status}`);
+        const pageSize = 100;
+        let pageNumber = 1;
+        const collected: Industry[] = [];
+        let expectedTotal = Infinity;
+
+        while (collected.length < expectedTotal && pageNumber <= 10) {
+          const params = new URLSearchParams({
+            page: String(pageNumber),
+            pageSize: String(pageSize),
+          });
+          const res = await fetch(`/api/industries?${params.toString()}`, { cache: 'no-store' });
+          if (!res.ok) {
+            throw new Error(`Failed with ${res.status}`);
+          }
+          const data = await res.json();
+          const items = Array.isArray(data.items) ? (data.items as Industry[]) : [];
+          collected.push(...items);
+          const totalFromApi = typeof data.total === 'number' ? data.total : collected.length;
+          expectedTotal = Number.isFinite(totalFromApi) && totalFromApi > 0 ? totalFromApi : collected.length;
+          if (items.length < pageSize) break;
+          pageNumber += 1;
         }
-        const data = await res.json();
-        setIndustries(Array.isArray(data.items) ? (data.items as Industry[]) : []);
+
+        setIndustries(collected);
       } catch (error) {
         console.error('Failed to load industries:', error);
         setIndustries([]);
@@ -468,9 +512,11 @@ export default function AiCompanyAnalysisTab() {
       if (autoRefreshDeadlineRef.current && Date.now() > autoRefreshDeadlineRef.current) {
         autoRefreshDeadlineRef.current = 0;
         setAutoRefresh(false);
+        setAutoRefreshRemaining(null);
       }
       if (!isAnyActive && autoRefreshDeadlineRef.current === 0) {
         setAutoRefresh(false);
+        setAutoRefreshRemaining(null);
       }
     }, 8000);
     return () => clearInterval(interval);
@@ -479,8 +525,42 @@ export default function AiCompanyAnalysisTab() {
   useEffect(() => {
     if (!isAnyActive && autoRefreshDeadlineRef.current === 0) {
       setAutoRefresh(false);
+      setAutoRefreshRemaining(null);
     }
   }, [isAnyActive]);
+
+  useEffect(() => {
+    if (!autoRefresh) {
+      setAutoRefreshRemaining(null);
+      return;
+    }
+
+    const updateRemaining = () => {
+      if (!autoRefreshDeadlineRef.current) {
+        setAutoRefresh(false);
+        setAutoRefreshRemaining(null);
+        return;
+      }
+      const remaining = autoRefreshDeadlineRef.current - Date.now();
+      if (remaining <= 0) {
+        autoRefreshDeadlineRef.current = 0;
+        setAutoRefresh(false);
+        setAutoRefreshRemaining(null);
+      } else {
+        setAutoRefreshRemaining(remaining);
+      }
+    };
+
+    updateRemaining();
+    const timer = setInterval(updateRemaining, 1000);
+    return () => clearInterval(timer);
+  }, [autoRefresh]);
+
+  useEffect(() => {
+    if (!stopSignalAt) return;
+    const timeout = setTimeout(() => setStopSignalAt(null), 15000);
+    return () => clearTimeout(timeout);
+  }, [stopSignalAt]);
 
   const handleRunSelected = useCallback(async () => {
     const inns = Array.from(selected);
@@ -548,6 +628,7 @@ export default function AiCompanyAnalysisTab() {
       });
       if (!res.ok) throw new Error(`Request failed with ${res.status}`);
       toast({ title: 'Отправлен сигнал остановки анализа' });
+      setStopSignalAt(Date.now());
       fetchCompanies(page, pageSize);
       scheduleAutoRefresh();
     } catch (error) {
@@ -630,7 +711,15 @@ export default function AiCompanyAnalysisTab() {
                 {autoRefresh && (
                   <Badge variant="default" className="gap-1">
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    Автообновление
+                    {autoRefreshLabel}
+                  </Badge>
+                )}
+                {stopSignalAt && (
+                  <Badge
+                    variant="outline"
+                    className="gap-1 border-destructive/40 bg-destructive/10 text-destructive"
+                  >
+                    Остановка запрошена
                   </Badge>
                 )}
                 {lastLoadedAt && (
@@ -875,31 +964,22 @@ export default function AiCompanyAnalysisTab() {
                     Обновляем данные…
                   </div>
                 )}
-                <div className="overflow-x-auto">
-                  <table className="w-full min-w-[1200px] border-separate border-spacing-0 text-sm">
-                    <thead className="sticky top-0 z-10 bg-muted/70 text-xs uppercase text-muted-foreground backdrop-blur">
+                <div className="overflow-hidden">
+                  <table className="w-full border-separate border-spacing-0 text-sm">
+                    <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
                       <tr>
-                        <th className="w-10 px-3 py-3 text-left align-middle">
+                        <th className="w-10 px-3 py-3 align-middle">
                           <Checkbox
                             checked={headerCheckedState}
                             onCheckedChange={(value) => toggleSelectAll(Boolean(value))}
                             aria-label="Выбрать все"
                           />
                         </th>
-                        <th className="px-3 py-3 text-left">ИНН</th>
-                        <th className="px-3 py-3 text-left">Название</th>
-                        <th className="px-3 py-3 text-center">Выручка, млн</th>
-                        <th className="px-3 py-3 text-center">Штат</th>
-                        <th className="px-3 py-3 text-left">Сайты</th>
-                        <th className="px-3 py-3 text-left">E-mail</th>
-                        <th className="px-3 py-3 text-left">Статус</th>
-                        <th className="px-3 py-3 text-left">Дата запуска</th>
-                        <th className="px-3 py-3 text-left">Время запуска</th>
-                        <th className="px-3 py-3 text-left">Продолжительность</th>
-                        <th className="px-3 py-3 text-center">Попыток</th>
-                        <th className="px-3 py-3 text-center">Оценка</th>
-                        <th className="px-3 py-3 text-center">Пайплайн</th>
-                        <th className="px-3 py-3 text-center">Инфо</th>
+                        <th className="px-3 py-3 text-left">Компания</th>
+                        <th className="px-3 py-3 text-left">Контакты</th>
+                        <th className="px-3 py-3 text-left">Запуски и статус</th>
+                        <th className="px-3 py-3 text-left">Пайплайн</th>
+                        <th className="px-3 py-3 text-right">Действия</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -920,6 +1000,42 @@ export default function AiCompanyAnalysisTab() {
                         const showEmailToggle = emails.length > 5;
                         const queuedTimeRaw = company.queued_at ? formatTime(company.queued_at) : '—';
                         const queuedTime = queuedTimeRaw !== '—' ? queuedTimeRaw : null;
+                        const startedDate = formatDate(company.analysis_started_at ?? null);
+                        const startedTime = formatTime(company.analysis_started_at ?? null);
+                        const startedAt =
+                          startedDate !== '—'
+                            ? startedTime !== '—'
+                              ? `${startedDate} · ${startedTime}`
+                              : startedDate
+                            : '—';
+                        const finishedDate = formatDate(company.analysis_finished_at ?? null);
+                        const finishedTime = formatTime(company.analysis_finished_at ?? null);
+                        const finishedAt =
+                          finishedDate !== '—'
+                            ? finishedTime !== '—'
+                              ? `${finishedDate} · ${finishedTime}`
+                              : finishedDate
+                            : null;
+                        const duration = state.running
+                          ? '—'
+                          : formatDuration(company.analysis_duration_ms ?? null);
+                        const attempts = company.analysis_attempts != null ? company.analysis_attempts : '—';
+                        const score =
+                          company.analysis_score != null && Number.isFinite(company.analysis_score)
+                            ? company.analysis_score.toFixed(2)
+                            : '—';
+                        const revenueLabel = revenue !== '—' ? `${revenue} млн ₽` : '—';
+                        const progressPercent = Math.min(
+                          100,
+                          Math.max(0, Math.round((company.analysis_progress ?? 0) * 100)),
+                        );
+                        const runDisabled =
+                          runInn === company.inn || bulkLoading || state.running || state.queued;
+                        const runTooltip = state.running
+                          ? 'Анализ выполняется'
+                          : state.queued
+                          ? 'Компания уже в очереди'
+                          : 'Запустить анализ';
 
                         return (
                           <tr
@@ -930,105 +1046,158 @@ export default function AiCompanyAnalysisTab() {
                               rowFinished && 'bg-destructive/5',
                             )}
                           >
-                            <td className="px-3 py-3">
+                            <td className="px-3 py-4 align-top">
                               <Checkbox
                                 checked={companySelected}
                                 onCheckedChange={(value) => setSelectedValue(company.inn, value)}
                                 aria-label={`Выбрать компанию ${company.short_name}`}
                               />
                             </td>
-                            <td className="px-3 py-3 whitespace-nowrap text-xs text-muted-foreground">
-                              {company.inn}
-                            </td>
-                            <td className={cn('px-3 py-3 font-medium', rowFinished && 'text-destructive')}>
-                              {company.short_name}
-                            </td>
-                            <td className="px-3 py-3 text-center tabular-nums">{revenue}</td>
-                            <td className="px-3 py-3 text-center tabular-nums">{employees}</td>
-                            <td className="px-3 py-3 text-xs">
-                              {sites.length ? (
-                                <div className="flex flex-col gap-1">
-                                  {sites.slice(0, 3).map((site) => (
-                                    <a
-                                      key={site}
-                                      href={site.startsWith('http') ? site : `https://${site}`}
-                                      className="truncate text-blue-600 hover:underline"
-                                      target="_blank"
-                                      rel="noopener noreferrer"
-                                    >
-                                      {site}
-                                    </a>
-                                  ))}
-                                  {sites.length > 3 && (
-                                    <span className="text-[11px] text-muted-foreground">
-                                      + ещё {sites.length - 3}
-                                    </span>
+                            <td className="px-3 py-4 align-top">
+                              <div className="space-y-2">
+                                <div className={cn('text-sm font-semibold leading-tight', rowFinished && 'text-destructive')}>
+                                  {company.short_name}
+                                </div>
+                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                  <span>ИНН {company.inn}</span>
+                                  {company.branch_count != null && company.branch_count > 0 && (
+                                    <span>Филиалов: {company.branch_count}</span>
+                                  )}
+                                  {company.employee_count != null && company.employee_count > 0 && (
+                                    <span>Штат: {employees}</span>
                                   )}
                                 </div>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
+                                <div className="flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-muted-foreground">
+                                  <span>
+                                    Выручка: <span className="text-foreground">{revenueLabel}</span>
+                                  </span>
+                                  <span>
+                                    Оценка: <span className="text-foreground">{score}</span>
+                                  </span>
+                                </div>
+                              </div>
                             </td>
-                            <td className="px-3 py-3 text-xs">
-                              {emails.length ? (
-                                <div className="flex flex-col gap-1">
-                                  {displayEmails.map((email) => (
-                                    <a
-                                      key={email}
-                                      href={`mailto:${email}`}
-                                      className="truncate text-blue-600 hover:underline"
-                                    >
-                                      {email}
-                                    </a>
-                                  ))}
-                                  {showEmailToggle && (
-                                    <button
-                                      type="button"
-                                      className="self-start text-xs font-medium text-primary hover:underline"
-                                      onClick={() => toggleEmailExpansion(company.inn)}
-                                    >
-                                      {isEmailExpanded
-                                        ? 'Скрыть'
-                                        : `Показать ещё ${emails.length - displayEmails.length}`}
-                                    </button>
+                            <td className="px-3 py-4 align-top text-xs">
+                              <div className="space-y-4">
+                                <div>
+                                  <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
+                                  {sites.length ? (
+                                    <div className="mt-1 flex flex-col gap-1">
+                                      {sites.slice(0, 3).map((site) => (
+                                        <a
+                                          key={site}
+                                          href={site.startsWith('http') ? site : `https://${site}`}
+                                          className="truncate text-blue-600 hover:underline"
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          {site}
+                                        </a>
+                                      ))}
+                                      {sites.length > 3 && (
+                                        <span className="text-[11px] text-muted-foreground">
+                                          + ещё {sites.length - 3}
+                                        </span>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
                                   )}
                                 </div>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
+                                <div>
+                                  <div className="text-[11px] uppercase text-muted-foreground">E-mail</div>
+                                  {emails.length ? (
+                                    <div className="mt-1 flex flex-col gap-1">
+                                      {displayEmails.map((email) => (
+                                        <a
+                                          key={email}
+                                          href={`mailto:${email}`}
+                                          className="truncate text-blue-600 hover:underline"
+                                        >
+                                          {email}
+                                        </a>
+                                      ))}
+                                      {showEmailToggle && (
+                                        <button
+                                          type="button"
+                                          className="self-start text-xs font-medium text-primary hover:underline"
+                                          onClick={() => toggleEmailExpansion(company.inn)}
+                                        >
+                                          {isEmailExpanded
+                                            ? 'Скрыть'
+                                            : `Показать ещё ${emails.length - displayEmails.length}`}
+                                        </button>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    <span className="text-muted-foreground">—</span>
+                                  )}
+                                </div>
+                              </div>
                             </td>
-                            <td className="px-3 py-3">
-                              <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
-                            </td>
-                            <td className="px-3 py-3 text-xs">
-                              {formatDate(company.analysis_started_at ?? null)}
-                            </td>
-                            <td className="px-3 py-3 text-xs">
-                              {formatTime(company.analysis_started_at ?? null)}
-                            </td>
-                            <td className="px-3 py-3 text-xs">
-                              {state.running
-                                ? '—'
-                                : formatDuration(company.analysis_duration_ms ?? null)}
-                            </td>
-                            <td className="px-3 py-3 text-center tabular-nums">
-                              {company.analysis_attempts != null ? company.analysis_attempts : '—'}
-                            </td>
-                            <td className="px-3 py-3 text-center tabular-nums">
-                              {company.analysis_score != null && Number.isFinite(company.analysis_score)
-                                ? company.analysis_score.toFixed(2)
-                                : '—'}
-                            </td>
-                            <td className="px-3 py-3">
-                              {state.running ? (
-                                <div className="min-w-[180px] space-y-2">
-                                  <Progress
-                                    value={Math.round((company.analysis_progress ?? 0) * 100)}
-                                    className="h-2"
-                                  />
-                                  <div className="text-[11px] text-muted-foreground">
-                                    {currentStage || 'Выполняется…'}
+                            <td className="px-3 py-4 align-top text-xs">
+                              <div className="space-y-3">
+                                <div className="flex flex-wrap items-center gap-2">
+                                  <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+                                  {state.running && (
+                                    <span className="text-[11px] text-muted-foreground">{progressPercent}%</span>
+                                  )}
+                                  {state.queued && queuedTime && (
+                                    <span className="text-[11px] text-muted-foreground">с {queuedTime}</span>
+                                  )}
+                                </div>
+                                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-muted-foreground sm:grid-cols-2">
+                                  <div>
+                                    <div className="uppercase">Старт</div>
+                                    <div className="text-foreground">{startedAt}</div>
                                   </div>
+                                  <div>
+                                    <div className="uppercase">Длительность</div>
+                                    <div className="text-foreground">{duration}</div>
+                                  </div>
+                                  <div>
+                                    <div className="uppercase">Попыток</div>
+                                    <div className="text-foreground">{attempts}</div>
+                                  </div>
+                                  <div>
+                                    <div className="uppercase">Оценка</div>
+                                    <div className="text-foreground">{score}</div>
+                                  </div>
+                                </div>
+                                {finishedAt && (
+                                  <div className="text-[11px] text-muted-foreground">
+                                    Завершено: <span className="text-foreground">{finishedAt}</span>
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-4 align-top text-xs">
+                              {state.running ? (
+                                <div className="space-y-2">
+                                  <Progress value={progressPercent} className="h-2" />
+                                  <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                    <span>{currentStage || 'Выполняется…'}</span>
+                                    <span>{progressPercent}%</span>
+                                  </div>
+                                </div>
+                              ) : steps.length ? (
+                                <div className="max-w-[260px] space-y-2">
+                                  <ul className="space-y-1 text-xs text-muted-foreground">
+                                    {steps.slice(0, 4).map((step, index) => (
+                                      <li key={`${company.inn}-step-${index}`} className="flex items-start gap-2">
+                                        <span className="mt-1 h-1.5 w-1.5 flex-none rounded-full bg-muted-foreground/60" />
+                                        <span className="text-foreground">{step.label}</span>
+                                        {step.status && (
+                                          <span className="text-muted-foreground">· {step.status}</span>
+                                        )}
+                                      </li>
+                                    ))}
+                                  </ul>
+                                  {steps.length > 4 && (
+                                    <div className="text-[11px] text-muted-foreground">
+                                      + ещё {steps.length - 4}
+                                    </div>
+                                  )}
                                 </div>
                               ) : state.queued ? (
                                 <div className="space-y-1 text-xs text-muted-foreground">
@@ -1038,6 +1207,11 @@ export default function AiCompanyAnalysisTab() {
                                   {queuedTime && <div>с {queuedTime}</div>}
                                 </div>
                               ) : (
+                                <span className="text-muted-foreground">—</span>
+                              )}
+                            </td>
+                            <td className="px-3 py-4 align-top text-right">
+                              <div className="flex flex-col items-end gap-2">
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Button
@@ -1046,7 +1220,7 @@ export default function AiCompanyAnalysisTab() {
                                       size="icon"
                                       className="h-8 w-8"
                                       onClick={() => handleRunSingle(company.inn)}
-                                      disabled={runInn === company.inn || bulkLoading}
+                                      disabled={runDisabled}
                                     >
                                       {runInn === company.inn ? (
                                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -1055,29 +1229,24 @@ export default function AiCompanyAnalysisTab() {
                                       )}
                                     </Button>
                                   </TooltipTrigger>
-                                  <TooltipContent side="bottom">Запустить анализ</TooltipContent>
+                                  <TooltipContent side="bottom">{runTooltip}</TooltipContent>
                                 </Tooltip>
-                              )}
-                            </td>
-                            <td className="px-3 py-3 text-center">
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="sm"
-                                onClick={() => setInfoCompany(company)}
-                              >
-                                Подробнее
-                              </Button>
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => setInfoCompany(company)}
+                                >
+                                  Подробнее
+                                </Button>
+                              </div>
                             </td>
                           </tr>
                         );
                       })}
                       {!companies.length && !isRefreshing && (
                         <tr>
-                          <td
-                            colSpan={15}
-                            className="px-3 py-10 text-center text-sm text-muted-foreground"
-                          >
+                          <td colSpan={6} className="px-3 py-10 text-center text-sm text-muted-foreground">
                             Данные не найдены
                           </td>
                         </tr>
@@ -1085,6 +1254,7 @@ export default function AiCompanyAnalysisTab() {
                     </tbody>
                   </table>
                 </div>
+
               </div>
             </div>
           </CardContent>
