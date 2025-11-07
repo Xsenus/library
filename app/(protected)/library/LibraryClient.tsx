@@ -36,6 +36,7 @@ import {
   SelectItem,
 } from '@/components/ui/select';
 import AiSearchTab from '@/components/library/ai-search-tab';
+import AiCompanyAnalysisTab from '@/components/library/ai-company-analysis-tab';
 import SquareImgButton from '@/components/library/square-img-button';
 
 interface ListState<T> {
@@ -57,10 +58,13 @@ export default function LibraryPage() {
     | 'library'
     | 'cleanscore'
     | 'okved'
-    | 'aisearch';
+    | 'aisearch'
+    | 'aianalysis';
 
-  const [tab, setTab] = useState<'library' | 'cleanscore' | 'okved' | 'aisearch'>(
-    initialTab === 'cleanscore' || initialTab === 'okved' ? 'library' : initialTab,
+  const [tab, setTab] = useState<'library' | 'cleanscore' | 'okved' | 'aisearch' | 'aianalysis'>(
+    initialTab === 'cleanscore' || initialTab === 'okved' || initialTab === 'aianalysis'
+      ? 'library'
+      : initialTab,
   );
 
   // ======= auth/user flags =======
@@ -105,9 +109,10 @@ export default function LibraryPage() {
       | 'library'
       | 'cleanscore'
       | 'okved'
-      | 'aisearch';
+      | 'aisearch'
+      | 'aianalysis';
 
-    setTab(!isWorker && (tSafe === 'cleanscore' || tSafe === 'okved') ? 'library' : tSafe);
+    setTab(!isWorker && (tSafe === 'cleanscore' || tSafe === 'okved' || tSafe === 'aianalysis') ? 'library' : tSafe);
   }, [searchParams, isWorker]);
 
   // Logout
@@ -664,7 +669,7 @@ export default function LibraryPage() {
   }, [autoSelectEquipment, equipmentState.loading, equipmentState.items]); // eslint-disable-line
 
   useEffect(() => {
-    if (!isWorker && (tab === 'cleanscore' || tab === 'okved')) {
+    if (!isWorker && (tab === 'cleanscore' || tab === 'okved' || tab === 'aianalysis')) {
       setTab('library');
     }
   }, [isWorker, tab]);
@@ -902,14 +907,14 @@ export default function LibraryPage() {
           <Tabs
             value={tab}
             onValueChange={(v) => {
-              if ((v === 'cleanscore' || v === 'okved') && !isWorker) return;
+              if ((v === 'cleanscore' || v === 'okved' || v === 'aianalysis') && !isWorker) return;
               setTab(v as any);
               const qp = new URLSearchParams(searchParams);
               qp.set('tab', v);
               router.replace(`/library?${qp.toString()}`);
             }}
             className="w-full">
-            <div className="grid w-full grid-cols-4 gap-1 rounded-lg bg-muted p-1">
+            <div className="grid w-full grid-cols-5 gap-1 rounded-lg bg-muted p-1">
               <TabsList className="contents">
                 <TabsTrigger
                   value="library"
@@ -951,6 +956,22 @@ export default function LibraryPage() {
                     shadow-none transition
                   ">
                   База компаний
+                </TabsTrigger>
+
+                <TabsTrigger
+                  value="aianalysis"
+                  disabled={!isWorker}
+                  title={!isWorker ? 'Доступно только сотрудникам' : undefined}
+                  className="
+                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    border border-transparent
+                    data-[state=active]:bg-background data-[state=active]:border-border
+                    data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
+                    disabled:opacity-50 disabled:cursor-not-allowed
+                    shadow-none transition
+                  "
+                >
+                  AI-анализ компаний
                 </TabsTrigger>
 
                 <TabsTrigger
@@ -1448,6 +1469,12 @@ export default function LibraryPage() {
                     )}
                   </div>
                 </div>
+              </TabsContent>
+            )}
+
+            {isWorker && (
+              <TabsContent value="aianalysis" className="mt-0">
+                <AiCompanyAnalysisTab />
               </TabsContent>
             )}
 
