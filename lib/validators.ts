@@ -228,6 +228,14 @@ export const okvedCompaniesQuerySchema = paginationSchema.extend({
 });
 export type OkvedCompaniesQuery = z.infer<typeof okvedCompaniesQuerySchema>;
 
+export const aiCompanyAnalysisQuerySchema = paginationSchema.extend({
+  okved: z.string().optional().default(''),
+  industryId: z.string().optional().default('all'),
+  q: z.string().optional().default(''),
+  sort: z.enum(['revenue_desc', 'revenue_asc']).optional().default('revenue_desc'),
+});
+export type AiCompanyAnalysisQuery = z.infer<typeof aiCompanyAnalysisQuerySchema>;
+
 // ОКВЭД, полученные по ID оборудования (для карточки оборудования)
 export const okvedByEquipmentSchema = z.object({
   prodclass_id: z.coerce.number(),
