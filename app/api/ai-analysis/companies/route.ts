@@ -90,6 +90,28 @@ const OPTIONAL_COLUMNS: OptionalColumnSpec[] = [
 let cachedColumns: { names: Set<string>; ts: number } | null = null;
 const COL_CACHE_TTL_MS = 5 * 60 * 1000;
 
+let cachedQueueCheck: { available: boolean; ts: number } | null = null;
+const QUEUE_CACHE_TTL_MS = 5 * 60 * 1000;
+
+async function isQueueTableAvailable(): Promise<boolean> {
+  const now = Date.now();
+  if (cachedQueueCheck && now - cachedQueueCheck.ts < QUEUE_CACHE_TTL_MS) {
+    return cachedQueueCheck.available;
+  }
+  try {
+    const res = await dbBitrix.query<{ exists: boolean }>(
+      "SELECT to_regclass('public.ai_analysis_queue') IS NOT NULL AS exists",
+    );
+    const available = !!res.rows?.[0]?.exists;
+    cachedQueueCheck = { available, ts: now };
+    return available;
+  } catch (error) {
+    console.warn('ai_analysis_queue availability check failed:', error);
+    cachedQueueCheck = { available: false, ts: now };
+    return false;
+  }
+}
+
 async function getExistingColumns(): Promise<Set<string>> {
   const now = Date.now();
   if (cachedColumns && now - cachedColumns.ts < COL_CACHE_TTL_MS) {
@@ -273,6 +295,7 @@ export async function GET(request: NextRequest) {
 
     const existingColumns = await getExistingColumns();
     const optionalSelect = buildOptionalSelect(existingColumns);
+    const queueAvailable = await isQueueTableAvailable();
 
     const where: string[] = ["(d.status = 'ACTIVE' OR d.status = 'REORGANIZING')"];
     const args: any[] = [];
@@ -384,6 +407,8 @@ export async function GET(request: NextRequest) {
     `;
 
     const optionalSql = optionalSelect.sql ? `,\n        ${optionalSelect.sql}` : '';
+    const queueSelectSql = queueAvailable ? `,\n        q.queued_at,\n        q.queued_by` : '';
+    const queueJoinSql = queueAvailable ? `\n      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn` : '';
 
     const dataSql = `
       SELECT
@@ -400,8 +425,8 @@ export async function GET(request: NextRequest) {
         "revenue-3" AS revenue_3,
         "income-1"  AS income_1,
         "income-2"  AS income_2,
-        "income-3"  AS income_3${optionalSql}
-      FROM dadata_result d
+        "income-3"  AS income_3${optionalSql}${queueSelectSql}
+      FROM dadata_result d${queueJoinSql}
       ${whereSql}
       ${orderSql}
       OFFSET $${i} LIMIT $${i + 1}
@@ -420,6 +445,15 @@ export async function GET(request: NextRequest) {
       const startedAt = parseIso(row.analysis_started_at);
       const finishedAt = parseIso(row.analysis_finished_at);
       const durationMs = ensureDurationMs(row.analysis_duration_ms, startedAt, finishedAt);
+      const queuedAt = queueAvailable ? parseIso(row.queued_at) : null;
+      const queuedBy = queueAvailable ? parseString(row.queued_by) : null;
+      const rawStatus = parseString(row.analysis_status);
+      const statusLower = rawStatus ? rawStatus.toLowerCase() : '';
+      const runningStatus = ['run', 'process', 'progress', 'start'].some((token) =>
+        statusLower.includes(token),
+      );
+      const shouldForceQueued = queueAvailable && queuedAt && (!finishedAt || queuedAt > finishedAt) && !runningStatus;
+      const status = shouldForceQueued ? 'queued' : rawStatus;
 
       const matchLevel =
         parseString(row.analysis_match_level) ||
@@ -466,7 +500,7 @@ export async function GET(request: NextRequest) {
         ...core,
         sites,
         emails,
-        analysis_status: parseString(row.analysis_status),
+        analysis_status: status,
         analysis_progress: progress,
         analysis_started_at: startedAt,
         analysis_finished_at: finishedAt,
@@ -486,6 +520,8 @@ export async function GET(request: NextRequest) {
         analysis_tnved: tnved,
         analysis_info: analysisInfo,
         analysis_pipeline: pipeline,
+        queued_at: queuedAt,
+        queued_by: queuedBy,
       };
     });
 
