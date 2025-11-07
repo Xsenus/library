@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { ChevronDown, ChevronUp, Filter, Loader2, Play } from 'lucide-react';
+import { ChevronDown, ChevronUp, Filter, Info, Loader2, Play } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -33,6 +33,8 @@ const statusOptions = [
 ];
 
 type PipelineStep = { label: string; status?: string | null };
+
+const QUEUE_STALE_MS = 10 * 60 * 1000;
 
 type AiCompany = {
   inn: string;
@@ -108,6 +110,13 @@ function formatDuration(ms: number | null | undefined): string {
   const seconds = totalSeconds % 60;
   const parts = [hours, minutes, seconds].map((n) => n.toString().padStart(2, '0'));
   return parts.join(':');
+}
+
+function truncateText(value: string | null | undefined, max = 120): string {
+  if (!value) return '';
+  const text = value.trim();
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
 function toStringArray(value: any): string[] {
@@ -188,7 +197,9 @@ function computeCompanyState(company: AiCompany): CompanyState {
     ? ['running', 'processing', 'in_progress', 'starting'].some((s) => status.includes(s))
     : false;
   const runningByProgress = progress != null && progress > 0 && progress < 0.999;
-  const running = runningByStatus || runningByProgress;
+  const runningByTimeline =
+    startedTs != null && (finishedTs == null || startedTs > finishedTs || Date.now() - startedTs < QUEUE_STALE_MS);
+  const running = runningByStatus || runningByProgress || runningByTimeline;
 
   const queuedByStatus = status
     ? ['queued', 'waiting', 'pending', 'scheduled'].some((s) => status.includes(s))
@@ -196,8 +207,10 @@ function computeCompanyState(company: AiCompany): CompanyState {
   const queuedByQueue = queuedTs != null && (!finishedTs || queuedTs > finishedTs);
   const queuedByTimeline =
     queuedTs != null && startedTs != null ? queuedTs >= startedTs && !finishedTs : false;
+  const queueFresh = queuedTs != null ? Date.now() - queuedTs < QUEUE_STALE_MS : false;
 
-  const queued = !running && (queuedByStatus || queuedByQueue || queuedByTimeline);
+  const queued =
+    !running && ((queuedByStatus && queueFresh) || (queueFresh && (queuedByQueue || queuedByTimeline)));
 
   return { running, queued };
 }
@@ -475,6 +488,22 @@ export default function AiCompanyAnalysisTab() {
     );
   }, []);
 
+  const clearQueued = useCallback((inns: string[]) => {
+    if (!inns.length) return;
+    const innSet = new Set(inns);
+    setCompanies((prev) =>
+      prev.map((company) => {
+        if (!innSet.has(company.inn)) return company;
+        const nextStatus = company.analysis_status === 'queued' ? null : company.analysis_status;
+        return {
+          ...company,
+          analysis_status: nextStatus,
+          queued_at: null,
+        };
+      }),
+    );
+  }, []);
+
   useEffect(() => {
     // remove selections that are not in dataset anymore
     setSelected((prev) => {
@@ -619,18 +648,36 @@ export default function AiCompanyAnalysisTab() {
   );
 
   const handleStop = useCallback(async () => {
+    const activeInns = companies
+      .filter((company) => {
+        const state = computeCompanyState(company);
+        return state.running || state.queued;
+      })
+      .map((company) => company.inn);
+
     setStopLoading(true);
     try {
       const res = await fetch('/api/ai-analysis/stop', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({}),
+        body: JSON.stringify({ inns: activeInns }),
       });
       if (!res.ok) throw new Error(`Request failed with ${res.status}`);
-      toast({ title: 'Отправлен сигнал остановки анализа' });
+      const data = (await res.json().catch(() => null)) as { removed?: number } | null;
+      const removed = typeof data?.removed === 'number' ? data.removed : null;
+      const description =
+        removed != null
+          ? `Из очереди снято: ${removed}`
+          : activeInns.length > 0
+          ? `Для ${activeInns.length} ${activeInns.length === 1 ? 'компании' : 'компаний'}`
+          : undefined;
+      toast({ title: 'Отправлен сигнал остановки анализа', description });
+      clearQueued(activeInns);
       setStopSignalAt(Date.now());
+      autoRefreshDeadlineRef.current = 0;
+      setAutoRefresh(false);
+      setAutoRefreshRemaining(null);
       fetchCompanies(page, pageSize);
-      scheduleAutoRefresh();
     } catch (error) {
       console.error('Failed to stop analysis', error);
       toast({
@@ -641,7 +688,7 @@ export default function AiCompanyAnalysisTab() {
     } finally {
       setStopLoading(false);
     }
-  }, [toast, fetchCompanies, page, pageSize, scheduleAutoRefresh]);
+  }, [companies, toast, clearQueued, fetchCompanies, page, pageSize]);
 
   const headerCheckedState = useMemo(() => {
     if (!companies.length) return false;
@@ -769,14 +816,19 @@ export default function AiCompanyAnalysisTab() {
                     value={okvedSelectValue}
                     onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
                   >
-                    <SelectTrigger className="h-9 min-w-[200px] text-sm">
+                    <SelectTrigger className="h-9 min-w-[220px] max-w-[360px] text-left text-sm">
                       <SelectValue placeholder="Все коды" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="__all__">Все коды</SelectItem>
                       {okvedOptions.map((item) => (
-                        <SelectItem key={item.id} value={item.okved_code}>
-                          {item.okved_code} — {item.okved_main}
+                        <SelectItem key={item.id} value={item.okved_code} title={item.okved_main}>
+                          <div className="flex flex-col gap-0.5">
+                            <span className="font-medium text-foreground">{item.okved_code}</span>
+                            <span className="text-xs text-muted-foreground whitespace-normal break-words">
+                              {truncateText(item.okved_main, 140)}
+                            </span>
+                          </div>
                         </SelectItem>
                       ))}
                     </SelectContent>
@@ -965,21 +1017,21 @@ export default function AiCompanyAnalysisTab() {
                   </div>
                 )}
                 <div className="overflow-hidden">
-                  <table className="w-full border-separate border-spacing-0 text-sm">
+                  <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
                     <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
                       <tr>
-                        <th className="w-10 px-3 py-3 align-middle">
+                        <th className="w-12 px-4 py-3 align-middle">
                           <Checkbox
                             checked={headerCheckedState}
                             onCheckedChange={(value) => toggleSelectAll(Boolean(value))}
                             aria-label="Выбрать все"
                           />
                         </th>
-                        <th className="px-3 py-3 text-left">Компания</th>
-                        <th className="px-3 py-3 text-left">Контакты</th>
-                        <th className="px-3 py-3 text-left">Запуски и статус</th>
-                        <th className="px-3 py-3 text-left">Пайплайн</th>
-                        <th className="px-3 py-3 text-right">Действия</th>
+                        <th className="w-[25%] px-4 py-3 text-left">Компания</th>
+                        <th className="w-[23%] px-4 py-3 text-left">Контакты</th>
+                        <th className="w-[24%] px-4 py-3 text-left">Запуски и статус</th>
+                        <th className="w-[20%] px-4 py-3 text-left">Пайплайн</th>
+                        <th className="w-[8%] px-4 py-3 text-right">Действия</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -1046,14 +1098,14 @@ export default function AiCompanyAnalysisTab() {
                               rowFinished && 'bg-destructive/5',
                             )}
                           >
-                            <td className="px-3 py-4 align-top">
+                            <td className="px-4 py-4 align-top">
                               <Checkbox
                                 checked={companySelected}
                                 onCheckedChange={(value) => setSelectedValue(company.inn, value)}
                                 aria-label={`Выбрать компанию ${company.short_name}`}
                               />
                             </td>
-                            <td className="px-3 py-4 align-top">
+                            <td className="px-4 py-4 align-top">
                               <div className="space-y-2">
                                 <div className={cn('text-sm font-semibold leading-tight', rowFinished && 'text-destructive')}>
                                   {company.short_name}
@@ -1077,7 +1129,7 @@ export default function AiCompanyAnalysisTab() {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-3 py-4 align-top text-xs">
+                            <td className="px-4 py-4 align-top text-xs">
                               <div className="space-y-4">
                                 <div>
                                   <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
@@ -1125,7 +1177,7 @@ export default function AiCompanyAnalysisTab() {
                                         >
                                           {isEmailExpanded
                                             ? 'Скрыть'
-                                            : `Показать ещё ${emails.length - displayEmails.length}`}
+                                            : `Показать все (${emails.length})`}
                                         </button>
                                       )}
                                     </div>
@@ -1135,7 +1187,7 @@ export default function AiCompanyAnalysisTab() {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-3 py-4 align-top text-xs">
+                            <td className="px-4 py-4 align-top text-xs">
                               <div className="space-y-3">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
@@ -1171,7 +1223,7 @@ export default function AiCompanyAnalysisTab() {
                                 )}
                               </div>
                             </td>
-                            <td className="px-3 py-4 align-top text-xs">
+                            <td className="px-4 py-4 align-top text-xs">
                               {state.running ? (
                                 <div className="space-y-2">
                                   <Progress value={progressPercent} className="h-2" />
@@ -1210,8 +1262,8 @@ export default function AiCompanyAnalysisTab() {
                                 <span className="text-muted-foreground">—</span>
                               )}
                             </td>
-                            <td className="px-3 py-4 align-top text-right">
-                              <div className="flex flex-col items-end gap-2">
+                            <td className="px-4 py-4 align-top text-right">
+                              <div className="flex items-center justify-end gap-2">
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Button
@@ -1231,14 +1283,21 @@ export default function AiCompanyAnalysisTab() {
                                   </TooltipTrigger>
                                   <TooltipContent side="bottom">{runTooltip}</TooltipContent>
                                 </Tooltip>
-                                <Button
-                                  type="button"
-                                  variant="ghost"
-                                  size="sm"
-                                  onClick={() => setInfoCompany(company)}
-                                >
-                                  Подробнее
-                                </Button>
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Button
+                                      type="button"
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-8 w-8"
+                                      onClick={() => setInfoCompany(company)}
+                                      aria-label={`Подробности по компании ${company.short_name}`}
+                                    >
+                                      <Info className="h-4 w-4" />
+                                    </Button>
+                                  </TooltipTrigger>
+                                  <TooltipContent side="bottom">Подробнее</TooltipContent>
+                                </Tooltip>
                               </div>
                             </td>
                           </tr>

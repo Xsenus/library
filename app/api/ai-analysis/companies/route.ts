@@ -92,6 +92,7 @@ const COL_CACHE_TTL_MS = 5 * 60 * 1000;
 
 let cachedQueueCheck: { available: boolean; ts: number } | null = null;
 const QUEUE_CACHE_TTL_MS = 5 * 60 * 1000;
+const QUEUE_STALE_MS = 10 * 60 * 1000;
 
 async function isQueueTableAvailable(): Promise<boolean> {
   const now = Date.now();
@@ -452,7 +453,9 @@ export async function GET(request: NextRequest) {
       const runningStatus = ['run', 'process', 'progress', 'start'].some((token) =>
         statusLower.includes(token),
       );
-      const shouldForceQueued = queueAvailable && queuedAt && (!finishedAt || queuedAt > finishedAt) && !runningStatus;
+      const queueFresh = queuedAt ? Date.now() - Date.parse(queuedAt) < QUEUE_STALE_MS : false;
+      const shouldForceQueued =
+        queueAvailable && queuedAt && queueFresh && (!finishedAt || queuedAt > finishedAt) && !runningStatus;
       const status = shouldForceQueued ? 'queued' : rawStatus;
 
       const matchLevel =
