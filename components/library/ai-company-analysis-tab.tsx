@@ -1,6 +1,6 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Play } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useToast } from '@/hooks/use-toast';
@@ -208,6 +208,8 @@ export default function AiCompanyAnalysisTab() {
   const [bulkLoading, setBulkLoading] = useState(false);
   const [runInn, setRunInn] = useState<string | null>(null);
   const [stopLoading, setStopLoading] = useState(false);
+  const [autoRefresh, setAutoRefresh] = useState(false);
+  const autoRefreshDeadlineRef = useRef<number>(0);
 
   const debouncedSearch = useDebounce(search, 400);
   const { toast } = useToast();
@@ -254,6 +256,11 @@ export default function AiCompanyAnalysisTab() {
   useEffect(() => {
     fetchCompanies(page, pageSize);
   }, [fetchCompanies, page, pageSize]);
+
+  const scheduleAutoRefresh = useCallback(() => {
+    autoRefreshDeadlineRef.current = Date.now() + 2 * 60 * 1000;
+    setAutoRefresh(true);
+  }, []);
 
   useEffect(() => {
     setPage(1);
@@ -326,6 +333,28 @@ export default function AiCompanyAnalysisTab() {
     });
   }, [companies]);
 
+  useEffect(() => {
+    if (!autoRefresh && !isAnyRunning) return;
+    const interval = setInterval(() => {
+      if (loading) return;
+      fetchCompanies(page, pageSize);
+      if (autoRefreshDeadlineRef.current && Date.now() > autoRefreshDeadlineRef.current) {
+        autoRefreshDeadlineRef.current = 0;
+        setAutoRefresh(false);
+      }
+      if (!isAnyRunning && autoRefreshDeadlineRef.current === 0) {
+        setAutoRefresh(false);
+      }
+    }, 8000);
+    return () => clearInterval(interval);
+  }, [autoRefresh, isAnyRunning, fetchCompanies, page, pageSize, loading]);
+
+  useEffect(() => {
+    if (!isAnyRunning && autoRefreshDeadlineRef.current === 0) {
+      setAutoRefresh(false);
+    }
+  }, [isAnyRunning]);
+
   const handleRunSelected = useCallback(async () => {
     const inns = Array.from(selected);
     if (!inns.length) return;
@@ -339,6 +368,8 @@ export default function AiCompanyAnalysisTab() {
       if (!res.ok) throw new Error(`Request failed with ${res.status}`);
       toast({ title: 'Запуск анализа', description: `Компаний в очереди: ${inns.length}` });
       fetchCompanies(page, pageSize);
+      scheduleAutoRefresh();
+      setSelected(new Set<string>());
     } catch (error) {
       console.error('Failed to start analysis for selected companies:', error);
       toast({
@@ -349,7 +380,7 @@ export default function AiCompanyAnalysisTab() {
     } finally {
       setBulkLoading(false);
     }
-  }, [selected, toast, fetchCompanies, page, pageSize]);
+  }, [selected, toast, fetchCompanies, page, pageSize, scheduleAutoRefresh]);
 
   const handleRunSingle = useCallback(
     async (inn: string) => {
@@ -363,6 +394,7 @@ export default function AiCompanyAnalysisTab() {
         if (!res.ok) throw new Error(`Request failed with ${res.status}`);
         toast({ title: 'Анализ поставлен в очередь', description: `Компания ${inn}` });
         fetchCompanies(page, pageSize);
+        scheduleAutoRefresh();
       } catch (error) {
         console.error('Failed to run analysis', error);
         toast({
@@ -374,7 +406,7 @@ export default function AiCompanyAnalysisTab() {
         setRunInn(null);
       }
     },
-    [toast, fetchCompanies, page, pageSize],
+    [toast, fetchCompanies, page, pageSize, scheduleAutoRefresh],
   );
 
   const handleStop = useCallback(async () => {
@@ -387,6 +419,8 @@ export default function AiCompanyAnalysisTab() {
       });
       if (!res.ok) throw new Error(`Request failed with ${res.status}`);
       toast({ title: 'Отправлен сигнал остановки анализа' });
+      fetchCompanies(page, pageSize);
+      scheduleAutoRefresh();
     } catch (error) {
       console.error('Failed to stop analysis', error);
       toast({
@@ -397,7 +431,7 @@ export default function AiCompanyAnalysisTab() {
     } finally {
       setStopLoading(false);
     }
-  }, [toast]);
+  }, [toast, fetchCompanies, page, pageSize, scheduleAutoRefresh]);
 
   const headerCheckedState = useMemo(() => {
     if (!companies.length) return false;
@@ -526,12 +560,14 @@ export default function AiCompanyAnalysisTab() {
         <CardContent className="space-y-3 p-3">
           <div className="flex flex-wrap items-center gap-2">
             <Button
+              type="button"
               className="h-9"
               onClick={handleRunSelected}
               disabled={bulkLoading || selected.size === 0}>
               {bulkLoading ? 'Запуск…' : 'ЗАПУСК АНАЛИЗА ДЛЯ ВЫБРАННЫХ КОМПАНИЙ'}
             </Button>
             <Button
+              type="button"
               className="h-9"
               variant="destructive"
               onClick={handleStop}
@@ -679,6 +715,7 @@ export default function AiCompanyAnalysisTab() {
                             </div>
                           ) : (
                             <Button
+                              type="button"
                               variant="outline"
                               size="icon"
                               className="h-8 w-8"
@@ -690,6 +727,7 @@ export default function AiCompanyAnalysisTab() {
                         </td>
                         <td className="px-2 py-2 text-center">
                           <Button
+                            type="button"
                             variant="ghost"
                             size="sm"
                             onClick={() => setInfoCompany(company)}>
@@ -723,6 +761,7 @@ export default function AiCompanyAnalysisTab() {
             </div>
             <div className="flex items-center gap-2 text-xs text-muted-foreground">
               <Button
+                type="button"
                 variant="outline"
                 size="sm"
                 onClick={() => setPage((prev) => Math.max(1, prev - 1))}
@@ -733,6 +772,7 @@ export default function AiCompanyAnalysisTab() {
                 Страница {page} / {totalPages}
               </span>
               <Button
+                type="button"
                 variant="outline"
                 size="sm"
                 onClick={() => setPage((prev) => Math.min(totalPages, prev + 1))}
