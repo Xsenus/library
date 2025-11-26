@@ -1,4 +1,6 @@
+import { randomUUID } from 'crypto';
 import { NextRequest, NextResponse } from 'next/server';
+import { logAiDebugEvent } from '@/lib/ai-debug';
 import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
@@ -67,6 +69,24 @@ function uniqById<T extends { id: number }>(rows: T[]): T[] {
 
 function hasAny(p: Payload) {
   return (p.goods?.length ?? 0) + (p.equipment?.length ?? 0) + (p.prodclasses?.length ?? 0) > 0;
+}
+
+function previewPayload(value: any, max = 1800): string | undefined {
+  try {
+    const raw = typeof value === 'string' ? value : JSON.stringify(value);
+    if (!raw) return undefined;
+    return raw.length > max ? `${raw.slice(0, max)}…` : raw;
+  } catch {
+    return undefined;
+  }
+}
+
+async function safeLog(entry: Parameters<typeof logAiDebugEvent>[0]) {
+  try {
+    await logAiDebugEvent(entry);
+  } catch (error) {
+    console.warn('AI debug log skipped', error);
+  }
 }
 
 /* ---------- normalizers ---------- */
@@ -326,8 +346,16 @@ function toVectorLiteral(vec: number[]) {
   return `[${vec.join(',')}]`;
 }
 
-async function embedQuery(text: string, signal: AbortSignal): Promise<string> {
+async function embedQuery(text: string, signal: AbortSignal, requestId?: string): Promise<string> {
   if (!OPENAI_API_KEY) throw new Error('OPENAI_API_KEY is not set');
+  await safeLog({
+    type: 'request',
+    source: 'openai',
+    direction: 'request',
+    requestId,
+    message: 'Запрос embeddings в OpenAI',
+    payload: { text: previewPayload(text, 1000) },
+  });
   const r = await fetch('https://api.openai.com/v1/embeddings', {
     method: 'POST',
     headers: { Authorization: `Bearer ${OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
@@ -336,11 +364,26 @@ async function embedQuery(text: string, signal: AbortSignal): Promise<string> {
   });
   if (!r.ok) {
     const msg = await r.text().catch(() => '');
+    await safeLog({
+      type: 'error',
+      source: 'openai',
+      requestId,
+      message: `Ошибка OpenAI ${r.status}`,
+      payload: { response: previewPayload(msg) },
+    });
     throw new Error(`OpenAI ${r.status}: ${msg.slice(0, 300)}`);
   }
   const j = await r.json();
   const arr: number[] = j?.data?.[0]?.embedding;
   if (!Array.isArray(arr) || !arr.length) throw new Error('Bad embedding response');
+  await safeLog({
+    type: 'response',
+    source: 'openai',
+    direction: 'response',
+    requestId,
+    message: 'Ответ OpenAI embeddings',
+    payload: { dimensions: arr.length },
+  });
   return toVectorLiteral(arr);
 }
 
@@ -375,18 +418,41 @@ async function queryByIds(ids: {
   return pack(g.rows, e.rows, p.rows);
 }
 
-async function callUpstream(q: string, signal: AbortSignal): Promise<Payload> {
+async function callUpstream(q: string, signal: AbortSignal, requestId?: string): Promise<Payload> {
+  await safeLog({
+    type: 'request',
+    source: 'parser',
+    direction: 'request',
+    requestId,
+    message: 'Запрос к серверу AI-поиска',
+    payload: { q },
+  });
   const r = await fetch(BASE, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ q }),
     signal,
   });
+  const text = await r.text();
   if (!r.ok) {
-    const msg = await r.text().catch(() => '');
-    throw new Error(`Upstream ${r.status}: ${msg.slice(0, 400)}`);
+    await safeLog({
+      type: 'error',
+      source: 'parser',
+      requestId,
+      message: `Ошибка сервера AI-поиска ${r.status}`,
+      payload: { response: previewPayload(text) },
+    });
+    throw new Error(`Upstream ${r.status}: ${text.slice(0, 400)}`);
   }
-  const raw = await r.json();
+  await safeLog({
+    type: 'response',
+    source: 'parser',
+    direction: 'response',
+    requestId,
+    message: 'Ответ сервера AI-поиска',
+    payload: { response: previewPayload(text) },
+  });
+  const raw = text ? JSON.parse(text) : {};
 
   // vector
   const vec = raw?.embedding ?? raw?.vector;
@@ -416,17 +482,26 @@ async function callUpstream(q: string, signal: AbortSignal): Promise<Payload> {
 export async function POST(req: NextRequest) {
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), AI_TIMEOUT_MS);
+  const requestId = randomUUID();
 
   try {
     const { q } = await req.json().catch(() => ({}));
     const query = String(q ?? '').trim();
     if (!query) return NextResponse.json({ goods: [], equipment: [], prodclasses: [] });
 
+    await safeLog({
+      type: 'request',
+      source: 'parser',
+      requestId,
+      message: 'Запрос AI-поиска от пользователя',
+      payload: { text: previewPayload(query, 1200) },
+    });
+
     const firstDb = await queryDbFast(query);
 
     let finalPayload: Payload | null = null;
     try {
-      const aiFromUpstream = await callUpstream(query, ctrl.signal);
+      const aiFromUpstream = await callUpstream(query, ctrl.signal, requestId);
       const dedup = {
         goods: uniqById([...(firstDb.goods ?? []), ...(aiFromUpstream.goods ?? [])]),
         equipment: uniqById([...(firstDb.equipment ?? []), ...(aiFromUpstream.equipment ?? [])]),
@@ -442,7 +517,7 @@ export async function POST(req: NextRequest) {
 
     if (!finalPayload) {
       try {
-        const vec = await embedQuery(query, ctrl.signal);
+        const vec = await embedQuery(query, ctrl.signal, requestId);
         const fromVector = await queryDbVector(vec);
         finalPayload = {
           goods: uniqById([...(firstDb.goods ?? []), ...(fromVector.goods ?? [])]),
@@ -462,9 +537,27 @@ export async function POST(req: NextRequest) {
       finalPayload.goods = await enrichGoodsWithTargets(finalPayload.goods);
     }
 
+    await safeLog({
+      type: 'response',
+      source: 'parser',
+      requestId,
+      message: 'Ответ пользователю AI-поиска',
+      payload: {
+        goods: finalPayload.goods?.length ?? 0,
+        equipment: finalPayload.equipment?.length ?? 0,
+        prodclasses: finalPayload.prodclasses?.length ?? 0,
+      },
+    });
+
     return NextResponse.json(finalPayload);
   } catch (err: any) {
     const aborted = err?.name === 'AbortError';
+    await safeLog({
+      type: 'error',
+      source: 'parser',
+      requestId,
+      message: aborted ? 'Таймаут AI-поиска' : `Ошибка AI-поиска: ${err?.message ?? err}`,
+    });
     return NextResponse.json(
       { error: aborted ? 'Timeout while processing' : String(err?.message ?? err) },
       { status: 500 },

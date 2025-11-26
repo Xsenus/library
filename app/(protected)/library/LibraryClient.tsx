@@ -37,6 +37,7 @@ import {
 } from '@/components/ui/select';
 import AiSearchTab from '@/components/library/ai-search-tab';
 import AiCompanyAnalysisTab from '@/components/library/ai-company-analysis-tab';
+import AiDebugTab from '@/components/library/ai-debug-tab';
 import SquareImgButton from '@/components/library/square-img-button';
 
 interface ListState<T> {
@@ -59,10 +60,11 @@ export default function LibraryPage() {
     | 'cleanscore'
     | 'okved'
     | 'aisearch'
-    | 'aianalysis';
+    | 'aianalysis'
+    | 'aidebug';
 
-  const [tab, setTab] = useState<'library' | 'cleanscore' | 'okved' | 'aisearch' | 'aianalysis'>(
-    initialTab === 'cleanscore' || initialTab === 'okved' || initialTab === 'aianalysis'
+  const [tab, setTab] = useState<'library' | 'cleanscore' | 'okved' | 'aisearch' | 'aianalysis' | 'aidebug'>(
+    initialTab === 'cleanscore' || initialTab === 'okved' || initialTab === 'aianalysis' || initialTab === 'aidebug'
       ? 'library'
       : initialTab,
   );
@@ -110,9 +112,14 @@ export default function LibraryPage() {
       | 'cleanscore'
       | 'okved'
       | 'aisearch'
-      | 'aianalysis';
+      | 'aianalysis'
+      | 'aidebug';
 
-    setTab(!isWorker && (tSafe === 'cleanscore' || tSafe === 'okved' || tSafe === 'aianalysis') ? 'library' : tSafe);
+    setTab(
+      !isWorker && (tSafe === 'cleanscore' || tSafe === 'okved' || tSafe === 'aianalysis' || tSafe === 'aidebug')
+        ? 'library'
+        : tSafe,
+    );
   }, [searchParams, isWorker]);
 
   // Logout
@@ -669,7 +676,7 @@ export default function LibraryPage() {
   }, [autoSelectEquipment, equipmentState.loading, equipmentState.items]); // eslint-disable-line
 
   useEffect(() => {
-    if (!isWorker && (tab === 'cleanscore' || tab === 'okved' || tab === 'aianalysis')) {
+    if (!isWorker && (tab === 'cleanscore' || tab === 'okved' || tab === 'aianalysis' || tab === 'aidebug')) {
       setTab('library');
     }
   }, [isWorker, tab]);
@@ -907,14 +914,14 @@ export default function LibraryPage() {
           <Tabs
             value={tab}
             onValueChange={(v) => {
-              if ((v === 'cleanscore' || v === 'okved' || v === 'aianalysis') && !isWorker) return;
+              if ((v === 'cleanscore' || v === 'okved' || v === 'aianalysis' || v === 'aidebug') && !isWorker) return;
               setTab(v as any);
               const qp = new URLSearchParams(searchParams);
               qp.set('tab', v);
               router.replace(`/library?${qp.toString()}`);
             }}
             className="w-full">
-            <div className="grid w-full grid-cols-5 gap-1 rounded-lg bg-muted p-1">
+            <div className="grid w-full grid-cols-6 gap-1 rounded-lg bg-muted p-1">
               <TabsList className="contents">
                 <TabsTrigger
                   value="library"
@@ -972,6 +979,22 @@ export default function LibraryPage() {
                   "
                 >
                   AI-анализ компаний
+                </TabsTrigger>
+
+                <TabsTrigger
+                  value="aidebug"
+                  disabled={!isWorker}
+                  title={!isWorker ? 'Доступно только сотрудникам' : undefined}
+                  className="
+                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    border border-transparent
+                    data-[state=active]:bg-background data-[state=active]:border-border
+                    data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
+                    disabled:opacity-50 disabled:cursor-not-allowed
+                    shadow-none transition
+                  "
+                >
+                  AI-отладка
                 </TabsTrigger>
 
                 <TabsTrigger
@@ -1475,6 +1498,14 @@ export default function LibraryPage() {
             {isWorker && (
               <TabsContent value="aianalysis" className="mt-0">
                 <AiCompanyAnalysisTab />
+              </TabsContent>
+            )}
+
+            {isWorker && (
+              <TabsContent value="aidebug" className="mt-0">
+                <div className="py-4">
+                  <AiDebugTab />
+                </div>
               </TabsContent>
             )}
 
