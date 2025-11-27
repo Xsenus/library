@@ -1556,6 +1556,126 @@ export default function AiCompanyAnalysisTab() {
             </DialogHeader>
             {infoCompany && (
               <div className="space-y-4 text-sm">
+                {(() => {
+                  const status = getStatusBadge(infoCompany);
+                  const steps = toPipelineSteps(infoCompany.analysis_pipeline);
+                  const state = computeCompanyState(infoCompany);
+                  const progressPercent = Math.min(
+                    100,
+                    Math.max(0, Math.round((infoCompany.analysis_progress ?? 0) * 100)),
+                  );
+                  const startedDate = formatDate(infoCompany.analysis_started_at ?? null);
+                  const startedTime = formatTime(infoCompany.analysis_started_at ?? null);
+                  const startedAt =
+                    startedDate !== '—'
+                      ? startedTime !== '—'
+                        ? `${startedDate} · ${startedTime}`
+                        : startedDate
+                      : '—';
+                  const finishedDate = formatDate(infoCompany.analysis_finished_at ?? null);
+                  const finishedTime = formatTime(infoCompany.analysis_finished_at ?? null);
+                  const finishedAt =
+                    finishedDate !== '—'
+                      ? finishedTime !== '—'
+                        ? `${finishedDate} · ${finishedTime}`
+                        : finishedDate
+                      : '—';
+                  const queuedDate = formatDate(infoCompany.queued_at ?? null);
+                  const queuedTime = formatTime(infoCompany.queued_at ?? null);
+                  const queuedAt =
+                    queuedDate !== '—'
+                      ? queuedTime !== '—'
+                        ? `${queuedDate} · ${queuedTime}`
+                        : queuedDate
+                      : '—';
+                  const duration = state.running
+                    ? '—'
+                    : formatDuration(infoCompany.analysis_duration_ms ?? null);
+                  const attempts =
+                    infoCompany.analysis_attempts != null ? infoCompany.analysis_attempts : undefined;
+                  const score =
+                    infoCompany.analysis_score != null && Number.isFinite(infoCompany.analysis_score)
+                      ? infoCompany.analysis_score.toFixed(2)
+                      : undefined;
+
+                  return (
+                    <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={status.variant}>{status.label}</Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {state.running
+                            ? 'Анализ выполняется прямо сейчас'
+                            : infoCompany.analysis_finished_at || infoCompany.analysis_started_at
+                            ? 'Последний запуск завершён или в ожидании завершения'
+                            : 'Анализ ещё не запускался'}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-3">
+                        <div>
+                          <div className="uppercase">Поставлено в очередь</div>
+                          <div className="text-foreground">{queuedAt}</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Начало</div>
+                          <div className="text-foreground">{startedAt}</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Завершение</div>
+                          <div className="text-foreground">{finishedAt}</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Попыток</div>
+                          <div className="text-foreground">{attempts ?? '—'}</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Прогресс</div>
+                          <div className="text-foreground">{progressPercent}%</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Оценка</div>
+                          <div className="text-foreground">{score ?? '—'}</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Длительность</div>
+                          <div className="text-foreground">{duration}</div>
+                        </div>
+                        {infoCompany.queued_by && (
+                          <div>
+                            <div className="uppercase">Поставил в очередь</div>
+                            <div className="text-foreground">{infoCompany.queued_by}</div>
+                          </div>
+                        )}
+                      </div>
+
+                      {state.running && (
+                        <div className="space-y-1">
+                          <Progress value={progressPercent} className="h-2" />
+                          <div className="text-[11px] text-muted-foreground">
+                            Выполняется… {progressPercent}%
+                          </div>
+                        </div>
+                      )}
+
+                      {steps.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground">Последний пайплайн</div>
+                          <ol className="list-decimal space-y-1 pl-4 text-[13px] text-foreground">
+                            {steps.map((step, idx) => (
+                              <li key={`${infoCompany.inn}-dlg-step-${idx}`}>
+                                {step.label}
+                                {step.status ? (
+                                  <span className="text-muted-foreground"> · {step.status}</span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>

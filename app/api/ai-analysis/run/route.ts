@@ -52,6 +52,23 @@ async function removeFromQueue(inns: string[]) {
   await dbBitrix.query('DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[])', [inns]);
 }
 
+async function getCompanyNames(inns: string[]): Promise<Map<string, string>> {
+  if (!inns.length) return new Map();
+  const placeholders = inns.map((_, idx) => `$${idx + 1}`).join(', ');
+  const { rows } = await dbBitrix.query<{ inn: string; short_name: string }>(
+    `SELECT inn, short_name FROM dadata_result WHERE inn IN (${placeholders})`,
+    inns,
+  );
+
+  const map = new Map<string, string>();
+  for (const row of rows ?? []) {
+    if (row?.inn) {
+      map.set(row.inn, row.short_name ?? '');
+    }
+  }
+  return map;
+}
+
 type StepKey = 'lookup' | 'parse_site' | 'analyze_json' | 'ib_match' | 'equipment_selection';
 
 type StepAttempt = {
@@ -244,8 +261,18 @@ export async function POST(request: NextRequest) {
     await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload)]);
     const integrationResults: Array<{ inn: string; ok: boolean; status: number; error?: string }> = [];
     const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
+    const companyNames = await getCompanyNames(inns);
 
     for (const inn of inns) {
+      const companyName = companyNames.get(inn);
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        companyName,
+        notificationKey: 'analysis_start',
+      });
+
       if (mode === 'steps' && steps) {
         const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
         for (const step of steps) {
@@ -256,9 +283,7 @@ export async function POST(request: NextRequest) {
         const ok = stepResults.every((s) => s.ok);
         const lastStatus = stepResults.length ? stepResults[stepResults.length - 1]?.status : 0;
         const firstError = stepResults.find((s) => !s.ok)?.error;
-        if (!ok) {
-          await removeFromQueue([inn]);
-        }
+        await removeFromQueue([inn]);
         integrationResults.push({ inn, ok, status: lastStatus ?? 0, error: firstError });
       } else {
         const requestId = aiRequestId();
@@ -278,6 +303,7 @@ export async function POST(request: NextRequest) {
 
         if (res.ok) {
           integrationResults.push({ inn, ok: true, status: res.status });
+          await removeFromQueue([inn]);
           await safeLog({
             type: 'response',
             source: 'ai-integration',
