@@ -33,6 +33,16 @@ const statusOptions = [
   { key: 'no_valid_site', label: 'Не было доступных доменов', field: 'no_valid_site' as const },
 ];
 
+type StepKey = 'lookup' | 'parse_site' | 'analyze_json' | 'ib_match' | 'equipment_selection';
+
+const stepOptions: { key: StepKey; label: string }[] = [
+  { key: 'lookup', label: 'Lookup' },
+  { key: 'parse_site', label: 'Парсинг' },
+  { key: 'analyze_json', label: 'AI-анализ' },
+  { key: 'ib_match', label: 'Продклассы' },
+  { key: 'equipment_selection', label: 'Оборудование' },
+];
+
 type PipelineStep = { label: string; status?: string | null };
 
 const QUEUE_STALE_MS = 10 * 60 * 1000;
@@ -272,6 +282,10 @@ export default function AiCompanyAnalysisTab() {
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [stopSignalAt, setStopSignalAt] = useState<number | null>(null);
+  const [launchMode, setLaunchMode] = useState<'full' | 'steps'>('full');
+  const [stepFlags, setStepFlags] = useState<Record<StepKey, boolean>>(() =>
+    stepOptions.reduce((acc, opt) => ({ ...acc, [opt.key]: true }), {} as Record<StepKey, boolean>),
+  );
 
   const debouncedSearch = useDebounce(search, 400);
   const { toast } = useToast();
@@ -313,6 +327,16 @@ export default function AiCompanyAnalysisTab() {
     const seconds = totalSeconds % 60;
     return `Автообновление · ${minutes}:${seconds.toString().padStart(2, '0')}`;
   }, [autoRefreshRemaining]);
+
+  const selectedSteps = useMemo(
+    () => stepOptions.filter((opt) => stepFlags[opt.key]).map((opt) => opt.key),
+    [stepFlags],
+  );
+
+  const stepLabelMap = useMemo(
+    () => stepOptions.reduce((acc, opt) => ({ ...acc, [opt.key]: opt.label }), {} as Record<StepKey, string>),
+    [],
+  );
 
   const fetchCompanies = useCallback(
     async (pageParam: number, pageSizeParam: number) => {
@@ -467,6 +491,15 @@ export default function AiCompanyAnalysisTab() {
     });
   }, [companies]);
 
+  const toggleStepFlag = useCallback((key: StepKey) => {
+    setStepFlags((prev) => {
+      const enabled = Object.values(prev).filter(Boolean).length;
+      const nextValue = !prev[key];
+      if (!nextValue && enabled <= 1) return prev; // хотя бы один шаг должен остаться включенным
+      return { ...prev, [key]: nextValue };
+    });
+  }, []);
+
   const toggleEmailExpansion = useCallback((inn: string) => {
     setExpandedEmails((prev) => {
       const next = new Set(prev);
@@ -613,7 +646,7 @@ export default function AiCompanyAnalysisTab() {
       const res = await fetch('/api/ai-analysis/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inns }),
+        body: JSON.stringify({ inns, mode: launchMode, steps: launchMode === 'steps' ? selectedSteps : undefined }),
       });
       const data = (await res.json().catch(() => null)) as { integration?: any } | null;
       if (!res.ok) throw new Error(`Request failed with ${res.status}`);
@@ -639,7 +672,18 @@ export default function AiCompanyAnalysisTab() {
     } finally {
       setBulkLoading(false);
     }
-  }, [selected, toast, fetchCompanies, page, pageSize, scheduleAutoRefresh, markQueued, integrationSummaryText]);
+  }, [
+    selected,
+    toast,
+    fetchCompanies,
+    page,
+    pageSize,
+    scheduleAutoRefresh,
+    markQueued,
+    integrationSummaryText,
+    launchMode,
+    selectedSteps,
+  ]);
 
   const handleRunSingle = useCallback(
     async (inn: string) => {
@@ -648,7 +692,11 @@ export default function AiCompanyAnalysisTab() {
         const res = await fetch('/api/ai-analysis/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ inns: [inn] }),
+          body: JSON.stringify({
+            inns: [inn],
+            mode: launchMode,
+            steps: launchMode === 'steps' ? selectedSteps : undefined,
+          }),
         });
         const data = (await res.json().catch(() => null)) as { integration?: any } | null;
         if (!res.ok) throw new Error(`Request failed with ${res.status}`);
@@ -671,7 +719,17 @@ export default function AiCompanyAnalysisTab() {
         setRunInn(null);
       }
     },
-    [toast, fetchCompanies, page, pageSize, scheduleAutoRefresh, markQueued, integrationSummaryText],
+    [
+      toast,
+      fetchCompanies,
+      page,
+      pageSize,
+      scheduleAutoRefresh,
+      markQueued,
+      integrationSummaryText,
+      launchMode,
+      selectedSteps,
+    ],
   );
 
   const handleStop = useCallback(async () => {
@@ -769,6 +827,7 @@ export default function AiCompanyAnalysisTab() {
     const succeeded = Number(summary.succeeded ?? 0);
     const failedCount = Array.isArray(summary.failed) ? summary.failed.length : 0;
     const base = typeof summary.base === 'string' ? summary.base : null;
+    const stepsRaw = Array.isArray(summary.steps) ? (summary.steps as StepKey[]) : [];
 
     const parts: string[] = [];
     if (base) {
@@ -783,8 +842,19 @@ export default function AiCompanyAnalysisTab() {
       if (failedCount > 0) parts.push(`ошибки: ${failedCount}`);
     }
 
+    const modeLabel = summary.mode === 'steps' ? 'режим: по шагам' : 'режим: единый запрос';
+    parts.push(modeLabel);
+
+    if (stepsRaw.length) {
+      const stepNames = stepsRaw
+        .map((key) => stepLabelMap[key] || key)
+        .filter(Boolean)
+        .join(' → ');
+      if (stepNames.length) parts.push(`шаги: ${stepNames}`);
+    }
+
     return parts.length ? parts.join(' · ') : null;
-  }, []);
+  }, [stepLabelMap]);
 
   return (
     <TooltipProvider>
@@ -989,6 +1059,31 @@ export default function AiCompanyAnalysisTab() {
                   </Badge>
                 )}
               </div>
+            </div>
+            <div className="flex flex-col gap-2 rounded-lg border bg-background/60 p-3">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span className="font-medium">Режим запуска</span>
+                <Select value={launchMode} onValueChange={(value) => setLaunchMode(value as 'full' | 'steps')}>
+                  <SelectTrigger className="h-9 w-[220px] text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="full">Один вызов: /v1/pipeline/full</SelectItem>
+                    <SelectItem value="steps">По шагам: lookup → parse → analyze…</SelectItem>
+                  </SelectContent>
+                </Select>
+              </div>
+              {launchMode === 'steps' && (
+                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  <span className="text-foreground">Выберите шаги (выполняются по порядку):</span>
+                  {stepOptions.map((opt) => (
+                    <label key={opt.key} className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
+                      <Checkbox checked={stepFlags[opt.key]} onCheckedChange={() => toggleStepFlag(opt.key)} />
+                      <span className="text-foreground">{opt.label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
             {statusFilters.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 text-xs">

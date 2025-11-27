@@ -46,6 +46,37 @@ function normalizeInns(raw: any): string[] {
   );
 }
 
+type StepKey = 'lookup' | 'parse_site' | 'analyze_json' | 'ib_match' | 'equipment_selection';
+
+const STEP_DEFINITIONS: Record<StepKey, { path: string; label: string }> = {
+  lookup: { path: '/v1/lookup/card', label: 'Карта компании (lookup)' },
+  parse_site: { path: '/v1/parse-site', label: 'Парсинг сайта' },
+  analyze_json: { path: '/v1/analyze-json', label: 'AI-анализ' },
+  ib_match: { path: '/v1/ib-match', label: 'Сопоставление продклассов' },
+  equipment_selection: { path: '/v1/equipment-selection', label: 'Подбор оборудования' },
+};
+
+const DEFAULT_STEPS: StepKey[] = ['lookup', 'parse_site', 'analyze_json', 'ib_match', 'equipment_selection'];
+
+function normalizeSteps(raw: unknown): StepKey[] {
+  if (!Array.isArray(raw)) return DEFAULT_STEPS;
+
+  const seen = new Set<StepKey>();
+  const ordered: StepKey[] = [];
+
+  for (const item of raw) {
+    const key = String(item || '')
+      .toLowerCase()
+      .replace(/[-\s]+/g, '_') as StepKey;
+    if (key in STEP_DEFINITIONS && !seen.has(key)) {
+      seen.add(key);
+      ordered.push(key);
+    }
+  }
+
+  return ordered.length ? ordered : DEFAULT_STEPS;
+}
+
 async function safeLog(entry: Parameters<typeof logAiDebugEvent>[0]) {
   try {
     await logAiDebugEvent(entry);
@@ -54,17 +85,63 @@ async function safeLog(entry: Parameters<typeof logAiDebugEvent>[0]) {
   }
 }
 
+async function runStep(inn: string, step: StepKey) {
+  const definition = STEP_DEFINITIONS[step];
+  const requestId = aiRequestId();
+
+  await safeLog({
+    type: 'request',
+    source: 'ai-integration',
+    requestId,
+    companyId: inn,
+    message: `Старт шага: ${definition.label}`,
+    payload: { path: definition.path, body: { inn } },
+  });
+
+  const res = await callAiIntegration(definition.path, {
+    method: 'POST',
+    body: JSON.stringify({ inn }),
+  });
+
+  if (res.ok) {
+    await safeLog({
+      type: 'response',
+      source: 'ai-integration',
+      requestId,
+      companyId: inn,
+      message: `Шаг успешно принят: ${definition.label}`,
+      payload: res.data,
+    });
+  } else {
+    await safeLog({
+      type: 'error',
+      source: 'ai-integration',
+      requestId,
+      companyId: inn,
+      message: `Ошибка шага ${definition.label}: ${res.error}`,
+      payload: { status: res.status },
+    });
+  }
+
+  return { step, ok: res.ok, status: res.status, error: res.ok ? undefined : res.error };
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => null)) as {
       inns?: unknown;
       payload?: unknown;
+      mode?: unknown;
+      steps?: unknown;
     } | null;
 
     const inns = normalizeInns(body?.inns);
     if (!inns.length) {
       return NextResponse.json({ ok: false, error: 'Нет компаний для запуска' }, { status: 400 });
     }
+
+    const mode: 'full' | 'steps' = body?.mode === 'steps' ? 'steps' : 'full';
+    const steps = mode === 'steps' ? normalizeSteps(body?.steps) : null;
 
     const payloadRaw =
       body?.payload && typeof body.payload === 'object' && body.payload !== null
@@ -104,51 +181,68 @@ export async function POST(request: NextRequest) {
 
     const integrationBase = getAiIntegrationBase();
     const integrationResults: Array<{ inn: string; ok: boolean; status: number; error?: string }> = [];
+    const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
 
     for (const inn of inns) {
-      const requestId = aiRequestId();
-      await safeLog({
-        type: 'request',
-        source: 'ai-integration',
-        requestId,
-        companyId: inn,
-        message: 'Пуск пайплайна через /v1/pipeline/full',
-        payload: { path: '/v1/pipeline/full', body: { inn } },
-      });
-
-      const res = await callAiIntegration(`/v1/pipeline/full`, {
-        method: 'POST',
-        body: JSON.stringify({ inn }),
-      });
-
-      if (res.ok) {
-        integrationResults.push({ inn, ok: true, status: res.status });
-        await safeLog({
-          type: 'response',
-          source: 'ai-integration',
-          requestId,
-          companyId: inn,
-          message: 'Пайплайн принят внешним сервисом',
-          payload: res.data,
-        });
+      if (mode === 'steps' && steps) {
+        const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
+        for (const step of steps) {
+          const res = await runStep(inn, step);
+          stepResults.push(res);
+        }
+        perStep.push({ inn, results: stepResults });
+        const ok = stepResults.every((s) => s.ok);
+        const lastStatus = stepResults.length ? stepResults[stepResults.length - 1]?.status : 0;
+        const firstError = stepResults.find((s) => !s.ok)?.error;
+        integrationResults.push({ inn, ok, status: lastStatus ?? 0, error: firstError });
       } else {
-        integrationResults.push({ inn, ok: false, status: res.status, error: res.error });
+        const requestId = aiRequestId();
         await safeLog({
-          type: 'error',
+          type: 'request',
           source: 'ai-integration',
           requestId,
           companyId: inn,
-          message: `Ошибка при вызове AI integration: ${res.error}`,
-          payload: { status: res.status },
+          message: 'Пуск пайплайна через /v1/pipeline/full',
+          payload: { path: '/v1/pipeline/full', body: { inn } },
         });
+
+        const res = await callAiIntegration(`/v1/pipeline/full`, {
+          method: 'POST',
+          body: JSON.stringify({ inn }),
+        });
+
+        if (res.ok) {
+          integrationResults.push({ inn, ok: true, status: res.status });
+          await safeLog({
+            type: 'response',
+            source: 'ai-integration',
+            requestId,
+            companyId: inn,
+            message: 'Пайплайн принят внешним сервисом',
+            payload: res.data,
+          });
+        } else {
+          integrationResults.push({ inn, ok: false, status: res.status, error: res.error });
+          await safeLog({
+            type: 'error',
+            source: 'ai-integration',
+            requestId,
+            companyId: inn,
+            message: `Ошибка при вызове AI integration: ${res.error}`,
+            payload: { status: res.status },
+          });
+        }
       }
     }
 
     const integrationSummary = {
       base: integrationBase,
+      mode,
       attempted: integrationResults.length,
       succeeded: integrationResults.filter((r) => r.ok).length,
       failed: integrationResults.filter((r) => !r.ok),
+      steps,
+      perStep,
     };
 
     return NextResponse.json({ ok: true, queued: inns.length, integration: integrationSummary });
