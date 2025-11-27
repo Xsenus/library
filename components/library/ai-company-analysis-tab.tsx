@@ -25,6 +25,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import type { Industry } from '@/lib/validators';
+import type { AiIntegrationHealth } from '@/lib/ai-integration';
 
 const statusOptions = [
   { key: 'success', label: 'Успешные анализы', field: 'analysis_ok' as const },
@@ -76,6 +77,7 @@ type FetchResponse = {
   page: number;
   pageSize: number;
   available?: Partial<Record<'analysis_ok' | 'server_error' | 'no_valid_site' | 'analysis_progress', boolean>>;
+  integration?: AiIntegrationHealth | null;
 };
 
 function formatRevenue(value: number | null | undefined): string {
@@ -246,6 +248,7 @@ type AvailableMap = FetchResponse['available'];
 export default function AiCompanyAnalysisTab() {
   const [companies, setCompanies] = useState<AiCompany[]>([]);
   const [available, setAvailable] = useState<AvailableMap>({});
+  const [integrationHealth, setIntegrationHealth] = useState<AiIntegrationHealth | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
@@ -292,6 +295,15 @@ export default function AiCompanyAnalysisTab() {
     [companies],
   );
 
+  const integrationHost = useMemo(() => {
+    if (!integrationHealth?.base) return null;
+    try {
+      return new URL(integrationHealth.base).host;
+    } catch {
+      return integrationHealth.base;
+    }
+  }, [integrationHealth]);
+
   const isRefreshing = loading || isPending;
   const okvedSelectValue = okvedCode ?? '__all__';
   const autoRefreshLabel = useMemo(() => {
@@ -327,6 +339,7 @@ export default function AiCompanyAnalysisTab() {
           setCompanies(items);
           setTotal(typeof data.total === 'number' ? data.total : 0);
           setAvailable(data.available ?? {});
+          setIntegrationHealth(data.integration ?? null);
           setLastLoadedAt(new Date().toISOString());
         });
 
@@ -346,6 +359,7 @@ export default function AiCompanyAnalysisTab() {
           setCompanies([]);
           setTotal(0);
           setAvailable({});
+          setIntegrationHealth(null);
           setLastLoadedAt(null);
         });
         autoRefreshDeadlineRef.current = 0;
@@ -601,9 +615,17 @@ export default function AiCompanyAnalysisTab() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inns }),
       });
+      const data = (await res.json().catch(() => null)) as { integration?: any } | null;
       if (!res.ok) throw new Error(`Request failed with ${res.status}`);
       markQueued(inns);
-      toast({ title: 'Запуск анализа', description: `Компаний в очереди: ${inns.length}` });
+      const note = integrationSummaryText(data?.integration);
+      toast({
+        title: 'Запуск анализа',
+        description:
+          note && note.length > 0
+            ? `Компаний в очереди: ${inns.length} · ${note}`
+            : `Компаний в очереди: ${inns.length}`,
+      });
       fetchCompanies(page, pageSize);
       scheduleAutoRefresh();
       setSelected(new Set<string>());
@@ -617,7 +639,7 @@ export default function AiCompanyAnalysisTab() {
     } finally {
       setBulkLoading(false);
     }
-  }, [selected, toast, fetchCompanies, page, pageSize, scheduleAutoRefresh, markQueued]);
+  }, [selected, toast, fetchCompanies, page, pageSize, scheduleAutoRefresh, markQueued, integrationSummaryText]);
 
   const handleRunSingle = useCallback(
     async (inn: string) => {
@@ -628,9 +650,14 @@ export default function AiCompanyAnalysisTab() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ inns: [inn] }),
         });
+        const data = (await res.json().catch(() => null)) as { integration?: any } | null;
         if (!res.ok) throw new Error(`Request failed with ${res.status}`);
         markQueued([inn]);
-        toast({ title: 'Анализ поставлен в очередь', description: `Компания ${inn}` });
+        const note = integrationSummaryText(data?.integration);
+        toast({
+          title: 'Анализ поставлен в очередь',
+          description: note && note.length > 0 ? note : `Компания ${inn}`,
+        });
         fetchCompanies(page, pageSize);
         scheduleAutoRefresh();
       } catch (error) {
@@ -644,7 +671,7 @@ export default function AiCompanyAnalysisTab() {
         setRunInn(null);
       }
     },
-    [toast, fetchCompanies, page, pageSize, scheduleAutoRefresh, markQueued],
+    [toast, fetchCompanies, page, pageSize, scheduleAutoRefresh, markQueued, integrationSummaryText],
   );
 
   const handleStop = useCallback(async () => {
@@ -736,6 +763,29 @@ export default function AiCompanyAnalysisTab() {
       .filter((item): item is { name: string; code?: string } => !!item && !!item.name);
   };
 
+  const integrationSummaryText = useCallback((summary: any): string | null => {
+    if (!summary) return null;
+    const attempted = Number(summary.attempted ?? 0);
+    const succeeded = Number(summary.succeeded ?? 0);
+    const failedCount = Array.isArray(summary.failed) ? summary.failed.length : 0;
+    const base = typeof summary.base === 'string' ? summary.base : null;
+
+    const parts: string[] = [];
+    if (base) {
+      try {
+        parts.push(`API: ${new URL(base).host}`);
+      } catch {
+        parts.push(`API: ${base}`);
+      }
+    }
+    if (attempted > 0) {
+      parts.push(`успешно ${succeeded} из ${attempted}`);
+      if (failedCount > 0) parts.push(`ошибки: ${failedCount}`);
+    }
+
+    return parts.length ? parts.join(' · ') : null;
+  }, []);
+
   return (
     <TooltipProvider>
       <div className="space-y-4 py-4">
@@ -759,6 +809,19 @@ export default function AiCompanyAnalysisTab() {
                   <Badge variant="default" className="gap-1">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     {autoRefreshLabel}
+                  </Badge>
+                )}
+                {integrationHealth && (
+                  <Badge
+                    variant={integrationHealth.available ? 'outline' : 'destructive'}
+                    className="gap-1"
+                    title={integrationHealth.detail ?? undefined}
+                  >
+                    <span className="font-medium">AI integration</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {integrationHealth.available ? 'online' : 'offline'}
+                      {integrationHost ? ` · ${integrationHost}` : ''}
+                    </span>
                   </Badge>
                 )}
                 {stopSignalAt && (

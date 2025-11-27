@@ -5,6 +5,7 @@ import {
   aiCompanyAnalysisQuerySchema,
   okvedCompanySchema,
 } from '@/lib/validators';
+import { getAiIntegrationHealth } from '@/lib/ai-integration';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -297,6 +298,7 @@ export async function GET(request: NextRequest) {
     const existingColumns = await getExistingColumns();
     const optionalSelect = buildOptionalSelect(existingColumns);
     const queueAvailable = await isQueueTableAvailable();
+    const integrationHealthPromise = getAiIntegrationHealth();
 
     const where: string[] = ["(d.status = 'ACTIVE' OR d.status = 'REORGANIZING')"];
     const args: any[] = [];
@@ -433,10 +435,16 @@ export async function GET(request: NextRequest) {
       OFFSET $${i} LIMIT $${i + 1}
     `;
 
-    const countRes = await dbBitrix.query(countSql, args);
-    const total = countRes.rows?.[0]?.cnt ?? 0;
+    const countPromise = dbBitrix.query(countSql, args);
+    const dataPromise = dbBitrix.query(dataSql, [...args, offset, base.pageSize]);
 
-    const dataRes = await dbBitrix.query(dataSql, [...args, offset, base.pageSize]);
+    const [countRes, dataRes, integrationHealth] = await Promise.all([
+      countPromise,
+      dataPromise,
+      integrationHealthPromise,
+    ]);
+
+    const total = countRes.rows?.[0]?.cnt ?? 0;
 
     const items = dataRes.rows.map((row: any) => {
       const core = okvedCompanySchema.parse(row);
@@ -541,6 +549,7 @@ export async function GET(request: NextRequest) {
       page: base.page,
       pageSize: base.pageSize,
       available,
+      integration: integrationHealth,
     });
   } catch (e) {
     console.error('GET /api/ai-analysis/companies error', e);

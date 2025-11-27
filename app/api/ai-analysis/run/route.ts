@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
 import { getSession } from '@/lib/auth';
+import { aiRequestId, callAiIntegration, getAiIntegrationBase } from '@/lib/ai-integration';
+import { logAiDebugEvent } from '@/lib/ai-debug';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -42,6 +44,14 @@ function normalizeInns(raw: any): string[] {
         .filter((v) => v.length > 0),
     ),
   );
+}
+
+async function safeLog(entry: Parameters<typeof logAiDebugEvent>[0]) {
+  try {
+    await logAiDebugEvent(entry);
+  } catch (error) {
+    console.warn('AI debug log skipped', error);
+  }
 }
 
 export async function POST(request: NextRequest) {
@@ -92,7 +102,56 @@ export async function POST(request: NextRequest) {
 
     await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload)]);
 
-    return NextResponse.json({ ok: true, queued: inns.length });
+    const integrationBase = getAiIntegrationBase();
+    const integrationResults: Array<{ inn: string; ok: boolean; status: number; error?: string }> = [];
+
+    for (const inn of inns) {
+      const requestId = aiRequestId();
+      await safeLog({
+        type: 'request',
+        source: 'ai-integration',
+        requestId,
+        companyId: inn,
+        message: 'Пуск пайплайна через /v1/pipeline/full',
+        payload: { path: '/v1/pipeline/full', body: { inn } },
+      });
+
+      const res = await callAiIntegration(`/v1/pipeline/full`, {
+        method: 'POST',
+        body: JSON.stringify({ inn }),
+      });
+
+      if (res.ok) {
+        integrationResults.push({ inn, ok: true, status: res.status });
+        await safeLog({
+          type: 'response',
+          source: 'ai-integration',
+          requestId,
+          companyId: inn,
+          message: 'Пайплайн принят внешним сервисом',
+          payload: res.data,
+        });
+      } else {
+        integrationResults.push({ inn, ok: false, status: res.status, error: res.error });
+        await safeLog({
+          type: 'error',
+          source: 'ai-integration',
+          requestId,
+          companyId: inn,
+          message: `Ошибка при вызове AI integration: ${res.error}`,
+          payload: { status: res.status },
+        });
+      }
+    }
+
+    const integrationSummary = {
+      base: integrationBase,
+      attempted: integrationResults.length,
+      succeeded: integrationResults.filter((r) => r.ok).length,
+      failed: integrationResults.filter((r) => !r.ok),
+    };
+
+    return NextResponse.json({ ok: true, queued: inns.length, integration: integrationSummary });
   } catch (e) {
     console.error('POST /api/ai-analysis/run error', e);
     return NextResponse.json({ ok: false, error: 'Internal Server Error' }, { status: 500 });
