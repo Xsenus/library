@@ -338,6 +338,41 @@ export default function AiCompanyAnalysisTab() {
     [],
   );
 
+  const integrationSummaryText = useCallback((summary: any): string | null => {
+    if (!summary) return null;
+    const attempted = Number(summary.attempted ?? 0);
+    const succeeded = Number(summary.succeeded ?? 0);
+    const failedCount = Array.isArray(summary.failed) ? summary.failed.length : 0;
+    const base = typeof summary.base === 'string' ? summary.base : null;
+    const stepsRaw = Array.isArray(summary.steps) ? (summary.steps as StepKey[]) : [];
+
+    const parts: string[] = [];
+    if (base) {
+      try {
+        parts.push(`API: ${new URL(base).host}`);
+      } catch {
+        parts.push(`API: ${base}`);
+      }
+    }
+    if (attempted > 0) {
+      parts.push(`успешно ${succeeded} из ${attempted}`);
+      if (failedCount > 0) parts.push(`ошибки: ${failedCount}`);
+    }
+
+    const modeLabel = summary.mode === 'steps' ? 'режим: по шагам' : 'режим: единый запрос';
+    parts.push(modeLabel);
+
+    if (stepsRaw.length) {
+      const stepNames = stepsRaw
+        .map((key) => stepLabelMap[key] || key)
+        .filter(Boolean)
+        .join(' → ');
+      if (stepNames.length) parts.push(`шаги: ${stepNames}`);
+    }
+
+    return parts.length ? parts.join(' · ') : null;
+  }, [stepLabelMap]);
+
   const fetchCompanies = useCallback(
     async (pageParam: number, pageSizeParam: number) => {
       setLoading(true);
@@ -820,41 +855,6 @@ export default function AiCompanyAnalysisTab() {
       })
       .filter((item): item is { name: string; code?: string } => !!item && !!item.name);
   };
-
-  const integrationSummaryText = useCallback((summary: any): string | null => {
-    if (!summary) return null;
-    const attempted = Number(summary.attempted ?? 0);
-    const succeeded = Number(summary.succeeded ?? 0);
-    const failedCount = Array.isArray(summary.failed) ? summary.failed.length : 0;
-    const base = typeof summary.base === 'string' ? summary.base : null;
-    const stepsRaw = Array.isArray(summary.steps) ? (summary.steps as StepKey[]) : [];
-
-    const parts: string[] = [];
-    if (base) {
-      try {
-        parts.push(`API: ${new URL(base).host}`);
-      } catch {
-        parts.push(`API: ${base}`);
-      }
-    }
-    if (attempted > 0) {
-      parts.push(`успешно ${succeeded} из ${attempted}`);
-      if (failedCount > 0) parts.push(`ошибки: ${failedCount}`);
-    }
-
-    const modeLabel = summary.mode === 'steps' ? 'режим: по шагам' : 'режим: единый запрос';
-    parts.push(modeLabel);
-
-    if (stepsRaw.length) {
-      const stepNames = stepsRaw
-        .map((key) => stepLabelMap[key] || key)
-        .filter(Boolean)
-        .join(' → ');
-      if (stepNames.length) parts.push(`шаги: ${stepNames}`);
-    }
-
-    return parts.length ? parts.join(' · ') : null;
-  }, [stepLabelMap]);
 
   return (
     <TooltipProvider>
