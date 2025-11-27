@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { ChevronDown, ChevronUp, Filter, Info, Loader2, Play } from 'lucide-react';
+import { ChevronDown, ChevronUp, Filter, Info, Loader2, Play, Square } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -274,6 +274,7 @@ export default function AiCompanyAnalysisTab() {
   const [infoCompany, setInfoCompany] = useState<AiCompany | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [runInn, setRunInn] = useState<string | null>(null);
+  const [stopInn, setStopInn] = useState<string | null>(null);
   const [stopLoading, setStopLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [autoRefreshRemaining, setAutoRefreshRemaining] = useState<number | null>(null);
@@ -683,8 +684,11 @@ export default function AiCompanyAnalysisTab() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ inns, mode: launchMode, steps: launchMode === 'steps' ? selectedSteps : undefined }),
       });
-      const data = (await res.json().catch(() => null)) as { integration?: any } | null;
-      if (!res.ok) throw new Error(`Request failed with ${res.status}`);
+      const data = (await res.json().catch(() => null)) as { integration?: any; error?: string } | null;
+      if (!res.ok) {
+        const message = data?.error ? `Ошибка запуска: ${data.error}` : `Request failed with ${res.status}`;
+        throw new Error(message);
+      }
       markQueued(inns);
       const note = integrationSummaryText(data?.integration);
       toast({
@@ -701,7 +705,10 @@ export default function AiCompanyAnalysisTab() {
       console.error('Failed to start analysis for selected companies:', error);
       toast({
         title: 'Ошибка запуска анализа',
-        description: 'Не удалось поставить компании в очередь. Попробуйте позже.',
+        description:
+          error instanceof Error && error.message
+            ? error.message
+            : 'Не удалось поставить компании в очередь. Попробуйте позже.',
         variant: 'destructive',
       });
     } finally {
@@ -733,8 +740,11 @@ export default function AiCompanyAnalysisTab() {
             steps: launchMode === 'steps' ? selectedSteps : undefined,
           }),
         });
-        const data = (await res.json().catch(() => null)) as { integration?: any } | null;
-        if (!res.ok) throw new Error(`Request failed with ${res.status}`);
+        const data = (await res.json().catch(() => null)) as { integration?: any; error?: string } | null;
+        if (!res.ok) {
+          const message = data?.error ? `Ошибка запуска: ${data.error}` : `Request failed with ${res.status}`;
+          throw new Error(message);
+        }
         markQueued([inn]);
         const note = integrationSummaryText(data?.integration);
         toast({
@@ -747,7 +757,10 @@ export default function AiCompanyAnalysisTab() {
         console.error('Failed to run analysis', error);
         toast({
           title: 'Ошибка запуска',
-          description: 'Не удалось поставить компанию в очередь. Попробуйте позже.',
+          description:
+            error instanceof Error && error.message
+              ? error.message
+              : 'Не удалось поставить компанию в очередь. Попробуйте позже.',
           variant: 'destructive',
         });
       } finally {
@@ -809,6 +822,41 @@ export default function AiCompanyAnalysisTab() {
       setStopLoading(false);
     }
   }, [companies, toast, clearQueued, fetchCompanies, page, pageSize]);
+
+  const handleStopSingle = useCallback(
+    async (inn: string) => {
+      setStopInn(inn);
+      try {
+        const res = await fetch('/api/ai-analysis/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inns: [inn] }),
+        });
+        if (!res.ok) throw new Error(`Request failed with ${res.status}`);
+        const data = (await res.json().catch(() => null)) as { removed?: number } | null;
+        const removed = typeof data?.removed === 'number' ? data.removed : null;
+        toast({
+          title: 'Отправлен сигнал остановки',
+          description:
+            removed != null
+              ? `Снято из очереди: ${removed}`
+              : 'Команда остановки отправлена для выбранной компании.',
+        });
+        clearQueued([inn]);
+        fetchCompanies(page, pageSize);
+      } catch (error) {
+        console.error('Failed to stop single company', error);
+        toast({
+          title: 'Не удалось остановить компанию',
+          description: 'Попробуйте повторить попытку позже.',
+          variant: 'destructive',
+        });
+      } finally {
+        setStopInn(null);
+      }
+    },
+    [toast, clearQueued, fetchCompanies, page, pageSize],
+  );
 
   const headerCheckedState = useMemo(() => {
     if (!companies.length) return false;
@@ -1441,6 +1489,28 @@ export default function AiCompanyAnalysisTab() {
                                   </TooltipTrigger>
                                   <TooltipContent side="bottom">{runTooltip}</TooltipContent>
                                 </Tooltip>
+                                {(state.running || state.queued) && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="destructive"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => handleStopSingle(company.inn)}
+                                        disabled={stopInn === company.inn}
+                                        aria-label={`Остановить компанию ${company.short_name}`}
+                                      >
+                                        {stopInn === company.inn ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Square className="h-4 w-4" />
+                                        )}
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom">Отменить запуск</TooltipContent>
+                                  </Tooltip>
+                                )}
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Button

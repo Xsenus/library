@@ -46,6 +46,12 @@ function normalizeInns(raw: any): string[] {
   );
 }
 
+async function removeFromQueue(inns: string[]) {
+  if (!inns.length) return;
+  await ensureQueueTable();
+  await dbBitrix.query('DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[])', [inns]);
+}
+
 type StepKey = 'lookup' | 'parse_site' | 'analyze_json' | 'ib_match' | 'equipment_selection';
 
 const STEP_DEFINITIONS: Record<StepKey, { path: string; label: string }> = {
@@ -140,6 +146,14 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: false, error: 'Нет компаний для запуска' }, { status: 400 });
     }
 
+    const integrationBase = getAiIntegrationBase();
+    if (!integrationBase) {
+      return NextResponse.json(
+        { ok: false, error: 'AI integration base URL is not configured (AI_INTEGRATION_BASE)' },
+        { status: 503 },
+      );
+    }
+
     const mode: 'full' | 'steps' = body?.mode === 'steps' ? 'steps' : 'full';
     const steps = mode === 'steps' ? normalizeSteps(body?.steps) : null;
 
@@ -178,8 +192,6 @@ export async function POST(request: NextRequest) {
     `;
 
     await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload)]);
-
-    const integrationBase = getAiIntegrationBase();
     const integrationResults: Array<{ inn: string; ok: boolean; status: number; error?: string }> = [];
     const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
 
@@ -194,6 +206,9 @@ export async function POST(request: NextRequest) {
         const ok = stepResults.every((s) => s.ok);
         const lastStatus = stepResults.length ? stepResults[stepResults.length - 1]?.status : 0;
         const firstError = stepResults.find((s) => !s.ok)?.error;
+        if (!ok) {
+          await removeFromQueue([inn]);
+        }
         integrationResults.push({ inn, ok, status: lastStatus ?? 0, error: firstError });
       } else {
         const requestId = aiRequestId();
@@ -222,6 +237,7 @@ export async function POST(request: NextRequest) {
             payload: res.data,
           });
         } else {
+          await removeFromQueue([inn]);
           integrationResults.push({ inn, ok: false, status: res.status, error: res.error });
           await safeLog({
             type: 'error',
@@ -245,7 +261,13 @@ export async function POST(request: NextRequest) {
       perStep,
     };
 
-    return NextResponse.json({ ok: true, queued: inns.length, integration: integrationSummary });
+    const overallOk = integrationResults.every((r) => r.ok);
+    const status = overallOk ? 200 : 502;
+
+    return NextResponse.json(
+      { ok: overallOk, queued: inns.length, integration: integrationSummary },
+      { status },
+    );
   } catch (e) {
     console.error('POST /api/ai-analysis/run error', e);
     return NextResponse.json({ ok: false, error: 'Internal Server Error' }, { status: 500 });
