@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
 import { getSession } from '@/lib/auth';
+import { logAiDebugEvent } from '@/lib/ai-debug';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -115,6 +116,13 @@ export async function POST(request: NextRequest) {
       `INSERT INTO ai_analysis_commands (action, payload) VALUES ('stop', $1::jsonb)`,
       [JSON.stringify(payload)],
     );
+
+    await logAiDebugEvent({
+      type: 'notification',
+      source: 'ai-integration',
+      message: 'Запрошена остановка анализа',
+      payload,
+    });
 
     return NextResponse.json({ ok: true, removed });
   } catch (e) {

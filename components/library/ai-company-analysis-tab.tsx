@@ -26,14 +26,14 @@ import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import type { Industry } from '@/lib/validators';
 import type { AiIntegrationHealth } from '@/lib/ai-integration';
+import { getDefaultSteps, getForcedLaunchMode, getForcedSteps, isLaunchModeLocked } from '@/lib/ai-analysis-config';
+import type { StepKey } from '@/lib/ai-analysis-types';
 
 const statusOptions = [
   { key: 'success', label: 'Успешные анализы', field: 'analysis_ok' as const },
   { key: 'server_error', label: 'Сервер был недоступен', field: 'server_error' as const },
   { key: 'no_valid_site', label: 'Не было доступных доменов', field: 'no_valid_site' as const },
 ];
-
-type StepKey = 'lookup' | 'parse_site' | 'analyze_json' | 'ib_match' | 'equipment_selection';
 
 const stepOptions: { key: StepKey; label: string }[] = [
   { key: 'lookup', label: 'Lookup' },
@@ -283,10 +283,17 @@ export default function AiCompanyAnalysisTab() {
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [stopSignalAt, setStopSignalAt] = useState<number | null>(null);
-  const [launchMode, setLaunchMode] = useState<'full' | 'steps'>('full');
-  const [stepFlags, setStepFlags] = useState<Record<StepKey, boolean>>(() =>
-    stepOptions.reduce((acc, opt) => ({ ...acc, [opt.key]: true }), {} as Record<StepKey, boolean>),
-  );
+  const forcedLaunchMode = useMemo(() => getForcedLaunchMode(true), []);
+  const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
+  const forcedSteps = useMemo(() => getForcedSteps(true), []);
+  const launchMode: 'full' | 'steps' = forcedLaunchMode;
+  const [stepFlags, setStepFlags] = useState<Record<StepKey, boolean>>(() => {
+    const defaults = launchModeLocked ? forcedSteps : getDefaultSteps();
+    return stepOptions.reduce(
+      (acc, opt) => ({ ...acc, [opt.key]: defaults.includes(opt.key) }),
+      {} as Record<StepKey, boolean>,
+    );
+  });
 
   const debouncedSearch = useDebounce(search, 400);
   const { toast } = useToast();
@@ -330,8 +337,8 @@ export default function AiCompanyAnalysisTab() {
   }, [autoRefreshRemaining]);
 
   const selectedSteps = useMemo(
-    () => stepOptions.filter((opt) => stepFlags[opt.key]).map((opt) => opt.key),
-    [stepFlags],
+    () => (launchModeLocked ? forcedSteps : stepOptions.filter((opt) => stepFlags[opt.key]).map((opt) => opt.key)),
+    [forcedSteps, launchModeLocked, stepFlags],
   );
 
   const stepLabelMap = useMemo(
@@ -361,7 +368,7 @@ export default function AiCompanyAnalysisTab() {
     }
 
     const modeLabel = summary.mode === 'steps' ? 'режим: по шагам' : 'режим: единый запрос';
-    parts.push(modeLabel);
+    parts.push(summary.modeLocked ? `${modeLabel} (зафиксирован)` : modeLabel);
 
     if (stepsRaw.length) {
       const stepNames = stepsRaw
@@ -527,14 +534,18 @@ export default function AiCompanyAnalysisTab() {
     });
   }, [companies]);
 
-  const toggleStepFlag = useCallback((key: StepKey) => {
-    setStepFlags((prev) => {
-      const enabled = Object.values(prev).filter(Boolean).length;
-      const nextValue = !prev[key];
-      if (!nextValue && enabled <= 1) return prev; // хотя бы один шаг должен остаться включенным
-      return { ...prev, [key]: nextValue };
-    });
-  }, []);
+  const toggleStepFlag = useCallback(
+    (key: StepKey) => {
+      setStepFlags((prev) => {
+        if (launchModeLocked) return prev;
+        const enabled = Object.values(prev).filter(Boolean).length;
+        const nextValue = !prev[key];
+        if (!nextValue && enabled <= 1) return prev; // хотя бы один шаг должен остаться включенным
+        return { ...prev, [key]: nextValue };
+      });
+    },
+    [launchModeLocked],
+  );
 
   const toggleEmailExpansion = useCallback((inn: string) => {
     setExpandedEmails((prev) => {
@@ -1111,22 +1122,20 @@ export default function AiCompanyAnalysisTab() {
             <div className="flex flex-col gap-2 rounded-lg border bg-background/60 p-3">
               <div className="flex flex-wrap items-center gap-3 text-sm">
                 <span className="font-medium">Режим запуска</span>
-                <Select value={launchMode} onValueChange={(value) => setLaunchMode(value as 'full' | 'steps')}>
-                  <SelectTrigger className="h-9 w-[220px] text-sm">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="full">Один вызов: /v1/pipeline/full</SelectItem>
-                    <SelectItem value="steps">По шагам: lookup → parse → analyze…</SelectItem>
-                  </SelectContent>
-                </Select>
+                <Badge variant="secondary" className="font-normal">
+                  По шагам (управляется настройками)
+                </Badge>
               </div>
               {launchMode === 'steps' && (
                 <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-                  <span className="text-foreground">Выберите шаги (выполняются по порядку):</span>
+                  <span className="text-foreground">Шаги (из файла настроек, меняются через переменные окружения):</span>
                   {stepOptions.map((opt) => (
                     <label key={opt.key} className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
-                      <Checkbox checked={stepFlags[opt.key]} onCheckedChange={() => toggleStepFlag(opt.key)} />
+                      <Checkbox
+                        checked={stepFlags[opt.key]}
+                        onCheckedChange={() => toggleStepFlag(opt.key)}
+                        disabled={launchModeLocked}
+                      />
                       <span className="text-foreground">{opt.label}</span>
                     </label>
                   ))}

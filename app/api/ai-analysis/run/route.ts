@@ -3,6 +3,14 @@ import { dbBitrix } from '@/lib/db-bitrix';
 import { getSession } from '@/lib/auth';
 import { aiRequestId, callAiIntegration, getAiIntegrationBase } from '@/lib/ai-integration';
 import { logAiDebugEvent } from '@/lib/ai-debug';
+import {
+  getForcedLaunchMode,
+  getForcedSteps,
+  getOverallTimeoutMs,
+  getStepTimeoutMs,
+  isLaunchModeLocked,
+} from '@/lib/ai-analysis-config';
+import { DEFAULT_STEPS, type StepKey } from '@/lib/ai-analysis-types';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -69,8 +77,6 @@ async function getCompanyNames(inns: string[]): Promise<Map<string, string>> {
   return map;
 }
 
-type StepKey = 'lookup' | 'parse_site' | 'analyze_json' | 'ib_match' | 'equipment_selection';
-
 type StepAttempt = {
   path: (inn: string) => string;
   label: string;
@@ -113,8 +119,6 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
   },
 };
 
-const DEFAULT_STEPS: StepKey[] = ['lookup', 'parse_site', 'analyze_json', 'ib_match', 'equipment_selection'];
-
 function normalizeSteps(raw: unknown): StepKey[] {
   if (!Array.isArray(raw)) return DEFAULT_STEPS;
 
@@ -142,7 +146,7 @@ async function safeLog(entry: Parameters<typeof logAiDebugEvent>[0]) {
   }
 }
 
-async function runStep(inn: string, step: StepKey) {
+async function runStep(inn: string, step: StepKey, timeoutMs: number) {
   const definition = STEP_DEFINITIONS[step];
   const attempts: StepAttempt[] = [definition.primary, ...(definition.fallbacks ?? [])];
   let lastError: string | undefined;
@@ -166,7 +170,7 @@ async function runStep(inn: string, step: StepKey) {
       payload: { path, method: attempt.method, body: attempt.body ? { inn } : undefined },
     });
 
-    const res = await callAiIntegration(path, init);
+    const res = await callAiIntegration(path, { ...init, timeoutMs });
     lastStatus = res.status;
 
     if (res.ok) {
@@ -221,8 +225,14 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const mode: 'full' | 'steps' = body?.mode === 'steps' ? 'steps' : 'full';
-    const steps = mode === 'steps' ? normalizeSteps(body?.steps) : null;
+    const forcedMode = getForcedLaunchMode();
+    const modeLocked = isLaunchModeLocked();
+    const mode: 'full' | 'steps' = modeLocked ? forcedMode : body?.mode === 'steps' ? 'steps' : 'full';
+    const steps = mode === 'steps'
+      ? modeLocked
+        ? getForcedSteps()
+        : normalizeSteps(body?.steps)
+      : null;
 
     const payloadRaw =
       body?.payload && typeof body.payload === 'object' && body.payload !== null
@@ -263,58 +273,63 @@ export async function POST(request: NextRequest) {
     const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
     const companyNames = await getCompanyNames(inns);
 
-    for (const inn of inns) {
-      const companyName = companyNames.get(inn);
-      await safeLog({
-        type: 'notification',
-        source: 'ai-integration',
-        companyId: inn,
-        companyName,
-        notificationKey: 'analysis_start',
-      });
+    const stepTimeoutMs = getStepTimeoutMs();
+    const overallTimeoutMs = getOverallTimeoutMs();
 
-      if (mode === 'steps' && steps) {
-        const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
-        for (const step of steps) {
-          const res = await runStep(inn, step);
-          stepResults.push(res);
-        }
-        perStep.push({ inn, results: stepResults });
-        const ok = stepResults.every((s) => s.ok);
-        const lastStatus = stepResults.length ? stepResults[stepResults.length - 1]?.status : 0;
-        const firstError = stepResults.find((s) => !s.ok)?.error;
-        await removeFromQueue([inn]);
-        integrationResults.push({ inn, ok, status: lastStatus ?? 0, error: firstError });
-      } else {
-        const requestId = aiRequestId();
+    await Promise.all(
+      inns.map(async (inn) => {
+        const companyName = companyNames.get(inn);
         await safeLog({
-          type: 'request',
+          type: 'notification',
           source: 'ai-integration',
-          requestId,
           companyId: inn,
-          message: 'Пуск пайплайна через /v1/pipeline/full',
-          payload: { path: '/v1/pipeline/full', body: { inn } },
+          companyName,
+          notificationKey: 'analysis_start',
         });
 
-        const res = await callAiIntegration(`/v1/pipeline/full`, {
-          method: 'POST',
-          body: JSON.stringify({ inn }),
-        });
+        const runInn = async () => {
+          if (mode === 'steps' && steps) {
+            const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
+            for (const step of steps) {
+              const res = await runStep(inn, step, stepTimeoutMs);
+              stepResults.push(res);
+              if (!res.ok) break;
+            }
+            perStep.push({ inn, results: stepResults });
+            const ok = stepResults.every((s) => s.ok);
+            const lastStatus = stepResults.length ? stepResults[stepResults.length - 1]?.status : 0;
+            const firstError = stepResults.find((s) => !s.ok)?.error;
+            return { ok, status: lastStatus ?? 0, error: firstError };
+          }
 
-        if (res.ok) {
-          integrationResults.push({ inn, ok: true, status: res.status });
-          await removeFromQueue([inn]);
+          const requestId = aiRequestId();
           await safeLog({
-            type: 'response',
+            type: 'request',
             source: 'ai-integration',
             requestId,
             companyId: inn,
-            message: 'Пайплайн принят внешним сервисом',
-            payload: res.data,
+            message: 'Пуск пайплайна через /v1/pipeline/full',
+            payload: { path: '/v1/pipeline/full', body: { inn } },
           });
-        } else {
-          await removeFromQueue([inn]);
-          integrationResults.push({ inn, ok: false, status: res.status, error: res.error });
+
+          const res = await callAiIntegration(`/v1/pipeline/full`, {
+            method: 'POST',
+            body: JSON.stringify({ inn }),
+            timeoutMs: stepTimeoutMs,
+          });
+
+          if (res.ok) {
+            await safeLog({
+              type: 'response',
+              source: 'ai-integration',
+              requestId,
+              companyId: inn,
+              message: 'Пайплайн принят внешним сервисом',
+              payload: res.data,
+            });
+            return { ok: true as const, status: res.status };
+          }
+
           await safeLog({
             type: 'error',
             source: 'ai-integration',
@@ -323,13 +338,25 @@ export async function POST(request: NextRequest) {
             message: `Ошибка при вызове AI integration: ${res.error}`,
             payload: { status: res.status },
           });
-        }
-      }
-    }
+          return { ok: false as const, status: res.status, error: res.error };
+        };
+
+        const timedResult = (await Promise.race([
+          runInn(),
+          new Promise<{ ok: false; status: number; error: string }>((resolve) =>
+            setTimeout(() => resolve({ ok: false, status: 504, error: 'AI integration timed out' }), overallTimeoutMs),
+          ),
+        ])) as { ok: boolean; status: number; error?: string };
+
+        await removeFromQueue([inn]);
+        integrationResults.push({ inn, ...timedResult });
+      }),
+    );
 
     const integrationSummary = {
       base: integrationBase,
       mode,
+      modeLocked,
       attempted: integrationResults.length,
       succeeded: integrationResults.filter((r) => r.ok).length,
       failed: integrationResults.filter((r) => !r.ok),
