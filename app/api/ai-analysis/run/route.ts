@@ -54,12 +54,46 @@ async function removeFromQueue(inns: string[]) {
 
 type StepKey = 'lookup' | 'parse_site' | 'analyze_json' | 'ib_match' | 'equipment_selection';
 
-const STEP_DEFINITIONS: Record<StepKey, { path: string; label: string }> = {
-  lookup: { path: '/v1/lookup/card', label: 'Карта компании (lookup)' },
-  parse_site: { path: '/v1/parse-site', label: 'Парсинг сайта' },
-  analyze_json: { path: '/v1/analyze-json', label: 'AI-анализ' },
-  ib_match: { path: '/v1/ib-match', label: 'Сопоставление продклассов' },
-  equipment_selection: { path: '/v1/equipment-selection', label: 'Подбор оборудования' },
+type StepAttempt = {
+  path: (inn: string) => string;
+  label: string;
+  method: 'GET' | 'POST';
+  body?: boolean;
+};
+
+type StepDefinition = {
+  primary: StepAttempt;
+  fallbacks?: StepAttempt[];
+};
+
+const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
+  lookup: {
+    primary: { path: () => '/v1/lookup/card', label: 'Карта компании (lookup)', method: 'POST', body: true },
+    fallbacks: [{ path: (inn) => `/v1/lookup/${encodeURIComponent(inn)}/card`, label: 'GET lookup', method: 'GET' }],
+  },
+  parse_site: {
+    primary: { path: () => '/v1/parse-site', label: 'Парсинг сайта', method: 'POST', body: true },
+    fallbacks: [{ path: (inn) => `/v1/parse-site/${encodeURIComponent(inn)}`, label: 'GET parse-site', method: 'GET' }],
+  },
+  analyze_json: {
+    primary: { path: () => '/v1/analyze-json', label: 'AI-анализ', method: 'POST', body: true },
+    fallbacks: [{ path: (inn) => `/v1/analyze-json/${encodeURIComponent(inn)}`, label: 'GET analyze-json', method: 'GET' }],
+  },
+  ib_match: {
+    primary: { path: () => '/v1/ib-match', label: 'Сопоставление продклассов', method: 'POST', body: true },
+    fallbacks: [
+      { path: () => '/v1/ib-match/by-inn', label: 'POST ib-match/by-inn', method: 'POST', body: true },
+      { path: (inn) => `/v1/ib-match/by-inn?inn=${encodeURIComponent(inn)}`, label: 'GET ib-match/by-inn', method: 'GET' },
+    ],
+  },
+  equipment_selection: {
+    primary: {
+      path: (inn) => `/v1/equipment-selection/by-inn/${encodeURIComponent(inn)}`,
+      label: 'Подбор оборудования',
+      method: 'GET',
+    },
+    fallbacks: [{ path: (inn) => `/v1/equipment-selection?inn=${encodeURIComponent(inn)}`, label: 'GET equipment-selection', method: 'GET' }],
+  },
 };
 
 const DEFAULT_STEPS: StepKey[] = ['lookup', 'parse_site', 'analyze_json', 'ib_match', 'equipment_selection'];
@@ -93,43 +127,59 @@ async function safeLog(entry: Parameters<typeof logAiDebugEvent>[0]) {
 
 async function runStep(inn: string, step: StepKey) {
   const definition = STEP_DEFINITIONS[step];
-  const requestId = aiRequestId();
+  const attempts: StepAttempt[] = [definition.primary, ...(definition.fallbacks ?? [])];
+  let lastError: string | undefined;
+  let lastStatus = 0;
 
-  await safeLog({
-    type: 'request',
-    source: 'ai-integration',
-    requestId,
-    companyId: inn,
-    message: `Старт шага: ${definition.label}`,
-    payload: { path: definition.path, body: { inn } },
-  });
+  for (const attempt of attempts) {
+    const requestId = aiRequestId();
+    const path = attempt.path(inn);
+    const init: RequestInit & { timeoutMs?: number } = { method: attempt.method };
 
-  const res = await callAiIntegration(definition.path, {
-    method: 'POST',
-    body: JSON.stringify({ inn }),
-  });
+    if (attempt.body) {
+      init.body = JSON.stringify({ inn });
+    }
 
-  if (res.ok) {
     await safeLog({
-      type: 'response',
+      type: 'request',
       source: 'ai-integration',
       requestId,
       companyId: inn,
-      message: `Шаг успешно принят: ${definition.label}`,
-      payload: res.data,
+      message: `Старт шага: ${definition.primary.label} (${attempt.label})`,
+      payload: { path, method: attempt.method, body: attempt.body ? { inn } : undefined },
     });
-  } else {
+
+    const res = await callAiIntegration(path, init);
+    lastStatus = res.status;
+
+    if (res.ok) {
+      await safeLog({
+        type: 'response',
+        source: 'ai-integration',
+        requestId,
+        companyId: inn,
+        message: `Шаг успешно принят: ${definition.primary.label} (${attempt.label})`,
+        payload: res.data,
+      });
+      return { step, ok: true, status: res.status };
+    }
+
+    lastError = res.error;
     await safeLog({
       type: 'error',
       source: 'ai-integration',
       requestId,
       companyId: inn,
-      message: `Ошибка шага ${definition.label}: ${res.error}`,
+      message: `Ошибка шага ${definition.primary.label} (${attempt.label}): ${res.error}`,
       payload: { status: res.status },
     });
+
+    if (![404, 405].includes(res.status)) {
+      break;
+    }
   }
 
-  return { step, ok: res.ok, status: res.status, error: res.ok ? undefined : res.error };
+  return { step, ok: false as const, status: lastStatus, error: lastError ?? 'Unknown error' };
 }
 
 export async function POST(request: NextRequest) {
