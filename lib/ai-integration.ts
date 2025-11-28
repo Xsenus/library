@@ -8,11 +8,22 @@ export type AiIntegrationHealth = {
   detail?: string;
 };
 
+function readEnv(names: string[]): string | null {
+  for (const name of names) {
+    const raw = process.env[name];
+    if (typeof raw === 'string' && raw.trim()) {
+      return raw.trim();
+    }
+  }
+  return null;
+}
+
 export function getAiIntegrationBase(): string | null {
-  const base = process.env.AI_INTEGRATION_BASE?.trim();
-  if (!base) return null;
+  const raw = readEnv(['AI_INTEGRATION_BASE', 'AI_ANALYZE_BASE', 'ANALYZE_BASE']);
+  if (!raw) return null;
+
   try {
-    const url = new URL(base);
+    const url = new URL(raw);
     return url.toString().replace(/\/$/, '');
   } catch {
     return null;
@@ -24,7 +35,12 @@ export async function callAiIntegration<T = any>(
   init: RequestInit & { timeoutMs?: number } = {},
 ): Promise<{ ok: true; data: T; status: number } | { ok: false; status: number; error: string }> {
   const base = getAiIntegrationBase();
-  if (!base) return { ok: false, status: 503, error: 'AI integration base URL is not configured' };
+  if (!base)
+    return {
+      ok: false,
+      status: 503,
+      error: 'AI integration base URL is not configured (AI_INTEGRATION_BASE / AI_ANALYZE_BASE / ANALYZE_BASE)',
+    };
 
   const controller = new AbortController();
   const timeoutMs = init.timeoutMs ?? DEFAULT_TIMEOUT_MS;

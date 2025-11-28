@@ -220,7 +220,11 @@ export async function POST(request: NextRequest) {
     const integrationBase = getAiIntegrationBase();
     if (!integrationBase) {
       return NextResponse.json(
-        { ok: false, error: 'AI integration base URL is not configured (AI_INTEGRATION_BASE)' },
+        {
+          ok: false,
+          error:
+            'AI integration base URL is not configured (set AI_INTEGRATION_BASE или AI_ANALYZE_BASE/ANALYZE_BASE)',
+        },
         { status: 503 },
       );
     }
