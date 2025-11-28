@@ -202,6 +202,39 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
   return { step, ok: false as const, status: lastStatus, error: lastError ?? 'Unknown error' };
 }
 
+async function markRunning(inn: string) {
+  await dbBitrix
+    .query(
+      `UPDATE dadata_result
+       SET analysis_status = 'running', analysis_started_at = COALESCE(analysis_started_at, now()), analysis_finished_at = NULL, analysis_progress = 0, server_error = 0
+       WHERE inn = $1`,
+      [inn],
+    )
+    .catch((error) => console.warn('mark running failed', error));
+}
+
+async function markFinished(
+  inn: string,
+  result:
+    | { status: 'completed'; durationMs: number }
+    | { status: 'failed'; durationMs: number; progress?: number },
+) {
+  const progress = result.status === 'completed' ? 1 : result.progress ?? null;
+  await dbBitrix
+    .query(
+      `UPDATE dadata_result
+       SET analysis_status = $2,
+           analysis_finished_at = now(),
+           analysis_duration_ms = $3,
+           analysis_progress = $4,
+           analysis_ok = CASE WHEN $2 = 'completed' THEN 1 ELSE 0 END,
+           server_error = CASE WHEN $2 = 'failed' THEN 1 ELSE 0 END
+       WHERE inn = $1`,
+      [inn, result.status, result.durationMs, progress],
+    )
+    .catch((error) => console.warn('mark finished failed', error));
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => null)) as {
@@ -305,6 +338,7 @@ export async function POST(request: NextRequest) {
         await Promise.all(
           inns.map(async (inn) => {
             const companyName = companyNames.get(inn);
+            const startedAt = Date.now();
             await safeLog({
               type: 'notification',
               source: 'ai-integration',
@@ -313,19 +347,30 @@ export async function POST(request: NextRequest) {
               notificationKey: 'analysis_start',
             });
 
+            await markRunning(inn);
+
             const runInn = async () => {
               if (mode === 'steps' && steps) {
                 const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
-                for (const step of steps) {
+                let progress = 0;
+
+                for (let idx = 0; idx < steps.length; idx++) {
+                  const step = steps[idx];
                   const res = await runStep(inn, step, stepTimeoutMs);
                   stepResults.push(res);
+                  if (res.ok) {
+                    progress = Math.max(progress, (idx + 1) / steps.length);
+                    await dbBitrix
+                      .query(`UPDATE dadata_result SET analysis_progress = $2 WHERE inn = $1`, [inn, progress])
+                      .catch((error) => console.warn('progress update failed', error));
+                  }
                   if (!res.ok) break;
                 }
                 perStep.push({ inn, results: stepResults });
                 const ok = stepResults.every((s) => s.ok);
                 const lastStatus = stepResults.length ? stepResults[stepResults.length - 1]?.status : 0;
                 const firstError = stepResults.find((s) => !s.ok)?.error;
-                return { ok, status: lastStatus ?? 0, error: firstError };
+                return { ok, status: lastStatus ?? 0, error: firstError, progress };
               }
 
               const requestId = aiRequestId();
@@ -367,40 +412,56 @@ export async function POST(request: NextRequest) {
               return { ok: false as const, status: res.status, error: res.error };
             };
 
-            const timedResult = (await Promise.race([
-              runInn(),
-              new Promise<{ ok: false; status: number; error: string }>((resolve) =>
-                setTimeout(() => resolve({ ok: false, status: 504, error: 'AI integration timed out' }), overallTimeoutMs),
-              ),
-            ])) as { ok: boolean; status: number; error?: string };
+            let timedResult: { ok: boolean; status: number; error?: string; progress?: number };
+            try {
+              timedResult = (await Promise.race([
+                runInn(),
+                new Promise<{ ok: false; status: number; error: string }>((resolve) =>
+                  setTimeout(() => resolve({ ok: false, status: 504, error: 'AI integration timed out' }), overallTimeoutMs),
+                ),
+              ])) as { ok: boolean; status: number; error?: string; progress?: number };
+            } catch (error: any) {
+              timedResult = {
+                ok: false,
+                status: 500,
+                error: error?.message ?? 'AI integration run failed',
+              };
+            } finally {
+              await removeFromQueue([inn]);
+            }
 
-            await removeFromQueue([inn]);
             integrationResults.push({ inn, ...timedResult });
 
+            const durationMs = Date.now() - startedAt;
             if (timedResult.ok) {
-              await dbBitrix
-                .query(
-                  `UPDATE dadata_result SET analysis_status = 'running', analysis_started_at = now() WHERE inn = $1`,
-                  [inn],
-                )
-                .catch((error) => console.warn('mark running failed', error));
+              await markFinished(inn, { status: 'completed', durationMs });
+              await safeLog({
+                type: 'notification',
+                source: 'ai-integration',
+                companyId: inn,
+                companyName,
+                notificationKey: 'analysis_finish',
+                message: 'Анализ завершён',
+              });
             } else {
-              await dbBitrix
-                .query(
-                  `UPDATE dadata_result SET analysis_status = 'failed', analysis_finished_at = now(), server_error = 1 WHERE inn = $1`,
-                  [inn],
-                )
-                .catch((error) => console.warn('mark failed failed', error));
+              await markFinished(inn, { status: 'failed', durationMs, progress: timedResult.progress });
+              await safeLog({
+                type: 'error',
+                source: 'ai-integration',
+                companyId: inn,
+                companyName,
+                message: `Анализ завершён с ошибкой: ${timedResult.error ?? 'неизвестная ошибка'}`,
+              });
             }
           }),
         );
 
-        const overallOk = integrationResults.every((r) => r.ok);
-        if (overallOk) {
-          await dbBitrix
-            .query(`UPDATE dadata_result SET analysis_status = 'running' WHERE inn = ANY($1::text[])`, [inns])
-            .catch((error) => console.warn('mark batch running failed', error));
-        }
+        await safeLog({
+          type: 'notification',
+          source: 'ai-integration',
+          message: 'Фоновый запуск анализа завершён',
+          payload: { results: integrationResults, perStep },
+        });
       } catch (error) {
         console.error('Background AI analysis run failed', error);
       }
