@@ -111,6 +111,14 @@ export async function POST(request: NextRequest) {
       );
       removed = res.rowCount ?? 0;
       payload.removed_from_queue = removed;
+
+      // Помечаем остановку в витрине, чтобы UI сразу отобразил финальный статус
+      await dbBitrix
+        .query(
+          `UPDATE dadata_result SET analysis_status = 'stopped', analysis_finished_at = now() WHERE inn = ANY($1::text[])`,
+          [inns],
+        )
+        .catch((error) => console.warn('mark stopped failed', error));
     }
 
     const integrationBase = getAiIntegrationBase();

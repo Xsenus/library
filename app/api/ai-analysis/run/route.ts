@@ -283,108 +283,130 @@ export async function POST(request: NextRequest) {
     `;
 
     await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload)]);
-    const integrationResults: Array<{ inn: string; ok: boolean; status: number; error?: string }> = [];
-    const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
-    const companyNames = await getCompanyNames(inns);
 
-    const stepTimeoutMs = getStepTimeoutMs();
-    const overallTimeoutMs = getOverallTimeoutMs();
+    // Немедленно помечаем компании как поставленные в очередь, чтобы UI не ждал долгий запрос
+    await dbBitrix.query(
+      `UPDATE dadata_result SET analysis_status = 'queued', analysis_started_at = NULL, analysis_finished_at = NULL WHERE inn = ANY($1::text[])`,
+      [inns],
+    ).catch((error) => console.warn('mark queued failed', error));
 
-    await Promise.all(
-      inns.map(async (inn) => {
-        const companyName = companyNames.get(inn);
-        await safeLog({
-          type: 'notification',
-          source: 'ai-integration',
-          companyId: inn,
-          companyName,
-          notificationKey: 'analysis_start',
-        });
+    const ack = NextResponse.json({ ok: true, queued: inns.length, mode, steps, integration: { base: integrationBase } });
 
-        const runInn = async () => {
-          if (mode === 'steps' && steps) {
-            const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
-            for (const step of steps) {
-              const res = await runStep(inn, step, stepTimeoutMs);
-              stepResults.push(res);
-              if (!res.ok) break;
-            }
-            perStep.push({ inn, results: stepResults });
-            const ok = stepResults.every((s) => s.ok);
-            const lastStatus = stepResults.length ? stepResults[stepResults.length - 1]?.status : 0;
-            const firstError = stepResults.find((s) => !s.ok)?.error;
-            return { ok, status: lastStatus ?? 0, error: firstError };
-          }
+    // Запускаем интеграцию в фоне, чтобы сам запрос отвечал сразу
+    void (async () => {
+      try {
+        const integrationResults: Array<{ inn: string; ok: boolean; status: number; error?: string }> = [];
+        const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
+        const companyNames = await getCompanyNames(inns);
 
-          const requestId = aiRequestId();
-          await safeLog({
-            type: 'request',
-            source: 'ai-integration',
-            requestId,
-            companyId: inn,
-            message: 'Пуск пайплайна через /v1/pipeline/full',
-            payload: { path: '/v1/pipeline/full', body: { inn } },
-          });
+        const stepTimeoutMs = getStepTimeoutMs();
+        const overallTimeoutMs = getOverallTimeoutMs();
 
-          const res = await callAiIntegration(`/v1/pipeline/full`, {
-            method: 'POST',
-            body: JSON.stringify({ inn }),
-            timeoutMs: stepTimeoutMs,
-          });
-
-          if (res.ok) {
+        await Promise.all(
+          inns.map(async (inn) => {
+            const companyName = companyNames.get(inn);
             await safeLog({
-              type: 'response',
+              type: 'notification',
               source: 'ai-integration',
-              requestId,
               companyId: inn,
-              message: 'Пайплайн принят внешним сервисом',
-              payload: res.data,
+              companyName,
+              notificationKey: 'analysis_start',
             });
-            return { ok: true as const, status: res.status };
-          }
 
-          await safeLog({
-            type: 'error',
-            source: 'ai-integration',
-            requestId,
-            companyId: inn,
-            message: `Ошибка при вызове AI integration: ${res.error}`,
-            payload: { status: res.status },
-          });
-          return { ok: false as const, status: res.status, error: res.error };
-        };
+            const runInn = async () => {
+              if (mode === 'steps' && steps) {
+                const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
+                for (const step of steps) {
+                  const res = await runStep(inn, step, stepTimeoutMs);
+                  stepResults.push(res);
+                  if (!res.ok) break;
+                }
+                perStep.push({ inn, results: stepResults });
+                const ok = stepResults.every((s) => s.ok);
+                const lastStatus = stepResults.length ? stepResults[stepResults.length - 1]?.status : 0;
+                const firstError = stepResults.find((s) => !s.ok)?.error;
+                return { ok, status: lastStatus ?? 0, error: firstError };
+              }
 
-        const timedResult = (await Promise.race([
-          runInn(),
-          new Promise<{ ok: false; status: number; error: string }>((resolve) =>
-            setTimeout(() => resolve({ ok: false, status: 504, error: 'AI integration timed out' }), overallTimeoutMs),
-          ),
-        ])) as { ok: boolean; status: number; error?: string };
+              const requestId = aiRequestId();
+              await safeLog({
+                type: 'request',
+                source: 'ai-integration',
+                requestId,
+                companyId: inn,
+                message: 'Пуск пайплайна через /v1/pipeline/full',
+                payload: { path: '/v1/pipeline/full', body: { inn } },
+              });
 
-        await removeFromQueue([inn]);
-        integrationResults.push({ inn, ...timedResult });
-      }),
-    );
+              const res = await callAiIntegration(`/v1/pipeline/full`, {
+                method: 'POST',
+                body: JSON.stringify({ inn }),
+                timeoutMs: stepTimeoutMs,
+              });
 
-    const integrationSummary = {
-      base: integrationBase,
-      mode,
-      modeLocked,
-      attempted: integrationResults.length,
-      succeeded: integrationResults.filter((r) => r.ok).length,
-      failed: integrationResults.filter((r) => !r.ok),
-      steps,
-      perStep,
-    };
+              if (res.ok) {
+                await safeLog({
+                  type: 'response',
+                  source: 'ai-integration',
+                  requestId,
+                  companyId: inn,
+                  message: 'Пайплайн принят внешним сервисом',
+                  payload: res.data,
+                });
+                return { ok: true as const, status: res.status };
+              }
 
-    const overallOk = integrationResults.every((r) => r.ok);
-    const status = overallOk ? 200 : 502;
+              await safeLog({
+                type: 'error',
+                source: 'ai-integration',
+                requestId,
+                companyId: inn,
+                message: `Ошибка при вызове AI integration: ${res.error}`,
+                payload: { status: res.status },
+              });
+              return { ok: false as const, status: res.status, error: res.error };
+            };
 
-    return NextResponse.json(
-      { ok: overallOk, queued: inns.length, integration: integrationSummary },
-      { status },
-    );
+            const timedResult = (await Promise.race([
+              runInn(),
+              new Promise<{ ok: false; status: number; error: string }>((resolve) =>
+                setTimeout(() => resolve({ ok: false, status: 504, error: 'AI integration timed out' }), overallTimeoutMs),
+              ),
+            ])) as { ok: boolean; status: number; error?: string };
+
+            await removeFromQueue([inn]);
+            integrationResults.push({ inn, ...timedResult });
+
+            if (timedResult.ok) {
+              await dbBitrix
+                .query(
+                  `UPDATE dadata_result SET analysis_status = 'running', analysis_started_at = now() WHERE inn = $1`,
+                  [inn],
+                )
+                .catch((error) => console.warn('mark running failed', error));
+            } else {
+              await dbBitrix
+                .query(
+                  `UPDATE dadata_result SET analysis_status = 'failed', analysis_finished_at = now(), server_error = 1 WHERE inn = $1`,
+                  [inn],
+                )
+                .catch((error) => console.warn('mark failed failed', error));
+            }
+          }),
+        );
+
+        const overallOk = integrationResults.every((r) => r.ok);
+        if (overallOk) {
+          await dbBitrix
+            .query(`UPDATE dadata_result SET analysis_status = 'running' WHERE inn = ANY($1::text[])`, [inns])
+            .catch((error) => console.warn('mark batch running failed', error));
+        }
+      } catch (error) {
+        console.error('Background AI analysis run failed', error);
+      }
+    })();
+
+    return ack;
   } catch (e) {
     console.error('POST /api/ai-analysis/run error', e);
     return NextResponse.json({ ok: false, error: 'Internal Server Error' }, { status: 500 });
