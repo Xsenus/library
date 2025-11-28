@@ -37,14 +37,14 @@ export function getStepTimeoutMs(): number {
   const raw = readEnv('AI_INTEGRATION_STEP_TIMEOUT_MS');
   const parsed = raw ? Number(raw) : NaN;
   if (Number.isFinite(parsed) && parsed > 1000) return parsed;
-  return 12000;
+  return 45000;
 }
 
 export function getOverallTimeoutMs(): number {
   const raw = readEnv('AI_INTEGRATION_OVERALL_TIMEOUT_MS');
   const parsed = raw ? Number(raw) : NaN;
   if (Number.isFinite(parsed) && parsed > 1000) return parsed;
-  return 15000;
+  return 60000;
 }
 
 export function getDefaultSteps() {

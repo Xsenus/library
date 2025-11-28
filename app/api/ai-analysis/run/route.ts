@@ -229,6 +229,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const health = await callAiIntegration('/health', { timeoutMs: 3000 });
+    if (!health.ok) {
+      return NextResponse.json(
+        {
+          ok: false,
+          error: `AI integration недоступна: ${health.error}`,
+        },
+        { status: 502 },
+      );
+    }
+
     const forcedMode = getForcedLaunchMode();
     const modeLocked = isLaunchModeLocked();
     const mode: 'full' | 'steps' = modeLocked ? forcedMode : body?.mode === 'steps' ? 'steps' : 'full';
