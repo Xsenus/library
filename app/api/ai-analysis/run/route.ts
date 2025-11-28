@@ -46,11 +46,7 @@ async function ensureQueueTable() {
 function normalizeInns(raw: any): string[] {
   if (!Array.isArray(raw)) return [];
   return Array.from(
-    new Set(
-      raw
-        .map((v) => (v == null ? '' : String(v).trim()))
-        .filter((v) => v.length > 0),
-    ),
+    new Set(raw.map((v) => (v == null ? '' : String(v).trim())).filter((v) => v.length > 0)),
   );
 }
 
@@ -91,22 +87,59 @@ type StepDefinition = {
 
 const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
   lookup: {
-    primary: { path: () => '/v1/lookup/card', label: 'Карта компании (lookup)', method: 'POST', body: true },
-    fallbacks: [{ path: (inn) => `/v1/lookup/${encodeURIComponent(inn)}/card`, label: 'GET lookup', method: 'GET' }],
+    primary: {
+      path: () => '/v1/lookup/card',
+      label: 'Карта компании (lookup)',
+      method: 'POST',
+      body: true,
+    },
+    fallbacks: [
+      {
+        path: (inn) => `/v1/lookup/${encodeURIComponent(inn)}/card`,
+        label: 'GET lookup',
+        method: 'GET',
+      },
+    ],
   },
   parse_site: {
     primary: { path: () => '/v1/parse-site', label: 'Парсинг сайта', method: 'POST', body: true },
-    fallbacks: [{ path: (inn) => `/v1/parse-site/${encodeURIComponent(inn)}`, label: 'GET parse-site', method: 'GET' }],
+    fallbacks: [
+      {
+        path: (inn) => `/v1/parse-site/${encodeURIComponent(inn)}`,
+        label: 'GET parse-site',
+        method: 'GET',
+      },
+    ],
   },
   analyze_json: {
     primary: { path: () => '/v1/analyze-json', label: 'AI-анализ', method: 'POST', body: true },
-    fallbacks: [{ path: (inn) => `/v1/analyze-json/${encodeURIComponent(inn)}`, label: 'GET analyze-json', method: 'GET' }],
+    fallbacks: [
+      {
+        path: (inn) => `/v1/analyze-json/${encodeURIComponent(inn)}`,
+        label: 'GET analyze-json',
+        method: 'GET',
+      },
+    ],
   },
   ib_match: {
-    primary: { path: () => '/v1/ib-match', label: 'Сопоставление продклассов', method: 'POST', body: true },
+    primary: {
+      path: () => '/v1/ib-match',
+      label: 'Сопоставление продклассов',
+      method: 'POST',
+      body: true,
+    },
     fallbacks: [
-      { path: () => '/v1/ib-match/by-inn', label: 'POST ib-match/by-inn', method: 'POST', body: true },
-      { path: (inn) => `/v1/ib-match/by-inn?inn=${encodeURIComponent(inn)}`, label: 'GET ib-match/by-inn', method: 'GET' },
+      {
+        path: () => '/v1/ib-match/by-inn',
+        label: 'POST ib-match/by-inn',
+        method: 'POST',
+        body: true,
+      },
+      {
+        path: (inn) => `/v1/ib-match/by-inn?inn=${encodeURIComponent(inn)}`,
+        label: 'GET ib-match/by-inn',
+        method: 'GET',
+      },
     ],
   },
   equipment_selection: {
@@ -274,12 +307,13 @@ export async function POST(request: NextRequest) {
 
     const forcedMode = getForcedLaunchMode();
     const modeLocked = isLaunchModeLocked();
-    const mode: 'full' | 'steps' = modeLocked ? forcedMode : body?.mode === 'steps' ? 'steps' : 'full';
-    const steps = mode === 'steps'
-      ? modeLocked
-        ? getForcedSteps()
-        : normalizeSteps(body?.steps)
-      : null;
+    const mode: 'full' | 'steps' = modeLocked
+      ? forcedMode
+      : body?.mode === 'steps'
+      ? 'steps'
+      : 'full';
+    const steps =
+      mode === 'steps' ? (modeLocked ? getForcedSteps() : normalizeSteps(body?.steps)) : null;
 
     const payloadRaw =
       body?.payload && typeof body.payload === 'object' && body.payload !== null
@@ -318,17 +352,30 @@ export async function POST(request: NextRequest) {
     await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload)]);
 
     // Немедленно помечаем компании как поставленные в очередь, чтобы UI не ждал долгий запрос
-    await dbBitrix.query(
-      `UPDATE dadata_result SET analysis_status = 'queued', analysis_started_at = NULL, analysis_finished_at = NULL WHERE inn = ANY($1::text[])`,
-      [inns],
-    ).catch((error) => console.warn('mark queued failed', error));
+    await dbBitrix
+      .query(
+        `UPDATE dadata_result SET analysis_status = 'queued', analysis_started_at = NULL, analysis_finished_at = NULL WHERE inn = ANY($1::text[])`,
+        [inns],
+      )
+      .catch((error) => console.warn('mark queued failed', error));
 
-    const ack = NextResponse.json({ ok: true, queued: inns.length, mode, steps, integration: { base: integrationBase } });
+    const ack = NextResponse.json({
+      ok: true,
+      queued: inns.length,
+      mode,
+      steps,
+      integration: { base: integrationBase },
+    });
 
     // Запускаем интеграцию в фоне, чтобы сам запрос отвечал сразу
     void (async () => {
       try {
-        const integrationResults: Array<{ inn: string; ok: boolean; status: number; error?: string }> = [];
+        const integrationResults: Array<{
+          inn: string;
+          ok: boolean;
+          status: number;
+          error?: string;
+        }> = [];
         const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
         const companyNames = await getCompanyNames(inns);
 
@@ -361,14 +408,19 @@ export async function POST(request: NextRequest) {
                   if (res.ok) {
                     progress = Math.max(progress, (idx + 1) / steps.length);
                     await dbBitrix
-                      .query(`UPDATE dadata_result SET analysis_progress = $2 WHERE inn = $1`, [inn, progress])
+                      .query(`UPDATE dadata_result SET analysis_progress = $2 WHERE inn = $1`, [
+                        inn,
+                        progress,
+                      ])
                       .catch((error) => console.warn('progress update failed', error));
                   }
                   if (!res.ok) break;
                 }
                 perStep.push({ inn, results: stepResults });
                 const ok = stepResults.every((s) => s.ok);
-                const lastStatus = stepResults.length ? stepResults[stepResults.length - 1]?.status : 0;
+                const lastStatus = stepResults.length
+                  ? stepResults[stepResults.length - 1]?.status
+                  : 0;
                 const firstError = stepResults.find((s) => !s.ok)?.error;
                 return { ok, status: lastStatus ?? 0, error: firstError, progress };
               }
@@ -417,7 +469,10 @@ export async function POST(request: NextRequest) {
               timedResult = (await Promise.race([
                 runInn(),
                 new Promise<{ ok: false; status: number; error: string }>((resolve) =>
-                  setTimeout(() => resolve({ ok: false, status: 504, error: 'AI integration timed out' }), overallTimeoutMs),
+                  setTimeout(
+                    () => resolve({ ok: false, status: 504, error: 'AI integration timed out' }),
+                    overallTimeoutMs,
+                  ),
                 ),
               ])) as { ok: boolean; status: number; error?: string; progress?: number };
             } catch (error: any) {
@@ -440,11 +495,15 @@ export async function POST(request: NextRequest) {
                 source: 'ai-integration',
                 companyId: inn,
                 companyName,
-                notificationKey: 'analysis_finish',
+                notificationKey: 'analysis_success',
                 message: 'Анализ завершён',
               });
             } else {
-              await markFinished(inn, { status: 'failed', durationMs, progress: timedResult.progress });
+              await markFinished(inn, {
+                status: 'failed',
+                durationMs,
+                progress: timedResult.progress,
+              });
               await safeLog({
                 type: 'error',
                 source: 'ai-integration',
