@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
 import { getSession } from '@/lib/auth';
 import { logAiDebugEvent } from '@/lib/ai-debug';
-import { callAiIntegration, getAiIntegrationBase } from '@/lib/ai-integration';
+import { getAiIntegrationBase } from '@/lib/ai-integration';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -115,12 +115,8 @@ export async function POST(request: NextRequest) {
 
     const integrationBase = getAiIntegrationBase();
     if (integrationBase && inns.length) {
-      const res = await callAiIntegration('/v1/pipeline/stop', {
-        method: 'POST',
-        body: JSON.stringify({ inns }),
-        timeoutMs: 5000,
-      });
-      payload.integration_stop = res.ok ? 'sent' : `failed: ${res.error}`;
+      payload.integration_stop =
+        'пропущено: во внешнем API нет ручки остановки, прекращаем только локальную очередь';
     }
 
     await dbBitrix.query(

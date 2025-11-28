@@ -115,7 +115,6 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
       label: 'Подбор оборудования',
       method: 'GET',
     },
-    fallbacks: [{ path: (inn) => `/v1/equipment-selection?inn=${encodeURIComponent(inn)}`, label: 'GET equipment-selection', method: 'GET' }],
   },
 };
 
