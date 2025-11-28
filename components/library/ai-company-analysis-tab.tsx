@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { ChevronDown, ChevronUp, Filter, Info, Loader2, Play } from 'lucide-react';
+import { ChevronDown, ChevronUp, Filter, Info, Loader2, Play, Square } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -25,11 +25,22 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/comp
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import type { Industry } from '@/lib/validators';
+import type { AiIntegrationHealth } from '@/lib/ai-integration';
+import { getDefaultSteps, getForcedLaunchMode, getForcedSteps, isLaunchModeLocked } from '@/lib/ai-analysis-config';
+import type { StepKey } from '@/lib/ai-analysis-types';
 
 const statusOptions = [
   { key: 'success', label: 'Успешные анализы', field: 'analysis_ok' as const },
   { key: 'server_error', label: 'Сервер был недоступен', field: 'server_error' as const },
   { key: 'no_valid_site', label: 'Не было доступных доменов', field: 'no_valid_site' as const },
+];
+
+const stepOptions: { key: StepKey; label: string }[] = [
+  { key: 'lookup', label: 'Lookup' },
+  { key: 'parse_site', label: 'Парсинг' },
+  { key: 'analyze_json', label: 'AI-анализ' },
+  { key: 'ib_match', label: 'Продклассы' },
+  { key: 'equipment_selection', label: 'Оборудование' },
 ];
 
 type PipelineStep = { label: string; status?: string | null };
@@ -76,6 +87,7 @@ type FetchResponse = {
   page: number;
   pageSize: number;
   available?: Partial<Record<'analysis_ok' | 'server_error' | 'no_valid_site' | 'analysis_progress', boolean>>;
+  integration?: AiIntegrationHealth | null;
 };
 
 function formatRevenue(value: number | null | undefined): string {
@@ -246,6 +258,7 @@ type AvailableMap = FetchResponse['available'];
 export default function AiCompanyAnalysisTab() {
   const [companies, setCompanies] = useState<AiCompany[]>([]);
   const [available, setAvailable] = useState<AvailableMap>({});
+  const [integrationHealth, setIntegrationHealth] = useState<AiIntegrationHealth | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
@@ -261,6 +274,7 @@ export default function AiCompanyAnalysisTab() {
   const [infoCompany, setInfoCompany] = useState<AiCompany | null>(null);
   const [bulkLoading, setBulkLoading] = useState(false);
   const [runInn, setRunInn] = useState<string | null>(null);
+  const [stopInn, setStopInn] = useState<string | null>(null);
   const [stopLoading, setStopLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [autoRefreshRemaining, setAutoRefreshRemaining] = useState<number | null>(null);
@@ -269,6 +283,17 @@ export default function AiCompanyAnalysisTab() {
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [stopSignalAt, setStopSignalAt] = useState<number | null>(null);
+  const forcedLaunchMode = useMemo(() => getForcedLaunchMode(true), []);
+  const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
+  const forcedSteps = useMemo(() => getForcedSteps(true), []);
+  const launchMode: 'full' | 'steps' = forcedLaunchMode;
+  const [stepFlags, setStepFlags] = useState<Record<StepKey, boolean>>(() => {
+    const defaults = launchModeLocked ? forcedSteps : getDefaultSteps();
+    return stepOptions.reduce(
+      (acc, opt) => ({ ...acc, [opt.key]: defaults.includes(opt.key) }),
+      {} as Record<StepKey, boolean>,
+    );
+  });
 
   const debouncedSearch = useDebounce(search, 400);
   const { toast } = useToast();
@@ -292,6 +317,15 @@ export default function AiCompanyAnalysisTab() {
     [companies],
   );
 
+  const integrationHost = useMemo(() => {
+    if (!integrationHealth?.base) return null;
+    try {
+      return new URL(integrationHealth.base).host;
+    } catch {
+      return integrationHealth.base;
+    }
+  }, [integrationHealth]);
+
   const isRefreshing = loading || isPending;
   const okvedSelectValue = okvedCode ?? '__all__';
   const autoRefreshLabel = useMemo(() => {
@@ -301,6 +335,51 @@ export default function AiCompanyAnalysisTab() {
     const seconds = totalSeconds % 60;
     return `Автообновление · ${minutes}:${seconds.toString().padStart(2, '0')}`;
   }, [autoRefreshRemaining]);
+
+  const selectedSteps = useMemo(
+    () => (launchModeLocked ? forcedSteps : stepOptions.filter((opt) => stepFlags[opt.key]).map((opt) => opt.key)),
+    [forcedSteps, launchModeLocked, stepFlags],
+  );
+
+  const stepLabelMap = useMemo(
+    () => stepOptions.reduce((acc, opt) => ({ ...acc, [opt.key]: opt.label }), {} as Record<StepKey, string>),
+    [],
+  );
+
+  const integrationSummaryText = useCallback((summary: any): string | null => {
+    if (!summary) return null;
+    const attempted = Number(summary.attempted ?? 0);
+    const succeeded = Number(summary.succeeded ?? 0);
+    const failedCount = Array.isArray(summary.failed) ? summary.failed.length : 0;
+    const base = typeof summary.base === 'string' ? summary.base : null;
+    const stepsRaw = Array.isArray(summary.steps) ? (summary.steps as StepKey[]) : [];
+
+    const parts: string[] = [];
+    if (base) {
+      try {
+        parts.push(`API: ${new URL(base).host}`);
+      } catch {
+        parts.push(`API: ${base}`);
+      }
+    }
+    if (attempted > 0) {
+      parts.push(`успешно ${succeeded} из ${attempted}`);
+      if (failedCount > 0) parts.push(`ошибки: ${failedCount}`);
+    }
+
+    const modeLabel = summary.mode === 'steps' ? 'режим: по шагам' : 'режим: единый запрос';
+    parts.push(summary.modeLocked ? `${modeLabel} (зафиксирован)` : modeLabel);
+
+    if (stepsRaw.length) {
+      const stepNames = stepsRaw
+        .map((key) => stepLabelMap[key] || key)
+        .filter(Boolean)
+        .join(' → ');
+      if (stepNames.length) parts.push(`шаги: ${stepNames}`);
+    }
+
+    return parts.length ? parts.join(' · ') : null;
+  }, [stepLabelMap]);
 
   const fetchCompanies = useCallback(
     async (pageParam: number, pageSizeParam: number) => {
@@ -327,6 +406,7 @@ export default function AiCompanyAnalysisTab() {
           setCompanies(items);
           setTotal(typeof data.total === 'number' ? data.total : 0);
           setAvailable(data.available ?? {});
+          setIntegrationHealth(data.integration ?? null);
           setLastLoadedAt(new Date().toISOString());
         });
 
@@ -346,6 +426,7 @@ export default function AiCompanyAnalysisTab() {
           setCompanies([]);
           setTotal(0);
           setAvailable({});
+          setIntegrationHealth(null);
           setLastLoadedAt(null);
         });
         autoRefreshDeadlineRef.current = 0;
@@ -452,6 +533,19 @@ export default function AiCompanyAnalysisTab() {
       return next;
     });
   }, [companies]);
+
+  const toggleStepFlag = useCallback(
+    (key: StepKey) => {
+      setStepFlags((prev) => {
+        if (launchModeLocked) return prev;
+        const enabled = Object.values(prev).filter(Boolean).length;
+        const nextValue = !prev[key];
+        if (!nextValue && enabled <= 1) return prev; // хотя бы один шаг должен остаться включенным
+        return { ...prev, [key]: nextValue };
+      });
+    },
+    [launchModeLocked],
+  );
 
   const toggleEmailExpansion = useCallback((inn: string) => {
     setExpandedEmails((prev) => {
@@ -599,11 +693,22 @@ export default function AiCompanyAnalysisTab() {
       const res = await fetch('/api/ai-analysis/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inns }),
+        body: JSON.stringify({ inns, mode: launchMode, steps: launchMode === 'steps' ? selectedSteps : undefined }),
       });
-      if (!res.ok) throw new Error(`Request failed with ${res.status}`);
+      const data = (await res.json().catch(() => null)) as { integration?: any; error?: string } | null;
+      if (!res.ok) {
+        const message = data?.error ? `Ошибка запуска: ${data.error}` : `Request failed with ${res.status}`;
+        throw new Error(message);
+      }
       markQueued(inns);
-      toast({ title: 'Запуск анализа', description: `Компаний в очереди: ${inns.length}` });
+      const note = integrationSummaryText(data?.integration);
+      toast({
+        title: 'Запуск анализа',
+        description:
+          note && note.length > 0
+            ? `Компаний в очереди: ${inns.length} · ${note}`
+            : `Компаний в очереди: ${inns.length}`,
+      });
       fetchCompanies(page, pageSize);
       scheduleAutoRefresh();
       setSelected(new Set<string>());
@@ -611,13 +716,27 @@ export default function AiCompanyAnalysisTab() {
       console.error('Failed to start analysis for selected companies:', error);
       toast({
         title: 'Ошибка запуска анализа',
-        description: 'Не удалось поставить компании в очередь. Попробуйте позже.',
+        description:
+          error instanceof Error && error.message
+            ? error.message
+            : 'Не удалось поставить компании в очередь. Попробуйте позже.',
         variant: 'destructive',
       });
     } finally {
       setBulkLoading(false);
     }
-  }, [selected, toast, fetchCompanies, page, pageSize, scheduleAutoRefresh, markQueued]);
+  }, [
+    selected,
+    toast,
+    fetchCompanies,
+    page,
+    pageSize,
+    scheduleAutoRefresh,
+    markQueued,
+    integrationSummaryText,
+    launchMode,
+    selectedSteps,
+  ]);
 
   const handleRunSingle = useCallback(
     async (inn: string) => {
@@ -626,25 +745,50 @@ export default function AiCompanyAnalysisTab() {
         const res = await fetch('/api/ai-analysis/run', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ inns: [inn] }),
+          body: JSON.stringify({
+            inns: [inn],
+            mode: launchMode,
+            steps: launchMode === 'steps' ? selectedSteps : undefined,
+          }),
         });
-        if (!res.ok) throw new Error(`Request failed with ${res.status}`);
+        const data = (await res.json().catch(() => null)) as { integration?: any; error?: string } | null;
+        if (!res.ok) {
+          const message = data?.error ? `Ошибка запуска: ${data.error}` : `Request failed with ${res.status}`;
+          throw new Error(message);
+        }
         markQueued([inn]);
-        toast({ title: 'Анализ поставлен в очередь', description: `Компания ${inn}` });
+        const note = integrationSummaryText(data?.integration);
+        toast({
+          title: 'Анализ поставлен в очередь',
+          description: note && note.length > 0 ? note : `Компания ${inn}`,
+        });
         fetchCompanies(page, pageSize);
         scheduleAutoRefresh();
       } catch (error) {
         console.error('Failed to run analysis', error);
         toast({
           title: 'Ошибка запуска',
-          description: 'Не удалось поставить компанию в очередь. Попробуйте позже.',
+          description:
+            error instanceof Error && error.message
+              ? error.message
+              : 'Не удалось поставить компанию в очередь. Попробуйте позже.',
           variant: 'destructive',
         });
       } finally {
         setRunInn(null);
       }
     },
-    [toast, fetchCompanies, page, pageSize, scheduleAutoRefresh, markQueued],
+    [
+      toast,
+      fetchCompanies,
+      page,
+      pageSize,
+      scheduleAutoRefresh,
+      markQueued,
+      integrationSummaryText,
+      launchMode,
+      selectedSteps,
+    ],
   );
 
   const handleStop = useCallback(async () => {
@@ -689,6 +833,41 @@ export default function AiCompanyAnalysisTab() {
       setStopLoading(false);
     }
   }, [companies, toast, clearQueued, fetchCompanies, page, pageSize]);
+
+  const handleStopSingle = useCallback(
+    async (inn: string) => {
+      setStopInn(inn);
+      try {
+        const res = await fetch('/api/ai-analysis/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inns: [inn] }),
+        });
+        if (!res.ok) throw new Error(`Request failed with ${res.status}`);
+        const data = (await res.json().catch(() => null)) as { removed?: number } | null;
+        const removed = typeof data?.removed === 'number' ? data.removed : null;
+        toast({
+          title: 'Отправлен сигнал остановки',
+          description:
+            removed != null
+              ? `Снято из очереди: ${removed}`
+              : 'Команда остановки отправлена для выбранной компании.',
+        });
+        clearQueued([inn]);
+        fetchCompanies(page, pageSize);
+      } catch (error) {
+        console.error('Failed to stop single company', error);
+        toast({
+          title: 'Не удалось остановить компанию',
+          description: 'Попробуйте повторить попытку позже.',
+          variant: 'destructive',
+        });
+      } finally {
+        setStopInn(null);
+      }
+    },
+    [toast, clearQueued, fetchCompanies, page, pageSize],
+  );
 
   const headerCheckedState = useMemo(() => {
     if (!companies.length) return false;
@@ -759,6 +938,19 @@ export default function AiCompanyAnalysisTab() {
                   <Badge variant="default" className="gap-1">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     {autoRefreshLabel}
+                  </Badge>
+                )}
+                {integrationHealth && (
+                  <Badge
+                    variant={integrationHealth.available ? 'outline' : 'destructive'}
+                    className="gap-1"
+                    title={integrationHealth.detail ?? undefined}
+                  >
+                    <span className="font-medium">AI integration</span>
+                    <span className="text-[11px] text-muted-foreground">
+                      {integrationHealth.available ? 'online' : 'offline'}
+                      {integrationHost ? ` · ${integrationHost}` : ''}
+                    </span>
                   </Badge>
                 )}
                 {stopSignalAt && (
@@ -926,6 +1118,29 @@ export default function AiCompanyAnalysisTab() {
                   </Badge>
                 )}
               </div>
+            </div>
+            <div className="flex flex-col gap-2 rounded-lg border bg-background/60 p-3">
+              <div className="flex flex-wrap items-center gap-3 text-sm">
+                <span className="font-medium">Режим запуска</span>
+                <Badge variant="secondary" className="font-normal">
+                  По шагам (управляется настройками)
+                </Badge>
+              </div>
+              {launchMode === 'steps' && (
+                <div className="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+                  <span className="text-foreground">Шаги (из файла настроек, меняются через переменные окружения):</span>
+                  {stepOptions.map((opt) => (
+                    <label key={opt.key} className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
+                      <Checkbox
+                        checked={stepFlags[opt.key]}
+                        onCheckedChange={() => toggleStepFlag(opt.key)}
+                        disabled={launchModeLocked}
+                      />
+                      <span className="text-foreground">{opt.label}</span>
+                    </label>
+                  ))}
+                </div>
+              )}
             </div>
             {statusFilters.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 text-xs">
@@ -1283,6 +1498,28 @@ export default function AiCompanyAnalysisTab() {
                                   </TooltipTrigger>
                                   <TooltipContent side="bottom">{runTooltip}</TooltipContent>
                                 </Tooltip>
+                                {(state.running || state.queued) && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="destructive"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => handleStopSingle(company.inn)}
+                                        disabled={stopInn === company.inn}
+                                        aria-label={`Остановить компанию ${company.short_name}`}
+                                      >
+                                        {stopInn === company.inn ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Square className="h-4 w-4" />
+                                        )}
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom">Отменить запуск</TooltipContent>
+                                  </Tooltip>
+                                )}
                                 <Tooltip>
                                   <TooltipTrigger asChild>
                                     <Button
@@ -1328,6 +1565,126 @@ export default function AiCompanyAnalysisTab() {
             </DialogHeader>
             {infoCompany && (
               <div className="space-y-4 text-sm">
+                {(() => {
+                  const status = getStatusBadge(infoCompany);
+                  const steps = toPipelineSteps(infoCompany.analysis_pipeline);
+                  const state = computeCompanyState(infoCompany);
+                  const progressPercent = Math.min(
+                    100,
+                    Math.max(0, Math.round((infoCompany.analysis_progress ?? 0) * 100)),
+                  );
+                  const startedDate = formatDate(infoCompany.analysis_started_at ?? null);
+                  const startedTime = formatTime(infoCompany.analysis_started_at ?? null);
+                  const startedAt =
+                    startedDate !== '—'
+                      ? startedTime !== '—'
+                        ? `${startedDate} · ${startedTime}`
+                        : startedDate
+                      : '—';
+                  const finishedDate = formatDate(infoCompany.analysis_finished_at ?? null);
+                  const finishedTime = formatTime(infoCompany.analysis_finished_at ?? null);
+                  const finishedAt =
+                    finishedDate !== '—'
+                      ? finishedTime !== '—'
+                        ? `${finishedDate} · ${finishedTime}`
+                        : finishedDate
+                      : '—';
+                  const queuedDate = formatDate(infoCompany.queued_at ?? null);
+                  const queuedTime = formatTime(infoCompany.queued_at ?? null);
+                  const queuedAt =
+                    queuedDate !== '—'
+                      ? queuedTime !== '—'
+                        ? `${queuedDate} · ${queuedTime}`
+                        : queuedDate
+                      : '—';
+                  const duration = state.running
+                    ? '—'
+                    : formatDuration(infoCompany.analysis_duration_ms ?? null);
+                  const attempts =
+                    infoCompany.analysis_attempts != null ? infoCompany.analysis_attempts : undefined;
+                  const score =
+                    infoCompany.analysis_score != null && Number.isFinite(infoCompany.analysis_score)
+                      ? infoCompany.analysis_score.toFixed(2)
+                      : undefined;
+
+                  return (
+                    <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Badge variant={status.variant}>{status.label}</Badge>
+                        <span className="text-xs text-muted-foreground">
+                          {state.running
+                            ? 'Анализ выполняется прямо сейчас'
+                            : infoCompany.analysis_finished_at || infoCompany.analysis_started_at
+                            ? 'Последний запуск завершён или в ожидании завершения'
+                            : 'Анализ ещё не запускался'}
+                        </span>
+                      </div>
+
+                      <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-3">
+                        <div>
+                          <div className="uppercase">Поставлено в очередь</div>
+                          <div className="text-foreground">{queuedAt}</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Начало</div>
+                          <div className="text-foreground">{startedAt}</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Завершение</div>
+                          <div className="text-foreground">{finishedAt}</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Попыток</div>
+                          <div className="text-foreground">{attempts ?? '—'}</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Прогресс</div>
+                          <div className="text-foreground">{progressPercent}%</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Оценка</div>
+                          <div className="text-foreground">{score ?? '—'}</div>
+                        </div>
+                        <div>
+                          <div className="uppercase">Длительность</div>
+                          <div className="text-foreground">{duration}</div>
+                        </div>
+                        {infoCompany.queued_by && (
+                          <div>
+                            <div className="uppercase">Поставил в очередь</div>
+                            <div className="text-foreground">{infoCompany.queued_by}</div>
+                          </div>
+                        )}
+                      </div>
+
+                      {state.running && (
+                        <div className="space-y-1">
+                          <Progress value={progressPercent} className="h-2" />
+                          <div className="text-[11px] text-muted-foreground">
+                            Выполняется… {progressPercent}%
+                          </div>
+                        </div>
+                      )}
+
+                      {steps.length > 0 && (
+                        <div className="space-y-1">
+                          <div className="text-xs text-muted-foreground">Последний пайплайн</div>
+                          <ol className="list-decimal space-y-1 pl-4 text-[13px] text-foreground">
+                            {steps.map((step, idx) => (
+                              <li key={`${infoCompany.inn}-dlg-step-${idx}`}>
+                                {step.label}
+                                {step.status ? (
+                                  <span className="text-muted-foreground"> · {step.status}</span>
+                                ) : null}
+                              </li>
+                            ))}
+                          </ol>
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
+
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>

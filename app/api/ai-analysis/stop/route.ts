@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
 import { getSession } from '@/lib/auth';
+import { logAiDebugEvent } from '@/lib/ai-debug';
+import { getAiIntegrationBase } from '@/lib/ai-integration';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -109,12 +111,33 @@ export async function POST(request: NextRequest) {
       );
       removed = res.rowCount ?? 0;
       payload.removed_from_queue = removed;
+
+      // Помечаем остановку в витрине, чтобы UI сразу отобразил финальный статус
+      await dbBitrix
+        .query(
+          `UPDATE dadata_result SET analysis_status = 'stopped', analysis_finished_at = now() WHERE inn = ANY($1::text[])`,
+          [inns],
+        )
+        .catch((error) => console.warn('mark stopped failed', error));
+    }
+
+    const integrationBase = getAiIntegrationBase();
+    if (integrationBase && inns.length) {
+      payload.integration_stop =
+        'пропущено: во внешнем API нет ручки остановки, прекращаем только локальную очередь';
     }
 
     await dbBitrix.query(
       `INSERT INTO ai_analysis_commands (action, payload) VALUES ('stop', $1::jsonb)`,
       [JSON.stringify(payload)],
     );
+
+    await logAiDebugEvent({
+      type: 'notification',
+      source: 'ai-integration',
+      message: 'Запрошена остановка анализа',
+      payload,
+    });
 
     return NextResponse.json({ ok: true, removed });
   } catch (e) {
