@@ -17,6 +17,14 @@ export const runtime = 'nodejs';
 export const revalidate = 0;
 
 let ensuredQueue = false;
+const PROCESS_LOCK_KEY = 42_111;
+const MAX_STEP_ATTEMPTS = 5;
+const RETRY_DELAY_MS = 2000;
+const MAX_DEFER_ATTEMPTS = 3;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function ensureQueueTable() {
   if (ensuredQueue) return;
@@ -43,6 +51,26 @@ async function ensureQueueTable() {
   ensuredQueue = true;
 }
 
+async function acquireQueueLock(): Promise<boolean> {
+  try {
+    const res = await dbBitrix.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1) AS locked', [
+      PROCESS_LOCK_KEY,
+    ]);
+    return !!res.rows?.[0]?.locked;
+  } catch (error) {
+    console.warn('Failed to acquire AI analysis queue lock', error);
+    return false;
+  }
+}
+
+async function releaseQueueLock() {
+  try {
+    await dbBitrix.query('SELECT pg_advisory_unlock($1)', [PROCESS_LOCK_KEY]);
+  } catch (error) {
+    console.warn('Failed to release AI analysis queue lock', error);
+  }
+}
+
 function normalizeInns(raw: any): string[] {
   if (!Array.isArray(raw)) return [];
   return Array.from(
@@ -54,6 +82,41 @@ async function removeFromQueue(inns: string[]) {
   if (!inns.length) return;
   await ensureQueueTable();
   await dbBitrix.query('DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[])', [inns]);
+}
+
+async function enqueueItem(inn: string, payload: Record<string, unknown>, queuedBy: string | null) {
+  await ensureQueueTable();
+  await dbBitrix.query(
+    `INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload)
+     VALUES ($1, now(), $2, $3::jsonb)
+     ON CONFLICT (inn) DO UPDATE
+     SET queued_at = EXCLUDED.queued_at,
+         queued_by = COALESCE(EXCLUDED.queued_by, ai_analysis_queue.queued_by),
+         payload = EXCLUDED.payload`,
+    [inn, queuedBy, JSON.stringify(payload)],
+  );
+}
+
+type QueueItem = { inn: string; payload: Record<string, unknown> | null; queued_at: string | null; queued_by: string | null };
+
+async function dequeueNext(): Promise<QueueItem | null> {
+  await ensureQueueTable();
+  const res = await dbBitrix.query<QueueItem>(
+    `
+      WITH next_item AS (
+        SELECT inn, payload, queued_at, queued_by
+        FROM ai_analysis_queue
+        ORDER BY queued_at ASC
+        LIMIT 1
+        FOR UPDATE SKIP LOCKED
+      )
+      DELETE FROM ai_analysis_queue q
+      USING next_item
+      WHERE q.inn = next_item.inn
+      RETURNING q.inn, q.payload, q.queued_at, q.queued_by
+    `,
+  );
+  return res.rows?.[0] ?? null;
 }
 
 async function getCompanyNames(inns: string[]): Promise<Map<string, string>> {
@@ -178,57 +241,101 @@ async function safeLog(entry: Parameters<typeof logAiDebugEvent>[0]) {
   }
 }
 
+async function ensureIntegrationHealthy(context: {
+  inn?: string;
+  stepLabel?: string;
+  attempt: number;
+  totalAttempts: number;
+}) {
+  const health = await callAiIntegration('/health', { timeoutMs: 3000 });
+  if (!health.ok) {
+    await safeLog({
+      type: 'error',
+      source: 'ai-integration',
+      companyId: context.inn,
+      message: `AI integration недоступна перед шагом ${context.stepLabel ?? 'pipeline'}: ${health.error} (попытка ${context.attempt}/${context.totalAttempts})`,
+      payload: { status: health.status },
+    });
+    return { ok: false as const, status: health.status, error: health.error };
+  }
+  return { ok: true as const };
+}
+
 async function runStep(inn: string, step: StepKey, timeoutMs: number) {
   const definition = STEP_DEFINITIONS[step];
   const attempts: StepAttempt[] = [definition.primary, ...(definition.fallbacks ?? [])];
   let lastError: string | undefined;
   let lastStatus = 0;
 
-  for (const attempt of attempts) {
-    const requestId = aiRequestId();
-    const path = attempt.path(inn);
-    const init: RequestInit & { timeoutMs?: number } = { method: attempt.method };
+  for (let attemptNo = 1; attemptNo <= MAX_STEP_ATTEMPTS; attemptNo++) {
+    const health = await ensureIntegrationHealthy({
+      inn,
+      stepLabel: definition.primary.label,
+      attempt: attemptNo,
+      totalAttempts: MAX_STEP_ATTEMPTS,
+    });
+    if (!health.ok) {
+      lastStatus = health.status;
+      lastError = health.error;
+    } else {
+      for (const attempt of attempts) {
+        const requestId = aiRequestId();
+        const path = attempt.path(inn);
+        const init: RequestInit & { timeoutMs?: number } = { method: attempt.method };
 
-    if (attempt.body) {
-      init.body = JSON.stringify({ inn });
+        if (attempt.body) {
+          init.body = JSON.stringify({ inn });
+        }
+
+        await safeLog({
+          type: 'request',
+          source: 'ai-integration',
+          requestId,
+          companyId: inn,
+          message: `Старт шага: ${definition.primary.label} (${attempt.label}), попытка ${attemptNo}/${MAX_STEP_ATTEMPTS}`,
+          payload: { path, method: attempt.method, body: attempt.body ? { inn } : undefined },
+        });
+
+        const res = await callAiIntegration(path, { ...init, timeoutMs });
+        lastStatus = res.status;
+
+        if (res.ok) {
+          await safeLog({
+            type: 'response',
+            source: 'ai-integration',
+            requestId,
+            companyId: inn,
+            message: `Шаг успешно принят: ${definition.primary.label} (${attempt.label})`,
+            payload: res.data,
+          });
+          return { step, ok: true, status: res.status };
+        }
+
+        lastError = res.error;
+        await safeLog({
+          type: 'error',
+          source: 'ai-integration',
+          requestId,
+          companyId: inn,
+          message: `Ошибка шага ${definition.primary.label} (${attempt.label}): ${res.error}`,
+          payload: { status: res.status },
+        });
+
+        if (![404, 405].includes(res.status)) {
+          break;
+        }
+      }
     }
 
-    await safeLog({
-      type: 'request',
-      source: 'ai-integration',
-      requestId,
-      companyId: inn,
-      message: `Старт шага: ${definition.primary.label} (${attempt.label})`,
-      payload: { path, method: attempt.method, body: attempt.body ? { inn } : undefined },
-    });
-
-    const res = await callAiIntegration(path, { ...init, timeoutMs });
-    lastStatus = res.status;
-
-    if (res.ok) {
+    if (attemptNo < MAX_STEP_ATTEMPTS) {
       await safeLog({
-        type: 'response',
+        type: 'notification',
         source: 'ai-integration',
-        requestId,
         companyId: inn,
-        message: `Шаг успешно принят: ${definition.primary.label} (${attempt.label})`,
-        payload: res.data,
+        message: `Повтор шага ${definition.primary.label} через ${Math.round(RETRY_DELAY_MS / 1000)}с (${attemptNo}/${MAX_STEP_ATTEMPTS})`,
+        payload: { lastStatus, lastError },
       });
-      return { step, ok: true, status: res.status };
-    }
-
-    lastError = res.error;
-    await safeLog({
-      type: 'error',
-      source: 'ai-integration',
-      requestId,
-      companyId: inn,
-      message: `Ошибка шага ${definition.primary.label} (${attempt.label}): ${res.error}`,
-      payload: { status: res.status },
-    });
-
-    if (![404, 405].includes(res.status)) {
-      break;
+      await sleep(RETRY_DELAY_MS);
     }
   }
 
@@ -244,6 +351,17 @@ async function markRunning(inn: string) {
       [inn],
     )
     .catch((error) => console.warn('mark running failed', error));
+}
+
+async function markQueued(inn: string) {
+  await dbBitrix
+    .query(
+      `UPDATE dadata_result
+       SET analysis_status = 'queued', analysis_started_at = NULL, analysis_finished_at = NULL
+       WHERE inn = $1`,
+      [inn],
+    )
+    .catch((error) => console.warn('mark queued failed', error));
 }
 
 async function markFinished(
@@ -266,6 +384,77 @@ async function markFinished(
       [inn, result.status, result.durationMs, progress],
     )
     .catch((error) => console.warn('mark finished failed', error));
+}
+
+async function runFullPipeline(inn: string, timeoutMs: number) {
+  let lastStatus = 0;
+  let lastError: string | undefined;
+
+  for (let attemptNo = 1; attemptNo <= MAX_STEP_ATTEMPTS; attemptNo++) {
+    const health = await ensureIntegrationHealthy({
+      inn,
+      stepLabel: 'Полный пайплайн',
+      attempt: attemptNo,
+      totalAttempts: MAX_STEP_ATTEMPTS,
+    });
+
+    if (!health.ok) {
+      lastStatus = health.status;
+      lastError = health.error;
+    } else {
+      const requestId = aiRequestId();
+      await safeLog({
+        type: 'request',
+        source: 'ai-integration',
+        requestId,
+        companyId: inn,
+        message: `Пуск пайплайна через /v1/pipeline/full, попытка ${attemptNo}/${MAX_STEP_ATTEMPTS}`,
+        payload: { path: '/v1/pipeline/full', body: { inn } },
+      });
+
+      const res = await callAiIntegration(`/v1/pipeline/full`, {
+        method: 'POST',
+        body: JSON.stringify({ inn }),
+        timeoutMs,
+      });
+
+      lastStatus = res.status;
+      if (res.ok) {
+        await safeLog({
+          type: 'response',
+          source: 'ai-integration',
+          requestId,
+          companyId: inn,
+          message: 'Пайплайн принят внешним сервисом',
+          payload: res.data,
+        });
+        return { ok: true as const, status: res.status };
+      }
+
+      lastError = res.error;
+      await safeLog({
+        type: 'error',
+        source: 'ai-integration',
+        requestId,
+        companyId: inn,
+        message: `Ошибка при вызове AI integration: ${res.error}`,
+        payload: { status: res.status },
+      });
+    }
+
+    if (attemptNo < MAX_STEP_ATTEMPTS) {
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        message: `Повтор вызова пайплайна через ${Math.round(RETRY_DELAY_MS / 1000)}с (${attemptNo}/${MAX_STEP_ATTEMPTS})`,
+        payload: { lastStatus, lastError },
+      });
+      await sleep(RETRY_DELAY_MS);
+    }
+  }
+
+  return { ok: false as const, status: lastStatus, error: lastError ?? 'Unknown error' };
 }
 
 export async function POST(request: NextRequest) {
@@ -309,9 +498,9 @@ export async function POST(request: NextRequest) {
     const modeLocked = isLaunchModeLocked();
     const mode: 'full' | 'steps' = modeLocked
       ? forcedMode
-      : body?.mode === 'steps'
-      ? 'steps'
-      : 'full';
+      : body?.mode === 'full'
+      ? 'full'
+      : 'steps';
     const steps =
       mode === 'steps' ? (modeLocked ? getForcedSteps() : normalizeSteps(body?.steps)) : null;
 
@@ -330,6 +519,9 @@ export async function POST(request: NextRequest) {
       source,
       count: inns.length,
       requested_at: new Date().toISOString(),
+      mode,
+      steps: mode === 'steps' ? steps : null,
+      defer_count: 0,
     };
 
     await ensureQueueTable();
@@ -350,6 +542,13 @@ export async function POST(request: NextRequest) {
     `;
 
     await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload)]);
+
+    await safeLog({
+      type: 'notification',
+      source: 'ai-integration',
+      message: 'Компании поставлены в очередь на AI-анализ',
+      payload: { inns, requestedBy, mode, steps, source },
+    });
 
     // Немедленно помечаем компании как поставленные в очередь, чтобы UI не ждал долгий запрос
     await dbBitrix
@@ -377,15 +576,29 @@ export async function POST(request: NextRequest) {
           error?: string;
         }> = [];
         const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
-        const companyNames = await getCompanyNames(inns);
-
         const stepTimeoutMs = getStepTimeoutMs();
         const overallTimeoutMs = getOverallTimeoutMs();
 
-        await Promise.all(
-          inns.map(async (inn) => {
-            const companyName = companyNames.get(inn);
+        if (!(await acquireQueueLock())) {
+          console.warn('AI analysis queue is already being processed, skipping duplicate runner');
+          return;
+        }
+
+        try {
+          let item: QueueItem | null;
+          while ((item = await dequeueNext())) {
+            const inn = item.inn;
+            const payload = (item.payload || {}) as { mode?: unknown; steps?: unknown; defer_count?: unknown };
+            const modeFromPayload: 'full' | 'steps' = payload.mode === 'full' ? 'full' : 'steps';
+            const stepsFromPayload =
+              modeFromPayload === 'steps' ? normalizeSteps(payload.steps) : null;
+            const deferCount = Number.isFinite((payload as any).defer_count)
+              ? Number((payload as any).defer_count)
+              : 0;
+            const companyNameMap = await getCompanyNames([inn]);
+            const companyName = companyNameMap.get(inn);
             const startedAt = Date.now();
+
             await safeLog({
               type: 'notification',
               source: 'ai-integration',
@@ -397,16 +610,16 @@ export async function POST(request: NextRequest) {
             await markRunning(inn);
 
             const runInn = async () => {
-              if (mode === 'steps' && steps) {
+              if (modeFromPayload === 'steps' && stepsFromPayload) {
                 const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
                 let progress = 0;
 
-                for (let idx = 0; idx < steps.length; idx++) {
-                  const step = steps[idx];
+                for (let idx = 0; idx < stepsFromPayload.length; idx++) {
+                  const step = stepsFromPayload[idx];
                   const res = await runStep(inn, step, stepTimeoutMs);
                   stepResults.push(res);
                   if (res.ok) {
-                    progress = Math.max(progress, (idx + 1) / steps.length);
+                    progress = Math.max(progress, (idx + 1) / stepsFromPayload.length);
                     await dbBitrix
                       .query(`UPDATE dadata_result SET analysis_progress = $2 WHERE inn = $1`, [
                         inn,
@@ -425,43 +638,7 @@ export async function POST(request: NextRequest) {
                 return { ok, status: lastStatus ?? 0, error: firstError, progress };
               }
 
-              const requestId = aiRequestId();
-              await safeLog({
-                type: 'request',
-                source: 'ai-integration',
-                requestId,
-                companyId: inn,
-                message: 'Пуск пайплайна через /v1/pipeline/full',
-                payload: { path: '/v1/pipeline/full', body: { inn } },
-              });
-
-              const res = await callAiIntegration(`/v1/pipeline/full`, {
-                method: 'POST',
-                body: JSON.stringify({ inn }),
-                timeoutMs: stepTimeoutMs,
-              });
-
-              if (res.ok) {
-                await safeLog({
-                  type: 'response',
-                  source: 'ai-integration',
-                  requestId,
-                  companyId: inn,
-                  message: 'Пайплайн принят внешним сервисом',
-                  payload: res.data,
-                });
-                return { ok: true as const, status: res.status };
-              }
-
-              await safeLog({
-                type: 'error',
-                source: 'ai-integration',
-                requestId,
-                companyId: inn,
-                message: `Ошибка при вызове AI integration: ${res.error}`,
-                payload: { status: res.status },
-              });
-              return { ok: false as const, status: res.status, error: res.error };
+              return runFullPipeline(inn, stepTimeoutMs);
             };
 
             let timedResult: { ok: boolean; status: number; error?: string; progress?: number };
@@ -485,7 +662,23 @@ export async function POST(request: NextRequest) {
               await removeFromQueue([inn]);
             }
 
-            integrationResults.push({ inn, ...timedResult });
+            const shouldDefer = !timedResult.ok && deferCount < MAX_DEFER_ATTEMPTS;
+            integrationResults.push({ inn, ...timedResult, deferred: shouldDefer });
+
+            if (shouldDefer) {
+              const nextPayload = { ...payload, defer_count: deferCount + 1 };
+              await safeLog({
+                type: 'notification',
+                source: 'ai-integration',
+                companyId: inn,
+                companyName,
+                message: `Анализ отложен после ошибки (попытка ${deferCount + 1}/${MAX_DEFER_ATTEMPTS})`,
+                payload: { error: timedResult.error, status: timedResult.status },
+              });
+              await markQueued(inn);
+              await enqueueItem(inn, nextPayload, item.queued_by);
+              continue;
+            }
 
             const durationMs = Date.now() - startedAt;
             if (timedResult.ok) {
@@ -512,15 +705,19 @@ export async function POST(request: NextRequest) {
                 message: `Анализ завершён с ошибкой: ${timedResult.error ?? 'неизвестная ошибка'}`,
               });
             }
-          }),
-        );
+          }
 
-        await safeLog({
-          type: 'notification',
-          source: 'ai-integration',
-          message: 'Фоновый запуск анализа завершён',
-          payload: { results: integrationResults, perStep },
-        });
+          if (integrationResults.length) {
+            await safeLog({
+              type: 'notification',
+              source: 'ai-integration',
+              message: 'Фоновый запуск анализа завершён',
+              payload: { results: integrationResults, perStep },
+            });
+          }
+        } finally {
+          await releaseQueueLock();
+        }
       } catch (error) {
         console.error('Background AI analysis run failed', error);
       }
