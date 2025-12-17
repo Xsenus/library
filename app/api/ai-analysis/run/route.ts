@@ -574,6 +574,8 @@ export async function POST(request: NextRequest) {
           ok: boolean;
           status: number;
           error?: string;
+          progress?: number;
+          deferred?: boolean;
         }> = [];
         const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
         const stepTimeoutMs = getStepTimeoutMs();
