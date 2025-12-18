@@ -34,10 +34,29 @@ export async function getDadataColumns(): Promise<DadataColumns> {
     return cachedColumns.columns;
   }
 
-  const res = await dbBitrix.query<{ column_name: string }>(
+  let res = await dbBitrix.query<{ column_name: string }>(
     `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'dadata_result'`,
   );
   const names = new Set((res.rows ?? []).map((row) => row.column_name));
+
+  // В старых базах может отсутствовать колонка статуса, без неё обновления статуса и остановка
+  // анализа пропускаются. Попробуем добавить базовую колонку, если ни один из вариантов не
+  // найден, чтобы статус мог писаться и отображаться.
+  if (!COLUMN_SPECS.status.some((candidate) => names.has(candidate))) {
+    try {
+      await dbBitrix.query(`ALTER TABLE dadata_result ADD COLUMN IF NOT EXISTS analysis_status text`);
+      // Обновляем список колонок после добавления
+      res = await dbBitrix.query<{ column_name: string }>(
+        `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'dadata_result'`,
+      );
+      names.clear();
+      for (const row of res.rows ?? []) {
+        names.add(row.column_name);
+      }
+    } catch (error) {
+      console.warn('failed to add analysis_status column to dadata_result', error);
+    }
+  }
 
   const columns: DadataColumns = {
     status: null,
