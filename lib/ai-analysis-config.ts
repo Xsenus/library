@@ -37,14 +37,16 @@ export function getStepTimeoutMs(): number {
   const raw = readEnv('AI_INTEGRATION_STEP_TIMEOUT_MS');
   const parsed = raw ? Number(raw) : NaN;
   if (Number.isFinite(parsed) && parsed > 1000) return parsed;
-  return 45000;
+  // AI-интеграция может выполняться заметно дольше минуты, даём шагу до ~5 минут по умолчанию
+  return 300000;
 }
 
 export function getOverallTimeoutMs(): number {
   const raw = readEnv('AI_INTEGRATION_OVERALL_TIMEOUT_MS');
   const parsed = raw ? Number(raw) : NaN;
   if (Number.isFinite(parsed) && parsed > 1000) return parsed;
-  return 60000;
+  // Общий таймаут увеличен до ~10 минут, чтобы не прерывать долгие анализы
+  return 600000;
 }
 
 export function getDefaultSteps() {
