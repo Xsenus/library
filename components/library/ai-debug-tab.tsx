@@ -196,7 +196,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
           <Badge variant="outline" className="px-2 py-1 text-xs">
             Всего записей: {total}
           </Badge>
-          <Button variant="outline" size="sm" onClick={fetchData} disabled={loading}>
+          <Button variant="outline" size="sm" onClick={() => fetchData()} disabled={loading}>
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             <span className="ml-2">Обновить</span>
           </Button>
