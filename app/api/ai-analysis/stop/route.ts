@@ -3,6 +3,7 @@ import { dbBitrix } from '@/lib/db-bitrix';
 import { getSession } from '@/lib/auth';
 import { logAiDebugEvent } from '@/lib/ai-debug';
 import { getAiIntegrationBase } from '@/lib/ai-integration';
+import { getDadataColumns } from '@/lib/dadata-columns';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -113,18 +114,34 @@ export async function POST(request: NextRequest) {
       payload.removed_from_queue = removed;
 
       // Помечаем остановку в витрине, чтобы UI сразу отобразил финальный статус
-      await dbBitrix
-        .query(
-          `UPDATE dadata_result SET analysis_status = 'stopped', analysis_finished_at = now() WHERE inn = ANY($1::text[])`,
-          [inns],
-        )
-        .catch((error) => console.warn('mark stopped failed', error));
+      const columns = await getDadataColumns();
+      if (columns.status) {
+        const sets = [`"${columns.status}" = 'stopped'`];
+
+        if (columns.finishedAt) {
+          sets.push(`"${columns.finishedAt}" = now()`);
+        }
+
+        if (columns.progress) {
+          sets.push(`"${columns.progress}" = NULL`);
+        }
+
+        if (columns.startedAt) {
+          sets.push(`"${columns.startedAt}" = NULL`);
+        }
+
+        const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = ANY($1::text[])`;
+
+        await dbBitrix.query(sql, [inns]).catch((error) => console.warn('mark stopped failed', error));
+      } else {
+        console.warn('mark stopped skipped: no status column in dadata_result');
+      }
     }
 
     const integrationBase = getAiIntegrationBase();
     if (integrationBase && inns.length) {
       payload.integration_stop =
-        'пропущено: во внешнем API нет ручки остановки, прекращаем только локальную очередь';
+        'Внешний AI-сервис не поддерживает остановку уже запущенных задач; завершаем только локальную очередь и статус.';
     }
 
     await dbBitrix.query(

@@ -1,7 +1,17 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowDownLeft, ArrowUpRight, Bell, Code2, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
+import {
+  AlertTriangle,
+  ArrowDownLeft,
+  ArrowUpRight,
+  Bell,
+  Code2,
+  ExternalLink,
+  Loader2,
+  RefreshCw,
+  Trash2,
+} from 'lucide-react';
 import type { AiDebugEventRecord } from '@/lib/ai-debug';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -35,12 +45,55 @@ function iconForEvent(ev: AiDebugEventRecord) {
   return <ArrowDownLeft className="h-4 w-4 text-emerald-600" />;
 }
 
+function describeEventType(ev: AiDebugEventRecord): string {
+  if (ev.event_type === 'error') return 'Ошибка';
+  if (ev.event_type === 'notification') return 'Уведомление';
+  if (ev.event_type === 'request') return ev.direction === 'response' ? 'Ответ' : 'Запрос';
+  return 'Ответ';
+}
+
 function extractText(payload: any): string | undefined {
   if (!payload) return undefined;
   if (typeof payload === 'string') return payload;
   if (typeof payload?.text === 'string') return payload.text;
   if (typeof payload?.response === 'string') return payload.response;
   return undefined;
+}
+
+function summarizePayload(payload: any): string[] {
+  if (!payload) return [];
+  if (typeof payload === 'string') return [payload];
+
+  const summary: string[] = [];
+
+  const maybeNumber = (value: any) => (Number.isFinite(Number(value)) ? Number(value) : null);
+
+  if (Array.isArray(payload.inns) && payload.inns.length) {
+    summary.push(`ИНН: ${payload.inns.join(', ')}`);
+  }
+  if (payload.error) summary.push(`Ошибка: ${String(payload.error)}`);
+  if (payload.status != null) summary.push(`Статус: ${payload.status}`);
+  if (payload.stopRequested) summary.push('Запрошена остановка');
+  if (payload.defer_count != null) summary.push(`Попытка: ${payload.defer_count}`);
+  if (payload.progress != null) {
+    const pct = maybeNumber(payload.progress);
+    summary.push(`Прогресс: ${pct != null ? Math.round(pct * 100) + '%' : payload.progress}`);
+  }
+  if (payload.durationMs != null) {
+    const seconds = maybeNumber(payload.durationMs) ? maybeNumber(payload.durationMs)! / 1000 : null;
+    summary.push(`Длительность: ${seconds != null ? seconds.toFixed(1) + ' c' : payload.durationMs}`);
+  }
+  if (Array.isArray(payload.results)) {
+    summary.push(`Результаты: ${payload.results.length}`);
+  }
+  if (payload.request) summary.push(`Запрос: ${String(payload.request).slice(0, 80)}`);
+
+  if (!summary.length) {
+    const json = JSON.stringify(payload);
+    if (json) summary.push(json.length > 180 ? `${json.slice(0, 180)}…` : json);
+  }
+
+  return summary;
 }
 
 function openText(text: string | undefined) {
@@ -51,7 +104,9 @@ function openText(text: string | undefined) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-export default function AiDebugTab() {
+type AiDebugTabProps = { isAdmin?: boolean };
+
+export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
   const [filters, setFilters] = useState<Record<FilterKey, boolean>>({
     traffic: true,
     error: true,
@@ -62,6 +117,7 @@ export default function AiDebugTab() {
   const [items, setItems] = useState<AiDebugEventRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jsonState, setJsonState] = useState<JsonState>({ open: false, payload: null, title: '' });
 
@@ -73,17 +129,19 @@ export default function AiDebugTab() {
     [filters],
   );
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (pageOverride?: number) => {
+    const pageToLoad = pageOverride ?? page;
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+      const params = new URLSearchParams({ page: String(pageToLoad), pageSize: String(pageSize) });
       activeCategories.forEach((cat) => params.append('category', cat));
       const res = await fetch(`/api/ai-debug/events?${params.toString()}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { items: AiDebugEventRecord[]; total: number; page: number; pageSize: number };
       setItems(Array.isArray(data.items) ? data.items : []);
       setTotal(Number(data.total ?? 0));
+      setPage(data.page ?? pageToLoad);
     } catch (e: any) {
       setError(e?.message ?? 'Не удалось загрузить логи');
       setItems([]);
@@ -96,6 +154,22 @@ export default function AiDebugTab() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const handleClear = useCallback(async () => {
+    if (!isAdmin) return;
+    if (!window.confirm('Удалить все логи AI-отладки?')) return;
+    setClearing(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai-debug/events', { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await fetchData(1);
+    } catch (e: any) {
+      setError(e?.message ?? 'Не удалось удалить логи');
+    } finally {
+      setClearing(false);
+    }
+  }, [fetchData, isAdmin]);
 
   const toggleFilter = (key: FilterKey) => {
     setPage(1);
@@ -126,6 +200,17 @@ export default function AiDebugTab() {
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             <span className="ml-2">Обновить</span>
           </Button>
+          {isAdmin && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleClear}
+              disabled={loading || clearing}
+              title="Доступно только администратору">
+              {clearing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              <span className="ml-2">Очистить логи</span>
+            </Button>
+          )}
         </div>
       </div>
 
@@ -138,51 +223,68 @@ export default function AiDebugTab() {
         <div className="overflow-x-auto">
           <table className="min-w-full text-xs">
             <thead className="sticky top-0 bg-muted border-b">
-              <tr className="[&>th]:px-2 [&>th]:py-2 text-left">
+              <tr className="[&>th]:px-2 [&>th]:py-2 text-left align-middle">
                 <th className="w-[40px] text-center">№</th>
                 <th className="w-[48px]">Тип</th>
+                <th className="w-[120px]">Источник</th>
+                <th className="w-[90px]">Направление</th>
                 <th className="w-[110px]">Дата</th>
                 <th className="w-[100px]">Время</th>
-                <th className="w-[140px]">ID request</th>
-                <th className="w-[140px]">ID-компании</th>
-                <th className="w-[220px]">Название компании</th>
-                <th>Текст уведомления</th>
-                <th className="w-[140px] text-center">Действия</th>
+                <th className="w-[150px]">ID request</th>
+                <th className="w-[140px]">ИНН</th>
+                <th className="w-[240px]">Название компании</th>
+                <th className="w-[260px]">Сообщение</th>
+                <th className="w-[260px]">Детали</th>
+                <th className="w-[160px] text-center">Действия</th>
               </tr>
             </thead>
             <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-2 align-top">
               {items.map((item, idx) => {
                 const { date, time } = formatDate(item.created_at);
                 const text = extractText(item.payload);
+                const payloadSummary = summarizePayload(item.payload);
+                const rowClasses = item.event_type === 'error' ? 'bg-destructive/5' : '';
                 return (
-                  <tr key={item.id} className="border-b last:border-0">
+                  <tr key={item.id} className={`border-b last:border-0 ${rowClasses}`}>
                     <td className="text-center text-muted-foreground">{(page - 1) * pageSize + idx + 1}</td>
                     <td>
-                      <TooltipProvider delayDuration={100}>
-                        <Tooltip>
-                          <TooltipTrigger className="inline-flex items-center justify-center rounded-full bg-muted p-1">
-                            {iconForEvent(item)}
-                          </TooltipTrigger>
-                          <TooltipContent>
-                            {item.event_type === 'error'
-                              ? 'Ошибка'
-                              : item.event_type === 'notification'
-                              ? 'Уведомление'
-                              : item.event_type === 'request'
-                              ? 'Запрос'
-                              : 'Ответ'}
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
+                      <div className="flex items-center gap-2">
+                        <TooltipProvider delayDuration={100}>
+                          <Tooltip>
+                            <TooltipTrigger className="inline-flex items-center justify-center rounded-full bg-muted p-1">
+                              {iconForEvent(item)}
+                            </TooltipTrigger>
+                            <TooltipContent>{describeEventType(item)}</TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
+                        <span className="whitespace-nowrap text-muted-foreground">{describeEventType(item)}</span>
+                      </div>
                     </td>
+                    <td className="whitespace-nowrap">{item.source || '—'}</td>
+                    <td className="whitespace-nowrap">{item.direction ? (item.direction === 'request' ? 'Запрос' : 'Ответ') : '—'}</td>
                     <td className="whitespace-nowrap">{date}</td>
                     <td className="whitespace-nowrap">{time}</td>
-                    <td className="font-mono text-[11px]">{item.request_id || '—'}</td>
-                    <td className="font-mono text-[11px]">{item.company_id || '—'}</td>
-                    <td className="truncate max-w-[220px]" title={item.company_name || undefined}>
+                    <td className="font-mono text-[11px] break-all" title={item.request_id || undefined}>
+                      {item.request_id || '—'}
+                    </td>
+                    <td className="font-mono text-[11px] break-all">{item.company_id || '—'}</td>
+                    <td className="max-w-[240px] truncate" title={item.company_name || undefined}>
                       {item.company_name || '—'}
                     </td>
-                    <td className="whitespace-pre-wrap leading-5">{item.message || '—'}</td>
+                    <td className={`whitespace-pre-wrap leading-5 ${item.event_type === 'error' ? 'text-destructive font-medium' : ''}`} title={item.message || undefined}>
+                      {item.message || '—'}
+                    </td>
+                    <td className="space-y-1">
+                      {payloadSummary.length ? (
+                        payloadSummary.map((line, lineIdx) => (
+                          <div key={lineIdx} className="whitespace-pre-wrap break-words leading-5">
+                            {line}
+                          </div>
+                        ))
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </td>
                     <td>
                       <div className="flex flex-wrap gap-1 justify-center">
                         <Button
@@ -210,7 +312,7 @@ export default function AiDebugTab() {
 
               {!loading && items.length === 0 && (
                 <tr>
-                  <td colSpan={9} className="text-center py-6 text-muted-foreground text-sm">
+                  <td colSpan={12} className="text-center py-6 text-muted-foreground text-sm">
                     Нет записей для выбранных фильтров
                   </td>
                 </tr>

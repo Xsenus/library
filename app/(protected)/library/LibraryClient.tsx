@@ -1504,7 +1504,7 @@ export default function LibraryPage() {
             {isWorker && (
               <TabsContent value="aidebug" className="mt-0">
                 <div className="py-4">
-                  <AiDebugTab />
+                  <AiDebugTab isAdmin={isAdmin} />
                 </div>
               </TabsContent>
             )}

@@ -11,12 +11,14 @@ import {
   isLaunchModeLocked,
 } from '@/lib/ai-analysis-config';
 import { DEFAULT_STEPS, type StepKey } from '@/lib/ai-analysis-types';
+import { getDadataColumns } from '@/lib/dadata-columns';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const revalidate = 0;
 
 let ensuredQueue = false;
+let ensuredCommands = false;
 const PROCESS_LOCK_KEY = 42_111;
 const MAX_STEP_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 2000;
@@ -49,6 +51,31 @@ async function ensureQueueTable() {
       ADD COLUMN IF NOT EXISTS payload jsonb
   `);
   ensuredQueue = true;
+}
+
+async function ensureCommandsTable() {
+  if (ensuredCommands) return;
+  await dbBitrix.query(`
+    CREATE TABLE IF NOT EXISTS ai_analysis_commands (
+      id bigserial PRIMARY KEY,
+      action text NOT NULL,
+      payload jsonb,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_commands
+      ADD COLUMN IF NOT EXISTS payload jsonb
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_commands
+      ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_commands
+      ADD COLUMN IF NOT EXISTS action text NOT NULL
+  `);
+  ensuredCommands = true;
 }
 
 async function acquireQueueLock(): Promise<boolean> {
@@ -343,25 +370,56 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
 }
 
 async function markRunning(inn: string) {
-  await dbBitrix
-    .query(
-      `UPDATE dadata_result
-       SET analysis_status = 'running', analysis_started_at = COALESCE(analysis_started_at, now()), analysis_finished_at = NULL, analysis_progress = 0, server_error = 0
-       WHERE inn = $1`,
-      [inn],
-    )
-    .catch((error) => console.warn('mark running failed', error));
+  const columns = await getDadataColumns();
+  if (!columns.status) {
+    console.warn('mark running skipped: no status column in dadata_result');
+    return;
+  }
+
+  const params: any[] = [inn];
+  const sets = [`"${columns.status}" = 'running'`];
+
+  if (columns.startedAt) {
+    sets.push(`"${columns.startedAt}" = COALESCE("${columns.startedAt}", now())`);
+  }
+
+  if (columns.finishedAt) {
+    sets.push(`"${columns.finishedAt}" = NULL`);
+  }
+
+  if (columns.progress) {
+    sets.push(`"${columns.progress}" = 0`);
+  }
+
+  if (columns.serverError) {
+    sets.push(`"${columns.serverError}" = 0`);
+  }
+
+  const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = $1`;
+
+  await dbBitrix.query(sql, params).catch((error) => console.warn('mark running failed', error));
 }
 
 async function markQueued(inn: string) {
-  await dbBitrix
-    .query(
-      `UPDATE dadata_result
-       SET analysis_status = 'queued', analysis_started_at = NULL, analysis_finished_at = NULL
-       WHERE inn = $1`,
-      [inn],
-    )
-    .catch((error) => console.warn('mark queued failed', error));
+  const columns = await getDadataColumns();
+  if (!columns.status) {
+    console.warn('mark queued skipped: no status column in dadata_result');
+    return;
+  }
+
+  const sets = [`"${columns.status}" = 'queued'`];
+
+  if (columns.startedAt) {
+    sets.push(`"${columns.startedAt}" = NULL`);
+  }
+
+  if (columns.finishedAt) {
+    sets.push(`"${columns.finishedAt}" = NULL`);
+  }
+
+  const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = $1`;
+
+  await dbBitrix.query(sql, [inn]).catch((error) => console.warn('mark queued failed', error));
 }
 
 async function markFinished(
@@ -370,20 +428,106 @@ async function markFinished(
     | { status: 'completed'; durationMs: number }
     | { status: 'failed'; durationMs: number; progress?: number },
 ) {
+  const columns = await getDadataColumns();
+  if (!columns.status) {
+    console.warn('mark finished skipped: no status column in dadata_result');
+    return;
+  }
+
   const progress = result.status === 'completed' ? 1 : result.progress ?? null;
+  const params: any[] = [inn];
+  const setters: string[] = [];
+
+  params.push(result.status);
+  const statusIdx = params.length;
+  setters.push(`"${columns.status}" = $${statusIdx}`);
+
+  if (columns.finishedAt) {
+    setters.push(`"${columns.finishedAt}" = now()`);
+  }
+
+  if (columns.durationMs) {
+    params.push(result.durationMs);
+    const idx = params.length;
+    setters.push(`"${columns.durationMs}" = $${idx}`);
+  }
+
+  if (columns.progress) {
+    params.push(progress);
+    const idx = params.length;
+    setters.push(`"${columns.progress}" = $${idx}`);
+  }
+
+  if (columns.okFlag) {
+    setters.push(`"${columns.okFlag}" = CASE WHEN $${statusIdx} = 'completed' THEN 1 ELSE 0 END`);
+  }
+
+  if (columns.serverError) {
+    setters.push(`"${columns.serverError}" = CASE WHEN $${statusIdx} = 'failed' THEN 1 ELSE 0 END`);
+  }
+
+  if (!setters.length) {
+    console.warn('mark finished skipped: no writable columns');
+    return;
+  }
+
+  const sql = `UPDATE dadata_result SET ${setters.join(', ')} WHERE inn = $1`;
+  await dbBitrix.query(sql, params).catch((error) => console.warn('mark finished failed', error));
+}
+
+async function markStopped(inns: string[]) {
+  if (!inns.length) return;
+  const columns = await getDadataColumns();
+  if (!columns.status) {
+    console.warn('mark stopped skipped: no status column in dadata_result');
+    return;
+  }
+
+  const sets = [`"${columns.status}" = 'stopped'`];
+
+  if (columns.startedAt) {
+    sets.push(`"${columns.startedAt}" = NULL`);
+  }
+
+  if (columns.finishedAt) {
+    sets.push(`"${columns.finishedAt}" = now()`);
+  }
+
+  if (columns.progress) {
+    sets.push(`"${columns.progress}" = NULL`);
+  }
+
+  const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = ANY($1::text[])`;
+
   await dbBitrix
-    .query(
-      `UPDATE dadata_result
-       SET analysis_status = $2,
-           analysis_finished_at = now(),
-           analysis_duration_ms = $3,
-           analysis_progress = $4,
-           analysis_ok = CASE WHEN $2 = 'completed' THEN 1 ELSE 0 END,
-           server_error = CASE WHEN $2 = 'failed' THEN 1 ELSE 0 END
-       WHERE inn = $1`,
-      [inn, result.status, result.durationMs, progress],
-    )
-    .catch((error) => console.warn('mark finished failed', error));
+    .query(sql, [inns])
+    .catch((error) => console.warn('mark stopped failed', error));
+}
+
+async function consumeStopSignals(existing?: Set<string>) {
+  const stopSet = existing ? new Set(existing) : new Set<string>();
+  await ensureCommandsTable();
+  const res = await dbBitrix.query<{ payload: any }>(
+    `DELETE FROM ai_analysis_commands WHERE action = 'stop' RETURNING payload`,
+  );
+
+  const requested: string[] = [];
+  for (const row of res.rows ?? []) {
+    const inns = normalizeInns(row?.payload?.inns);
+    if (inns.length) {
+      requested.push(...inns);
+    }
+  }
+
+  const unique = Array.from(new Set(requested));
+  const fresh = unique.filter((inn) => !stopSet.has(inn));
+  if (fresh.length) {
+    await removeFromQueue(fresh);
+    await markStopped(fresh);
+    fresh.forEach((inn) => stopSet.add(inn));
+  }
+
+  return { stopSet, freshStops: fresh };
 }
 
 async function runFullPipeline(inn: string, timeoutMs: number) {
@@ -588,7 +732,29 @@ export async function POST(request: NextRequest) {
 
         try {
           let item: QueueItem | null;
+          let stopRequests = new Set<string>();
           while ((item = await dequeueNext())) {
+            const stopSignals = await consumeStopSignals(stopRequests);
+            stopRequests = stopSignals.stopSet;
+            if (stopSignals.freshStops.length) {
+              await safeLog({
+                type: 'notification',
+                source: 'ai-integration',
+                message: 'Обнаружены сигналы остановки, часть компаний пропущена',
+                payload: { inns: stopSignals.freshStops },
+              });
+            }
+
+            if (stopRequests.has(item.inn)) {
+              await safeLog({
+                type: 'notification',
+                source: 'ai-integration',
+                companyId: item.inn,
+                message: 'Анализ пропущен из-за запроса на остановку',
+              });
+              continue;
+            }
+
             const inn = item.inn;
             const payload = (item.payload || {}) as { mode?: unknown; steps?: unknown; defer_count?: unknown };
             const modeFromPayload: 'full' | 'steps' = payload.mode === 'full' ? 'full' : 'steps';
@@ -601,6 +767,21 @@ export async function POST(request: NextRequest) {
             const companyName = companyNameMap.get(inn);
             const startedAt = Date.now();
 
+            const stopCheckBeforeRun = await consumeStopSignals(stopRequests);
+            stopRequests = stopCheckBeforeRun.stopSet;
+            if (stopRequests.has(inn)) {
+              await safeLog({
+                type: 'notification',
+                source: 'ai-integration',
+                companyId: inn,
+                companyName,
+                message: 'Анализ отменён перед запуском по запросу пользователя',
+                payload: { stopRequested: true },
+              });
+              await markStopped([inn]);
+              continue;
+            }
+
             await safeLog({
               type: 'notification',
               source: 'ai-integration',
@@ -609,6 +790,7 @@ export async function POST(request: NextRequest) {
               notificationKey: 'analysis_start',
             });
 
+            const columns = await getDadataColumns();
             await markRunning(inn);
 
             const runInn = async () => {
@@ -622,12 +804,16 @@ export async function POST(request: NextRequest) {
                   stepResults.push(res);
                   if (res.ok) {
                     progress = Math.max(progress, (idx + 1) / stepsFromPayload.length);
-                    await dbBitrix
-                      .query(`UPDATE dadata_result SET analysis_progress = $2 WHERE inn = $1`, [
-                        inn,
-                        progress,
-                      ])
-                      .catch((error) => console.warn('progress update failed', error));
+                    if (columns.progress) {
+                      await dbBitrix
+                        .query(`UPDATE dadata_result SET "${columns.progress}" = $2 WHERE inn = $1`, [
+                          inn,
+                          progress,
+                        ])
+                        .catch((error) => console.warn('progress update failed', error));
+                    } else {
+                      console.warn('progress update skipped: no progress column in dadata_result');
+                    }
                   }
                   if (!res.ok) break;
                 }
@@ -662,6 +848,21 @@ export async function POST(request: NextRequest) {
               };
             } finally {
               await removeFromQueue([inn]);
+            }
+
+            const stopSignalsAfterRun = await consumeStopSignals(stopRequests);
+            stopRequests = stopSignalsAfterRun.stopSet;
+            if (stopRequests.has(inn)) {
+              await safeLog({
+                type: 'notification',
+                source: 'ai-integration',
+                companyId: inn,
+                companyName,
+                message: 'Анализ остановлен по запросу пользователя',
+                payload: { stopRequested: true },
+              });
+              await markStopped([inn]);
+              continue;
             }
 
             const shouldDefer = !timedResult.ok && deferCount < MAX_DEFER_ATTEMPTS;
