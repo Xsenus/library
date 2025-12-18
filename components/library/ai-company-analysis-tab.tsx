@@ -582,16 +582,20 @@ export default function AiCompanyAnalysisTab() {
     );
   }, []);
 
-  const clearQueued = useCallback((inns: string[]) => {
+  const markStopped = useCallback((inns: string[]) => {
     if (!inns.length) return;
+    const timestamp = new Date().toISOString();
     const innSet = new Set(inns);
     setCompanies((prev) =>
       prev.map((company) => {
         if (!innSet.has(company.inn)) return company;
-        const nextStatus = company.analysis_status === 'queued' ? null : company.analysis_status;
         return {
           ...company,
-          analysis_status: nextStatus,
+          analysis_status: 'stopped',
+          analysis_progress: null,
+          // Сбрасываем started_at, иначе эвристика computeCompanyState сочтёт задачу активной ещё ~10 минут.
+          analysis_started_at: null,
+          analysis_finished_at: timestamp,
           queued_at: null,
         };
       }),
@@ -816,7 +820,7 @@ export default function AiCompanyAnalysisTab() {
           ? `Для ${activeInns.length} ${activeInns.length === 1 ? 'компании' : 'компаний'}`
           : undefined;
       toast({ title: 'Отправлен сигнал остановки анализа', description });
-      clearQueued(activeInns);
+      markStopped(activeInns);
       setStopSignalAt(Date.now());
       autoRefreshDeadlineRef.current = 0;
       setAutoRefresh(false);
@@ -832,7 +836,7 @@ export default function AiCompanyAnalysisTab() {
     } finally {
       setStopLoading(false);
     }
-  }, [companies, toast, clearQueued, fetchCompanies, page, pageSize]);
+  }, [companies, toast, markStopped, fetchCompanies, page, pageSize]);
 
   const handleStopSingle = useCallback(
     async (inn: string) => {
@@ -853,7 +857,7 @@ export default function AiCompanyAnalysisTab() {
               ? `Снято из очереди: ${removed}`
               : 'Команда остановки отправлена для выбранной компании.',
         });
-        clearQueued([inn]);
+        markStopped([inn]);
         fetchCompanies(page, pageSize);
       } catch (error) {
         console.error('Failed to stop single company', error);
@@ -866,7 +870,7 @@ export default function AiCompanyAnalysisTab() {
         setStopInn(null);
       }
     },
-    [toast, clearQueued, fetchCompanies, page, pageSize],
+    [toast, markStopped, fetchCompanies, page, pageSize],
   );
 
   const headerCheckedState = useMemo(() => {
