@@ -14,6 +14,25 @@ const COLUMN_SPECS: Record<
   serverError: ['server_error', 'analysis_server_error'],
 };
 
+const COLUMN_DEFAULTS: Record<
+  keyof typeof COLUMN_SPECS,
+  | {
+      name: string;
+      type: string;
+      default?: string;
+    }
+  | null
+> = {
+  status: { name: 'analysis_status', type: 'text' },
+  startedAt: { name: 'analysis_started_at', type: 'timestamp with time zone' },
+  finishedAt: { name: 'analysis_finished_at', type: 'timestamp with time zone' },
+  progress: { name: 'analysis_progress', type: 'double precision' },
+  durationMs: { name: 'analysis_duration_ms', type: 'integer' },
+  attempts: { name: 'analysis_attempts', type: 'integer', default: '0' },
+  okFlag: { name: 'analysis_ok', type: 'integer', default: '0' },
+  serverError: { name: 'analysis_server_error', type: 'integer', default: '0' },
+};
+
 export type DadataColumns = {
   status: string | null;
   startedAt: string | null;
@@ -39,22 +58,40 @@ export async function getDadataColumns(): Promise<DadataColumns> {
   );
   const names = new Set((res.rows ?? []).map((row) => row.column_name));
 
-  // В старых базах может отсутствовать колонка статуса, без неё обновления статуса и остановка
-  // анализа пропускаются. Попробуем добавить базовую колонку, если ни один из вариантов не
-  // найден, чтобы статус мог писаться и отображаться.
-  if (!COLUMN_SPECS.status.some((candidate) => names.has(candidate))) {
+  const ensureColumn = async (key: keyof typeof COLUMN_DEFAULTS) => {
+    const definition = COLUMN_DEFAULTS[key];
+    if (!definition) return false;
+    if (COLUMN_SPECS[key].some((candidate) => names.has(candidate))) {
+      return false;
+    }
+
+    const defaultSql = definition.default ? ` DEFAULT ${definition.default}` : '';
     try {
-      await dbBitrix.query(`ALTER TABLE dadata_result ADD COLUMN IF NOT EXISTS analysis_status text`);
-      // Обновляем список колонок после добавления
-      res = await dbBitrix.query<{ column_name: string }>(
-        `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'dadata_result'`,
+      await dbBitrix.query(
+        `ALTER TABLE dadata_result ADD COLUMN IF NOT EXISTS "${definition.name}" ${definition.type}${defaultSql}`,
       );
-      names.clear();
-      for (const row of res.rows ?? []) {
-        names.add(row.column_name);
-      }
+      return true;
     } catch (error) {
-      console.warn('failed to add analysis_status column to dadata_result', error);
+      console.warn(`failed to add ${definition.name} column to dadata_result`, error);
+      return false;
+    }
+  };
+
+  // Попробуем добавить отсутствующие основные служебные поля, чтобы обновления статуса и прогресса
+  // больше не падали на базах без новых колонок.
+  let schemaChanged = false;
+  for (const key of Object.keys(COLUMN_DEFAULTS) as (keyof typeof COLUMN_DEFAULTS)[]) {
+    const added = await ensureColumn(key);
+    schemaChanged = schemaChanged || added;
+  }
+
+  if (schemaChanged) {
+    res = await dbBitrix.query<{ column_name: string }>(
+      `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'dadata_result'`,
+    );
+    names.clear();
+    for (const row of res.rows ?? []) {
+      names.add(row.column_name);
     }
   }
 

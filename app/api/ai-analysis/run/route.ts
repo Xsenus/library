@@ -790,6 +790,7 @@ export async function POST(request: NextRequest) {
               notificationKey: 'analysis_start',
             });
 
+            const columns = await getDadataColumns();
             await markRunning(inn);
 
             const runInn = async () => {
@@ -803,12 +804,16 @@ export async function POST(request: NextRequest) {
                   stepResults.push(res);
                   if (res.ok) {
                     progress = Math.max(progress, (idx + 1) / stepsFromPayload.length);
-                    await dbBitrix
-                      .query(`UPDATE dadata_result SET analysis_progress = $2 WHERE inn = $1`, [
-                        inn,
-                        progress,
-                      ])
-                      .catch((error) => console.warn('progress update failed', error));
+                    if (columns.progress) {
+                      await dbBitrix
+                        .query(`UPDATE dadata_result SET "${columns.progress}" = $2 WHERE inn = $1`, [
+                          inn,
+                          progress,
+                        ])
+                        .catch((error) => console.warn('progress update failed', error));
+                    } else {
+                      console.warn('progress update skipped: no progress column in dadata_result');
+                    }
                   }
                   if (!res.ok) break;
                 }
