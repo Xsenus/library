@@ -17,6 +17,7 @@ export const runtime = 'nodejs';
 export const revalidate = 0;
 
 let ensuredQueue = false;
+let ensuredCommands = false;
 const PROCESS_LOCK_KEY = 42_111;
 const MAX_STEP_ATTEMPTS = 5;
 const RETRY_DELAY_MS = 2000;
@@ -49,6 +50,31 @@ async function ensureQueueTable() {
       ADD COLUMN IF NOT EXISTS payload jsonb
   `);
   ensuredQueue = true;
+}
+
+async function ensureCommandsTable() {
+  if (ensuredCommands) return;
+  await dbBitrix.query(`
+    CREATE TABLE IF NOT EXISTS ai_analysis_commands (
+      id bigserial PRIMARY KEY,
+      action text NOT NULL,
+      payload jsonb,
+      created_at timestamptz NOT NULL DEFAULT now()
+    )
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_commands
+      ADD COLUMN IF NOT EXISTS payload jsonb
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_commands
+      ADD COLUMN IF NOT EXISTS created_at timestamptz NOT NULL DEFAULT now()
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_commands
+      ADD COLUMN IF NOT EXISTS action text NOT NULL
+  `);
+  ensuredCommands = true;
 }
 
 async function acquireQueueLock(): Promise<boolean> {
@@ -386,6 +412,44 @@ async function markFinished(
     .catch((error) => console.warn('mark finished failed', error));
 }
 
+async function markStopped(inns: string[]) {
+  if (!inns.length) return;
+  await dbBitrix
+    .query(
+      `UPDATE dadata_result
+       SET analysis_status = 'stopped',
+           analysis_started_at = NULL,
+           analysis_finished_at = now(),
+           analysis_progress = NULL
+       WHERE inn = ANY($1::text[])`,
+      [inns],
+    )
+    .catch((error) => console.warn('mark stopped failed', error));
+}
+
+async function consumeStopSignals() {
+  await ensureCommandsTable();
+  const res = await dbBitrix.query<{ payload: any }>(
+    `DELETE FROM ai_analysis_commands WHERE action = 'stop' RETURNING payload`,
+  );
+
+  const requested: string[] = [];
+  for (const row of res.rows ?? []) {
+    const inns = normalizeInns(row?.payload?.inns);
+    if (inns.length) {
+      requested.push(...inns);
+    }
+  }
+
+  const unique = Array.from(new Set(requested));
+  if (unique.length) {
+    await removeFromQueue(unique);
+    await markStopped(unique);
+  }
+
+  return new Set(unique);
+}
+
 async function runFullPipeline(inn: string, timeoutMs: number) {
   let lastStatus = 0;
   let lastError: string | undefined;
@@ -589,6 +653,26 @@ export async function POST(request: NextRequest) {
         try {
           let item: QueueItem | null;
           while ((item = await dequeueNext())) {
+            const stoppedInns = await consumeStopSignals();
+            if (stoppedInns.size) {
+              await safeLog({
+                type: 'notification',
+                source: 'ai-integration',
+                message: 'Обнаружены сигналы остановки, часть компаний пропущена',
+                payload: { inns: Array.from(stoppedInns) },
+              });
+            }
+
+            if (stoppedInns.has(item.inn)) {
+              await safeLog({
+                type: 'notification',
+                source: 'ai-integration',
+                companyId: item.inn,
+                message: 'Анализ пропущен из-за запроса на остановку',
+              });
+              continue;
+            }
+
             const inn = item.inn;
             const payload = (item.payload || {}) as { mode?: unknown; steps?: unknown; defer_count?: unknown };
             const modeFromPayload: 'full' | 'steps' = payload.mode === 'full' ? 'full' : 'steps';
