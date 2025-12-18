@@ -690,6 +690,21 @@ export async function POST(request: NextRequest) {
             const companyName = companyNameMap.get(inn);
             const startedAt = Date.now();
 
+            const stopCheckBeforeRun = await consumeStopSignals(stopRequests);
+            stopRequests = stopCheckBeforeRun.stopSet;
+            if (stopRequests.has(inn)) {
+              await safeLog({
+                type: 'notification',
+                source: 'ai-integration',
+                companyId: inn,
+                companyName,
+                message: 'Анализ отменён перед запуском по запросу пользователя',
+                payload: { stopRequested: true },
+              });
+              await markStopped([inn]);
+              continue;
+            }
+
             await safeLog({
               type: 'notification',
               source: 'ai-integration',

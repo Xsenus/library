@@ -124,7 +124,7 @@ export async function POST(request: NextRequest) {
     const integrationBase = getAiIntegrationBase();
     if (integrationBase && inns.length) {
       payload.integration_stop =
-        'пропущено: во внешнем API нет ручки остановки, прекращаем только локальную очередь';
+        'Внешний AI-сервис не поддерживает остановку уже запущенных задач; завершаем только локальную очередь и статус.';
     }
 
     await dbBitrix.query(
