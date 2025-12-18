@@ -11,6 +11,7 @@ import {
   isLaunchModeLocked,
 } from '@/lib/ai-analysis-config';
 import { DEFAULT_STEPS, type StepKey } from '@/lib/ai-analysis-types';
+import { getDadataColumns } from '@/lib/dadata-columns';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -369,25 +370,56 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
 }
 
 async function markRunning(inn: string) {
-  await dbBitrix
-    .query(
-      `UPDATE dadata_result
-       SET analysis_status = 'running', analysis_started_at = COALESCE(analysis_started_at, now()), analysis_finished_at = NULL, analysis_progress = 0, server_error = 0
-       WHERE inn = $1`,
-      [inn],
-    )
-    .catch((error) => console.warn('mark running failed', error));
+  const columns = await getDadataColumns();
+  if (!columns.status) {
+    console.warn('mark running skipped: no status column in dadata_result');
+    return;
+  }
+
+  const params: any[] = [inn];
+  const sets = [`"${columns.status}" = 'running'`];
+
+  if (columns.startedAt) {
+    sets.push(`"${columns.startedAt}" = COALESCE("${columns.startedAt}", now())`);
+  }
+
+  if (columns.finishedAt) {
+    sets.push(`"${columns.finishedAt}" = NULL`);
+  }
+
+  if (columns.progress) {
+    sets.push(`"${columns.progress}" = 0`);
+  }
+
+  if (columns.serverError) {
+    sets.push(`"${columns.serverError}" = 0`);
+  }
+
+  const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = $1`;
+
+  await dbBitrix.query(sql, params).catch((error) => console.warn('mark running failed', error));
 }
 
 async function markQueued(inn: string) {
-  await dbBitrix
-    .query(
-      `UPDATE dadata_result
-       SET analysis_status = 'queued', analysis_started_at = NULL, analysis_finished_at = NULL
-       WHERE inn = $1`,
-      [inn],
-    )
-    .catch((error) => console.warn('mark queued failed', error));
+  const columns = await getDadataColumns();
+  if (!columns.status) {
+    console.warn('mark queued skipped: no status column in dadata_result');
+    return;
+  }
+
+  const sets = [`"${columns.status}" = 'queued'`];
+
+  if (columns.startedAt) {
+    sets.push(`"${columns.startedAt}" = NULL`);
+  }
+
+  if (columns.finishedAt) {
+    sets.push(`"${columns.finishedAt}" = NULL`);
+  }
+
+  const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = $1`;
+
+  await dbBitrix.query(sql, [inn]).catch((error) => console.warn('mark queued failed', error));
 }
 
 async function markFinished(
@@ -396,34 +428,79 @@ async function markFinished(
     | { status: 'completed'; durationMs: number }
     | { status: 'failed'; durationMs: number; progress?: number },
 ) {
+  const columns = await getDadataColumns();
+  if (!columns.status) {
+    console.warn('mark finished skipped: no status column in dadata_result');
+    return;
+  }
+
   const progress = result.status === 'completed' ? 1 : result.progress ?? null;
-  await dbBitrix
-    .query(
-      `UPDATE dadata_result
-       SET analysis_status = $2,
-           analysis_finished_at = now(),
-           analysis_duration_ms = $3,
-           analysis_progress = $4,
-           analysis_ok = CASE WHEN $2 = 'completed' THEN 1 ELSE 0 END,
-           server_error = CASE WHEN $2 = 'failed' THEN 1 ELSE 0 END
-       WHERE inn = $1`,
-      [inn, result.status, result.durationMs, progress],
-    )
-    .catch((error) => console.warn('mark finished failed', error));
+  const params: any[] = [inn];
+  const setters: string[] = [];
+
+  params.push(result.status);
+  const statusIdx = params.length;
+  setters.push(`"${columns.status}" = $${statusIdx}`);
+
+  if (columns.finishedAt) {
+    setters.push(`"${columns.finishedAt}" = now()`);
+  }
+
+  if (columns.durationMs) {
+    params.push(result.durationMs);
+    const idx = params.length;
+    setters.push(`"${columns.durationMs}" = $${idx}`);
+  }
+
+  if (columns.progress) {
+    params.push(progress);
+    const idx = params.length;
+    setters.push(`"${columns.progress}" = $${idx}`);
+  }
+
+  if (columns.okFlag) {
+    setters.push(`"${columns.okFlag}" = CASE WHEN $${statusIdx} = 'completed' THEN 1 ELSE 0 END`);
+  }
+
+  if (columns.serverError) {
+    setters.push(`"${columns.serverError}" = CASE WHEN $${statusIdx} = 'failed' THEN 1 ELSE 0 END`);
+  }
+
+  if (!setters.length) {
+    console.warn('mark finished skipped: no writable columns');
+    return;
+  }
+
+  const sql = `UPDATE dadata_result SET ${setters.join(', ')} WHERE inn = $1`;
+  await dbBitrix.query(sql, params).catch((error) => console.warn('mark finished failed', error));
 }
 
 async function markStopped(inns: string[]) {
   if (!inns.length) return;
+  const columns = await getDadataColumns();
+  if (!columns.status) {
+    console.warn('mark stopped skipped: no status column in dadata_result');
+    return;
+  }
+
+  const sets = [`"${columns.status}" = 'stopped'`];
+
+  if (columns.startedAt) {
+    sets.push(`"${columns.startedAt}" = NULL`);
+  }
+
+  if (columns.finishedAt) {
+    sets.push(`"${columns.finishedAt}" = now()`);
+  }
+
+  if (columns.progress) {
+    sets.push(`"${columns.progress}" = NULL`);
+  }
+
+  const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = ANY($1::text[])`;
+
   await dbBitrix
-    .query(
-      `UPDATE dadata_result
-       SET analysis_status = 'stopped',
-           analysis_started_at = NULL,
-           analysis_finished_at = now(),
-           analysis_progress = NULL
-       WHERE inn = ANY($1::text[])`,
-      [inns],
-    )
+    .query(sql, [inns])
     .catch((error) => console.warn('mark stopped failed', error));
 }
 
