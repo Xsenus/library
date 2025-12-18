@@ -9,8 +9,11 @@ export const revalidate = 0;
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
-    const page = Number(sp.get('page') ?? '1');
-    const pageSize = Number(sp.get('pageSize') ?? '50');
+    const pageRaw = sp.get('page');
+    const pageSizeRaw = sp.get('pageSize');
+
+    const page = Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1;
+    const pageSize = Number.isFinite(Number(pageSizeRaw)) ? Number(pageSizeRaw) : 50;
     const categories = sp.getAll('category').filter(Boolean) as ('traffic' | 'error' | 'notification')[];
 
     const data = await listAiDebugEvents({ categories, page, pageSize });

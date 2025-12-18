@@ -217,8 +217,11 @@ export async function listAiDebugEvents(params: {
 }): Promise<{ items: AiDebugEventRecord[]; total: number; page: number; pageSize: number }> {
   await ensureTables();
 
-  const page = Math.max(1, params.page ?? 1);
-  const pageSize = Math.min(Math.max(1, params.pageSize ?? 30), 100);
+  const rawPage = Number(params.page);
+  const rawPageSize = Number(params.pageSize);
+
+  const page = Math.max(1, Number.isFinite(rawPage) ? rawPage : 1);
+  const pageSize = Math.min(Math.max(1, Number.isFinite(rawPageSize) ? rawPageSize : 30), 100);
 
   const filters: string[] = [];
 
