@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { AlertTriangle, ArrowDownLeft, ArrowUpRight, Bell, Code2, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
+import { AlertTriangle, ArrowDownLeft, ArrowUpRight, Bell, Code2, ExternalLink, Loader2, RefreshCw, Trash2 } from 'lucide-react';
 import type { AiDebugEventRecord } from '@/lib/ai-debug';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -51,7 +51,9 @@ function openText(text: string | undefined) {
   setTimeout(() => URL.revokeObjectURL(url), 10_000);
 }
 
-export default function AiDebugTab() {
+type AiDebugTabProps = { isAdmin?: boolean };
+
+export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
   const [filters, setFilters] = useState<Record<FilterKey, boolean>>({
     traffic: true,
     error: true,
@@ -62,6 +64,7 @@ export default function AiDebugTab() {
   const [items, setItems] = useState<AiDebugEventRecord[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(false);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jsonState, setJsonState] = useState<JsonState>({ open: false, payload: null, title: '' });
 
@@ -73,17 +76,19 @@ export default function AiDebugTab() {
     [filters],
   );
 
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (pageOverride?: number) => {
+    const pageToLoad = pageOverride ?? page;
     setLoading(true);
     setError(null);
     try {
-      const params = new URLSearchParams({ page: String(page), pageSize: String(pageSize) });
+      const params = new URLSearchParams({ page: String(pageToLoad), pageSize: String(pageSize) });
       activeCategories.forEach((cat) => params.append('category', cat));
       const res = await fetch(`/api/ai-debug/events?${params.toString()}`, { cache: 'no-store' });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = (await res.json()) as { items: AiDebugEventRecord[]; total: number; page: number; pageSize: number };
       setItems(Array.isArray(data.items) ? data.items : []);
       setTotal(Number(data.total ?? 0));
+      setPage(data.page ?? pageToLoad);
     } catch (e: any) {
       setError(e?.message ?? 'Не удалось загрузить логи');
       setItems([]);
@@ -96,6 +101,22 @@ export default function AiDebugTab() {
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  const handleClear = useCallback(async () => {
+    if (!isAdmin) return;
+    if (!window.confirm('Удалить все логи AI-отладки?')) return;
+    setClearing(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai-debug/events', { method: 'DELETE' });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      await fetchData(1);
+    } catch (e: any) {
+      setError(e?.message ?? 'Не удалось удалить логи');
+    } finally {
+      setClearing(false);
+    }
+  }, [fetchData, isAdmin]);
 
   const toggleFilter = (key: FilterKey) => {
     setPage(1);
@@ -126,6 +147,17 @@ export default function AiDebugTab() {
             {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
             <span className="ml-2">Обновить</span>
           </Button>
+          {isAdmin && (
+            <Button
+              variant="destructive"
+              size="sm"
+              onClick={handleClear}
+              disabled={loading || clearing}
+              title="Доступно только администратору">
+              {clearing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+              <span className="ml-2">Очистить логи</span>
+            </Button>
+          )}
         </div>
       </div>
 

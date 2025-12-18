@@ -427,7 +427,8 @@ async function markStopped(inns: string[]) {
     .catch((error) => console.warn('mark stopped failed', error));
 }
 
-async function consumeStopSignals() {
+async function consumeStopSignals(existing?: Set<string>) {
+  const stopSet = existing ? new Set(existing) : new Set<string>();
   await ensureCommandsTable();
   const res = await dbBitrix.query<{ payload: any }>(
     `DELETE FROM ai_analysis_commands WHERE action = 'stop' RETURNING payload`,
@@ -442,12 +443,14 @@ async function consumeStopSignals() {
   }
 
   const unique = Array.from(new Set(requested));
-  if (unique.length) {
-    await removeFromQueue(unique);
-    await markStopped(unique);
+  const fresh = unique.filter((inn) => !stopSet.has(inn));
+  if (fresh.length) {
+    await removeFromQueue(fresh);
+    await markStopped(fresh);
+    fresh.forEach((inn) => stopSet.add(inn));
   }
 
-  return new Set(unique);
+  return { stopSet, freshStops: fresh };
 }
 
 async function runFullPipeline(inn: string, timeoutMs: number) {
@@ -652,18 +655,20 @@ export async function POST(request: NextRequest) {
 
         try {
           let item: QueueItem | null;
+          let stopRequests = new Set<string>();
           while ((item = await dequeueNext())) {
-            const stoppedInns = await consumeStopSignals();
-            if (stoppedInns.size) {
+            const stopSignals = await consumeStopSignals(stopRequests);
+            stopRequests = stopSignals.stopSet;
+            if (stopSignals.freshStops.length) {
               await safeLog({
                 type: 'notification',
                 source: 'ai-integration',
                 message: 'Обнаружены сигналы остановки, часть компаний пропущена',
-                payload: { inns: Array.from(stoppedInns) },
+                payload: { inns: stopSignals.freshStops },
               });
             }
 
-            if (stoppedInns.has(item.inn)) {
+            if (stopRequests.has(item.inn)) {
               await safeLog({
                 type: 'notification',
                 source: 'ai-integration',
@@ -746,6 +751,21 @@ export async function POST(request: NextRequest) {
               };
             } finally {
               await removeFromQueue([inn]);
+            }
+
+            const stopSignalsAfterRun = await consumeStopSignals(stopRequests);
+            stopRequests = stopSignalsAfterRun.stopSet;
+            if (stopRequests.has(inn)) {
+              await safeLog({
+                type: 'notification',
+                source: 'ai-integration',
+                companyId: inn,
+                companyName,
+                message: 'Анализ остановлен по запросу пользователя',
+                payload: { stopRequested: true },
+              });
+              await markStopped([inn]);
+              continue;
             }
 
             const shouldDefer = !timedResult.ok && deferCount < MAX_DEFER_ATTEMPTS;

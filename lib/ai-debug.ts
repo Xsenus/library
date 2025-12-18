@@ -255,3 +255,8 @@ export async function listAiDebugEvents(params: {
 
   return { items: rows ?? [], total, page, pageSize };
 }
+
+export async function deleteAllAiDebugEvents() {
+  await ensureTables();
+  await dbBitrix.query(`TRUNCATE ai_debug_events RESTART IDENTITY`);
+}

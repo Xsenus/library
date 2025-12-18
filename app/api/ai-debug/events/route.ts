@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { aiDebugEventSchema, listAiDebugEvents, logAiDebugEvent } from '@/lib/ai-debug';
+import { aiDebugEventSchema, deleteAllAiDebugEvents, listAiDebugEvents, logAiDebugEvent } from '@/lib/ai-debug';
+import { getSession } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -30,5 +31,21 @@ export async function POST(req: NextRequest) {
     const status = error?.name === 'ZodError' ? 400 : 500;
     const message = error?.issues ? error.issues : error?.message ?? 'Internal Server Error';
     return NextResponse.json({ ok: false, error: message }, { status });
+  }
+}
+
+export async function DELETE() {
+  const session = await getSession();
+  const isAdmin = (session?.login ?? '').toLowerCase() === 'admin';
+  if (!isAdmin) {
+    return NextResponse.json({ ok: false, error: 'Forbidden' }, { status: 403 });
+  }
+
+  try {
+    await deleteAllAiDebugEvents();
+    return NextResponse.json({ ok: true });
+  } catch (error) {
+    console.error('DELETE /api/ai-debug/events failed', error);
+    return NextResponse.json({ ok: false, error: 'Internal Server Error' }, { status: 500 });
   }
 }
