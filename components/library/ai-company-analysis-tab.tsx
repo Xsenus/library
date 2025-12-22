@@ -140,13 +140,14 @@ function toStringArray(value: any): string[] {
           .map((v) => (v == null ? '' : String(v).trim()))
           .filter((v) => v.length > 0),
       ),
-    );
+    ).sort((a, b) => a.localeCompare(b));
   }
   if (typeof value === 'string') {
     return value
       .split(/[\s,;]+/)
       .map((v) => v.trim())
-      .filter((v) => v.length > 0);
+      .filter((v) => v.length > 0)
+      .sort((a, b) => a.localeCompare(b));
   }
   return [];
 }
@@ -280,6 +281,7 @@ export default function AiCompanyAnalysisTab() {
   const [autoRefreshRemaining, setAutoRefreshRemaining] = useState<number | null>(null);
   const autoRefreshDeadlineRef = useRef<number>(0);
   const [expandedEmails, setExpandedEmails] = useState<Set<string>>(new Set());
+  const [expandedSites, setExpandedSites] = useState<Set<string>>(new Set());
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [stopSignalAt, setStopSignalAt] = useState<number | null>(null);
@@ -549,6 +551,18 @@ export default function AiCompanyAnalysisTab() {
 
   const toggleEmailExpansion = useCallback((inn: string) => {
     setExpandedEmails((prev) => {
+      const next = new Set(prev);
+      if (next.has(inn)) {
+        next.delete(inn);
+      } else {
+        next.add(inn);
+      }
+      return next;
+    });
+  }, []);
+
+  const toggleSiteExpansion = useCallback((inn: string) => {
+    setExpandedSites((prev) => {
       const next = new Set(prev);
       if (next.has(inn)) {
         next.delete(inn);
@@ -1267,8 +1281,11 @@ export default function AiCompanyAnalysisTab() {
                         const employees = formatEmployees(company.employee_count ?? null);
                         const rowFinished = !active && !!company.analysis_finished_at;
                         const isEmailExpanded = expandedEmails.has(company.inn);
-                        const displayEmails = isEmailExpanded ? emails : emails.slice(0, 5);
-                        const showEmailToggle = emails.length > 5;
+                        const isSiteExpanded = expandedSites.has(company.inn);
+                        const displaySites = isSiteExpanded ? sites : sites.slice(0, 3);
+                        const showSiteToggle = sites.length > 3;
+                        const displayEmails = isEmailExpanded ? emails : emails.slice(0, 3);
+                        const showEmailToggle = emails.length > 3;
                         const queuedTimeRaw = company.queued_at ? formatTime(company.queued_at) : '—';
                         const queuedTime = queuedTimeRaw !== '—' ? queuedTimeRaw : null;
                         const startedDate = formatDate(company.analysis_started_at ?? null);
@@ -1354,7 +1371,7 @@ export default function AiCompanyAnalysisTab() {
                                   <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
                                   {sites.length ? (
                                     <div className="mt-1 flex flex-col gap-1">
-                                      {sites.slice(0, 3).map((site) => (
+                                      {displaySites.map((site) => (
                                         <a
                                           key={site}
                                           href={site.startsWith('http') ? site : `https://${site}`}
@@ -1365,10 +1382,14 @@ export default function AiCompanyAnalysisTab() {
                                           {site}
                                         </a>
                                       ))}
-                                      {sites.length > 3 && (
-                                        <span className="text-[11px] text-muted-foreground">
-                                          + ещё {sites.length - 3}
-                                        </span>
+                                      {showSiteToggle && (
+                                        <button
+                                          type="button"
+                                          className="self-start text-xs font-medium text-primary hover:underline"
+                                          onClick={() => toggleSiteExpansion(company.inn)}
+                                        >
+                                          {isSiteExpanded ? 'Скрыть' : `Показать все (${sites.length})`}
+                                        </button>
                                       )}
                                     </div>
                                   ) : (
