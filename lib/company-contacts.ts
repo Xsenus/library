@@ -74,8 +74,12 @@ function uniqueStrings(values: any[]): string[] {
   return out;
 }
 
-async function getCachedContacts(inns: string[], staleBefore: number) {
-  if (!inns.length) return { fresh: {} as Record<string, ContactsItem>, missing: inns };
+async function getCachedContacts(
+  inns: string[],
+  staleBefore: number,
+): Promise<{ fresh: Record<string, ContactsItem>; missing: string[]; stale: string[] }> {
+  if (!inns.length)
+    return { fresh: {} as Record<string, ContactsItem>, missing: inns, stale: [] };
   await ensureCompanyMetaTable();
 
   const { rows } = await db.query<CompanyMetaRow>(
