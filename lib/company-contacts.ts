@@ -43,8 +43,34 @@ function collectMultifieldValues(input: any): string[] {
 function normalizeEmail(value: string | null | undefined): string | null {
   if (value == null) return null;
   const trim = value.trim();
-  if (!trim) return null;
+  if (!trim || !trim.includes('@') || /\s/.test(trim)) return null;
   return trim.toLowerCase();
+}
+
+function normalizeSite(value: any): string | null {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const cleaned = raw.replace(/^[\s'"<>]+|[\s'"<>]+$/g, '');
+  const withProtocol = /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
+
+  try {
+    const url = new URL(withProtocol);
+    if (!url.hostname || !url.hostname.includes('.')) return null;
+    return url.hostname.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+function addDomainFromEmail(email: string | null | undefined, collector: string[]) {
+  if (!email) return;
+  const atIndex = email.indexOf('@');
+  if (atIndex === -1 || atIndex === email.length - 1) return;
+  const domain = email.slice(atIndex + 1);
+  const normalizedDomain = normalizeSite(domain);
+  if (normalizedDomain) collector.push(normalizedDomain);
 }
 
 function appendValue<T extends string>(collector: T[], value: any): void {
@@ -178,11 +204,15 @@ async function fetchFromBitrix(inns: string[], debug: boolean) {
 
         for (const email of collectMultifieldValues(found.EMAIL || [])) {
           const norm = normalizeEmail(email);
-          if (norm) emailCandidates.push(norm);
+          if (norm) {
+            emailCandidates.push(norm);
+            addDomainFromEmail(norm, siteCandidates);
+          }
         }
 
         for (const site of collectMultifieldValues(found.WEB || [])) {
-          appendValue(siteCandidates, site);
+          const normalizedSite = normalizeSite(site);
+          if (normalizedSite) siteCandidates.push(normalizedSite);
         }
 
         items.push({
@@ -211,8 +241,10 @@ async function fetchFromBitrixData(inns: string[]) {
 
     return rows.map((row) => ({
       inn: row.inn,
-      emails: parseStringArray(row.emails),
-      webSites: parseStringArray(row.web_sites),
+      emails: parseStringArray(row.emails)?.map((email) => normalizeEmail(email)).filter(Boolean) as string[] | undefined,
+      webSites: parseStringArray(row.web_sites)
+        ?.map((site) => normalizeSite(site))
+        .filter(Boolean) as string[] | undefined,
       updatedAt: new Date().toISOString(),
     }));
   } catch (error) {
@@ -270,11 +302,19 @@ function mergeContacts(bitrix: ContactsItem[], bitrixData: ContactsItem[]): Cont
     appendValue(emailCandidates, item.emails || []);
     appendValue(siteCandidates, item.webSites || []);
 
+    const normalizedEmails = uniqueStrings(emailCandidates.map((email) => normalizeEmail(email) || ''));
+
+    for (const email of normalizedEmails) {
+      addDomainFromEmail(email, siteCandidates);
+    }
+
+    const normalizedSites = uniqueStrings(siteCandidates.map((site) => normalizeSite(site) || '').filter(Boolean));
+
     merged[item.inn] = {
       inn: item.inn,
       companyId: item.companyId ?? existing.companyId,
-      emails: uniqueStrings(emailCandidates),
-      webSites: uniqueStrings(siteCandidates),
+      emails: normalizedEmails,
+      webSites: normalizedSites,
       updatedAt: item.updatedAt ?? existing.updatedAt ?? new Date().toISOString(),
     };
   };
