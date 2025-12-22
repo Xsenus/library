@@ -14,6 +14,8 @@ type OkvedMain = ReturnType<typeof okvedMainSchema.parse>;
 type SortKey = 'revenue_desc' | 'revenue_asc';
 type IndustryItem = { id: number; industry: string };
 
+const RESPONSIBLE_MAX_AGE_MINUTES = 30;
+
 const MIN_SIDEBAR = 480;
 const MAX_SIDEBAR = 1200;
 const MIN_RIGHT = 420;
@@ -485,7 +487,7 @@ export default function OkvedTab() {
     (async () => {
       try {
         setRespLoading(true);
-        const r = await fetch('/api/b24/responsibles', {
+        const r = await fetch(`/api/b24/responsibles?maxAgeMinutes=${RESPONSIBLE_MAX_AGE_MINUTES}`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ inns }),
@@ -1010,16 +1012,16 @@ export default function OkvedTab() {
 
                           {/* Ответственный */}
                           <td className="py-0.5 pr-3 whitespace-nowrap text-center">
-                            {resp?.assignedName ?? (respLoading ? '…' : '—')}
-                          </td>
+                      {resp?.assignedName ?? (respLoading ? '…' : '—')}
+                    </td>
 
-                          {/* Адрес — последний столбец, уменьшенный и более серый */}
-                          <td className="py-0.5 pl-2 text-[10px] text-muted-foreground opacity-90">
-                            {c.address ?? '—'}
-                          </td>
-                        </tr>
-                      );
-                    })}
+                    {/* Адрес — последний столбец, уменьшенный и более серый */}
+                    <td className="py-0.5 pl-2 text-[10px] text-muted-foreground opacity-90">
+                      {c.address ?? '—'}
+                    </td>
+                  </tr>
+                );
+              })}
                 </tbody>
               </table>
             </div>
