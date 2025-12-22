@@ -166,7 +166,7 @@ async function saveMeta(items: RespItem[]) {
   items.forEach((item, idx) => {
     const base = idx * cols.length;
     valuesSql.push(
-      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8}, $${base + 9})`,
+      `($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, $${base + 7}, $${base + 8})`,
     );
     params.push(
       item.inn,
@@ -245,6 +245,152 @@ async function getEnumMapForColorField(debug: boolean): Promise<EnumMap> {
   return map;
 }
 
+async function fetchFromBitrix(
+  inns: string[],
+  debug: boolean,
+): Promise<{ items: RespItem[]; previewCmd: string[]; userCmdPreview: string[] }> {
+  if (!inns.length) return { items: [], previewCmd: [], userCmdPreview: [] };
+
+  const enumMap = await getEnumMapForColorField(debug);
+
+  const innToCompany: Record<
+    string,
+    { ID: string; ASSIGNED_BY_ID?: number; COLOR_ID?: number | null }
+  > = {};
+  const previewCmd: string[] = [];
+
+  for (const pack of chunk(inns, BATCH_LIMIT)) {
+    if (!pack.length) break;
+    const cmd: Record<string, string> = {};
+    const innKeys: Record<string, string[]> = {};
+
+    for (const inn of pack) {
+      const keys: string[] = [];
+      for (const uf of UF_LIST) {
+        const k = nextKey('get_');
+        cmd[k] =
+          `crm.company.list?` +
+          `filter[${uf}]=${encodeURIComponent(inn)}` +
+          `&select[]=ID` +
+          `&select[]=ASSIGNED_BY_ID` +
+          `&select[]=${encodeURIComponent(COLOR_FIELD)}` +
+          `&select[]=UF_*` +
+          `&start=-1`;
+        keys.push(k);
+        if (debug) previewCmd.push(`${k}: ${cmd[k]}`);
+      }
+      innKeys[inn] = keys;
+    }
+
+    const r = await b24BatchJson(cmd, 0);
+    const buckets = core(r);
+
+    for (const inn of pack) {
+      if (innToCompany[inn]) continue;
+      for (const k of innKeys[inn] || []) {
+        const rows = buckets[k] as any[] | undefined;
+        const first = Array.isArray(rows) && rows[0] ? rows[0] : null;
+        if (first?.ID) {
+          const rawColor = first?.[COLOR_FIELD];
+          const colorIdNum =
+            typeof rawColor === 'string' || typeof rawColor === 'number'
+              ? Number(rawColor)
+              : null;
+
+          innToCompany[inn] = {
+            ID: String(first.ID),
+            ASSIGNED_BY_ID: first.ASSIGNED_BY_ID ? Number(first.ASSIGNED_BY_ID) : undefined,
+            COLOR_ID: Number.isFinite(colorIdNum) ? colorIdNum! : null,
+          };
+          break;
+        }
+      }
+    }
+  }
+
+  const allUserIds = Array.from(
+    new Set(
+      Object.values(innToCompany)
+        .map((v) => v?.ASSIGNED_BY_ID)
+        .filter((x): x is number => Number.isFinite(x as number)),
+    ),
+  );
+
+  const userIdToName: Record<number, string> = {};
+  const userCmdPreview: string[] = [];
+
+  const now2 = Date.now();
+  const missingUserIds: number[] = [];
+  for (const uid of allUserIds) {
+    const c = usersCache.get(uid);
+    if (c && c.exp > now2) {
+      userIdToName[uid] = c.name;
+    } else {
+      missingUserIds.push(uid);
+    }
+  }
+
+  for (const pack of chunk(missingUserIds, BATCH_LIMIT)) {
+    if (!pack.length) break;
+    const cmd: Record<string, string> = {};
+    const keys: Array<{ key: string; uid: number }> = [];
+
+    for (const uid of pack) {
+      const k = nextKey('u');
+      cmd[k] = `user.get?ID=${encodeURIComponent(String(uid))}`;
+      keys.push({ key: k, uid });
+      if (debug) userCmdPreview.push(`${k}: ${cmd[k]}`);
+    }
+
+    const r = await b24BatchJson(cmd, 0);
+    const buckets = core(r);
+
+    for (const { key: k, uid } of keys) {
+      const arr = buckets[k] as any[];
+      const u = Array.isArray(arr) && arr[0] ? arr[0] : null;
+      if (u?.ID) {
+        const name = makeFio(u);
+        userIdToName[uid] = name;
+        usersCache.set(uid, { name, exp: Date.now() + USERS_TTL_MS });
+      }
+    }
+  }
+
+  const items: RespItem[] = [];
+  for (const inn of inns) {
+    const info = innToCompany[inn];
+    if (!info) continue;
+    const assignedById = info?.ASSIGNED_BY_ID;
+    const assignedName = assignedById ? userIdToName[assignedById] : undefined;
+
+    let colorId: number | undefined = undefined;
+    let colorLabel: string | undefined = undefined;
+    let colorXmlId: string | undefined = undefined;
+
+    if (Number.isFinite(info?.COLOR_ID as number)) {
+      const row = enumMap.get(info!.COLOR_ID!);
+      if (row) {
+        colorId = row.id;
+        colorLabel = row.value;
+        colorXmlId = row.xmlId;
+      }
+    }
+
+    items.push({
+      inn,
+      companyId: info?.ID,
+      assignedById,
+      assignedName,
+      colorId,
+      colorLabel,
+      colorXmlId,
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  return { items, previewCmd, userCmdPreview };
+}
+
 export async function POST(req: NextRequest) {
   try {
     const debug = req.nextUrl.searchParams.get('debug') === '1';
@@ -263,159 +409,18 @@ export async function POST(req: NextRequest) {
     const { fresh, missing, stale, staleData } = await getCachedMeta(inns, staleBefore);
     const toFind = Array.from(new Set([...missing, ...stale]));
 
-  const enumMap = await getEnumMapForColorField(debug);
+    const { items: fetched, previewCmd, userCmdPreview } = await fetchFromBitrix(toFind, debug);
 
-  const innToCompany: Record<
-    string,
-    { ID: string; ASSIGNED_BY_ID?: number; COLOR_ID?: number | null }
-  > = {};
-  const previewCmd: string[] = [];
-
-    for (const pack of chunk(toFind, BATCH_LIMIT)) {
-      if (!pack.length) break;
-      const cmd: Record<string, string> = {};
-      const innKeys: Record<string, string[]> = {};
-
-      for (const inn of pack) {
-        const keys: string[] = [];
-        for (const uf of UF_LIST) {
-          const k = nextKey('get_');
-          cmd[k] =
-            `crm.company.list?` +
-            `filter[${uf}]=${encodeURIComponent(inn)}` +
-            `&select[]=ID` +
-            `&select[]=ASSIGNED_BY_ID` +
-            `&select[]=${encodeURIComponent(COLOR_FIELD)}` +
-            `&select[]=UF_*` +
-            `&start=-1`;
-          keys.push(k);
-          if (debug) previewCmd.push(`${k}: ${cmd[k]}`);
-        }
-        innKeys[inn] = keys;
-      }
-
-      const r = await b24BatchJson(cmd, 0);
-      const buckets = core(r);
-
-      for (const inn of pack) {
-        if (innToCompany[inn]) continue;
-        for (const k of innKeys[inn] || []) {
-          const rows = buckets[k] as any[] | undefined;
-          const first = Array.isArray(rows) && rows[0] ? rows[0] : null;
-          if (first?.ID) {
-            const rawColor = first?.[COLOR_FIELD];
-            const colorIdNum =
-              typeof rawColor === 'string' || typeof rawColor === 'number'
-                ? Number(rawColor)
-                : null;
-
-            innToCompany[inn] = {
-              ID: String(first.ID),
-              ASSIGNED_BY_ID: first.ASSIGNED_BY_ID ? Number(first.ASSIGNED_BY_ID) : undefined,
-              COLOR_ID: Number.isFinite(colorIdNum) ? colorIdNum! : null,
-            };
-            break;
-          }
-        }
-      }
-    }
-
-    const allUserIds = Array.from(
-      new Set(
-        Object.values(innToCompany)
-          .map((v) => v?.ASSIGNED_BY_ID)
-          .filter((x): x is number => Number.isFinite(x as number)),
-      ),
-    );
-
-    const userIdToName: Record<number, string> = {};
-    const userCmdPreview: string[] = [];
-
-    const now2 = Date.now();
-    const missingUserIds: number[] = [];
-    for (const uid of allUserIds) {
-      const c = usersCache.get(uid);
-      if (c && c.exp > now2) {
-        userIdToName[uid] = c.name;
-      } else {
-        missingUserIds.push(uid);
-      }
-    }
-
-    for (const pack of chunk(missingUserIds, BATCH_LIMIT)) {
-      if (!pack.length) break;
-      const cmd: Record<string, string> = {};
-      const keys: Array<{ key: string; uid: number }> = [];
-
-      for (const uid of pack) {
-        const k = nextKey('u');
-        cmd[k] = `user.get?ID=${encodeURIComponent(String(uid))}`;
-        keys.push({ key: k, uid });
-        if (debug) userCmdPreview.push(`${k}: ${cmd[k]}`);
-      }
-
-      const r = await b24BatchJson(cmd, 0);
-      const buckets = core(r);
-
-      for (const { key: k, uid } of keys) {
-        const arr = buckets[k] as any[];
-        const u = Array.isArray(arr) && arr[0] ? arr[0] : null;
-        if (u?.ID) {
-          const name = makeFio(u);
-          userIdToName[uid] = name;
-          usersCache.set(uid, { name, exp: Date.now() + USERS_TTL_MS });
-        }
-      }
-    }
-
-    const items: RespItem[] = [];
-    const itemsToSave: RespItem[] = [];
-    for (const inn of toFind) {
-      const info = innToCompany[inn];
-      if (!info) {
-        if (staleData[inn]) items.push(staleData[inn]);
-        continue;
-      }
-      const assignedById = info?.ASSIGNED_BY_ID;
-      const assignedName = assignedById ? userIdToName[assignedById] : undefined;
-
-      let colorId: number | undefined = undefined;
-      let colorLabel: string | undefined = undefined;
-      let colorXmlId: string | undefined = undefined;
-
-      if (Number.isFinite(info?.COLOR_ID as number)) {
-        const row = enumMap.get(info!.COLOR_ID!);
-        if (row) {
-          colorId = row.id;
-          colorLabel = row.value;
-          colorXmlId = row.xmlId;
-        }
-      }
-
-      const item: RespItem = {
-        inn,
-        companyId: info?.ID,
-        assignedById,
-        assignedName,
-        colorId,
-        colorLabel,
-        colorXmlId,
-        updatedAt: new Date().toISOString(),
-      };
-      items.push(item);
-      itemsToSave.push(item);
-    }
-
-    await saveMeta(itemsToSave);
+    await saveMeta(fetched);
 
     const merged: Record<string, RespItem> = { ...fresh, ...staleData };
-    for (const it of items) {
+    for (const it of fetched) {
       merged[it.inn] = it;
     }
 
     return NextResponse.json({
       ok: true,
-      items: inns.map((inn) => merged[inn] || fresh[inn]).filter(Boolean),
+      items: inns.map((inn) => merged[inn]).filter(Boolean),
       debug: debug
         ? { ufFieldsTried: UF_LIST, previewCmd, userCmd: userCmdPreview, colorField: COLOR_FIELD }
         : undefined,
