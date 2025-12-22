@@ -6,6 +6,7 @@ import {
   okvedCompanySchema,
 } from '@/lib/validators';
 import { getAiIntegrationHealth } from '@/lib/ai-integration';
+import { refreshCompanyContacts } from '@/lib/company-contacts';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -87,6 +88,8 @@ const OPTIONAL_COLUMNS: OptionalColumnSpec[] = [
   },
   { alias: 'analysis_pipeline', candidates: ['analysis_pipeline', 'analysis_step', 'analysis_process'], fallback: 'NULL::text' },
 ];
+
+const CONTACTS_MAX_AGE_MINUTES = 24 * 60;
 
 let cachedColumns: { names: Set<string>; ts: number } | null = null;
 const COL_CACHE_TTL_MS = 5 * 60 * 1000;
@@ -444,10 +447,34 @@ export async function GET(request: NextRequest) {
       integrationHealthPromise,
     ]);
 
+    const inns = dataRes.rows.map((row: any) => row.inn).filter(Boolean);
+    let contactsByInn = new Map<string, { emails?: any; webSites?: any }>();
+
+    if (inns.length) {
+      try {
+        const { items: contacts } = await refreshCompanyContacts(inns, {
+          maxAgeMinutes: CONTACTS_MAX_AGE_MINUTES,
+        });
+
+        contactsByInn = new Map(
+          contacts.map((item) => [
+            item.inn,
+            {
+              emails: Array.isArray(item.emails) ? item.emails : undefined,
+              webSites: Array.isArray(item.webSites) ? item.webSites : undefined,
+            },
+          ]),
+        );
+      } catch (error) {
+        console.error('Failed to refresh company contacts', error);
+      }
+    }
+
     const total = countRes.rows?.[0]?.cnt ?? 0;
 
     const items = dataRes.rows.map((row: any) => {
       const core = okvedCompanySchema.parse(row);
+      const contacts = contactsByInn.get(core.inn);
 
       const analysisInfo = parseJson(row.analysis_info);
 
@@ -486,12 +513,17 @@ export async function GET(request: NextRequest) {
       const tnved = normalizeTnved(row.analysis_tnved);
       const pipeline = parsePipeline(row.analysis_pipeline || (analysisInfo as any)?.pipeline);
 
+      const metaSites = parseStringArray(contacts?.webSites);
+      const metaEmails = parseStringArray(contacts?.emails);
+
       const sites =
+        metaSites ||
         parseStringArray(row.sites) ||
         parseStringArray((analysisInfo as any)?.sites) ||
         parseStringArray(row.analysis_domain ? [row.analysis_domain] : null);
 
       const emails =
+        metaEmails ||
         parseStringArray(row.emails) ||
         parseStringArray((analysisInfo as any)?.emails);
 

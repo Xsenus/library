@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { b24BatchJson, chunk } from '@/lib/b24';
 import { db } from '@/lib/db';
+import { ensureCompanyMetaTable } from '@/lib/b24-meta';
 
 type RespItem = {
   inn: string;
@@ -47,34 +48,7 @@ let seq = 0;
 const nextKey = (p: string) => `${p}${++seq}`;
 
 const MAX_AGE_DEFAULT_MINUTES = 30;
-const TABLE_SQL = `
-  CREATE TABLE IF NOT EXISTS b24_company_meta (
-    inn varchar(20) PRIMARY KEY,
-    company_id text,
-    assigned_by_id integer,
-    assigned_name text,
-    color_id integer,
-    color_label text,
-    color_xml_id text,
-    created_at timestamptz NOT NULL DEFAULT NOW(),
-    updated_at timestamptz NOT NULL DEFAULT NOW()
-  );
-`;
-
-let ensureTablePromise: Promise<void> | null = null;
-
-async function ensureTable() {
-  if (!ensureTablePromise) {
-    ensureTablePromise = db
-      .query(TABLE_SQL)
-      .then(() => void 0)
-      .catch((e) => {
-        ensureTablePromise = null;
-        throw e;
-      });
-  }
-  return ensureTablePromise;
-}
+const ensureTable = ensureCompanyMetaTable;
 
 async function getCachedMeta(
   inns: string[],
