@@ -20,7 +20,7 @@ export const revalidate = 0;
 let ensuredQueue = false;
 let ensuredCommands = false;
 const PROCESS_LOCK_KEY = 42_111;
-const MAX_STEP_ATTEMPTS = 5;
+const MAX_STEP_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 2000;
 const MAX_DEFER_ATTEMPTS = 3;
 
@@ -175,19 +175,27 @@ type StepDefinition = {
   fallbacks?: StepAttempt[];
 };
 
+type RunResult = {
+  ok: boolean;
+  status: number;
+  error?: string;
+  progress?: number;
+  completedSteps?: StepKey[];
+};
+
 const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
   lookup: {
     primary: {
-      path: () => '/v1/lookup/card',
+      path: (inn) => `/v1/lookup/${encodeURIComponent(inn)}/card`,
       label: 'Карта компании (lookup)',
-      method: 'POST',
-      body: true,
+      method: 'GET',
     },
     fallbacks: [
       {
-        path: (inn) => `/v1/lookup/${encodeURIComponent(inn)}/card`,
-        label: 'GET lookup',
-        method: 'GET',
+        path: () => '/v1/lookup/card',
+        label: 'POST lookup/card',
+        method: 'POST',
+        body: true,
       },
     ],
   },
@@ -202,34 +210,39 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
     ],
   },
   analyze_json: {
-    primary: { path: () => '/v1/analyze-json', label: 'AI-анализ', method: 'POST', body: true },
+    primary: {
+      path: (inn) => `/v1/analyze-json/${encodeURIComponent(inn)}`,
+      label: 'AI-анализ',
+      method: 'GET',
+    },
     fallbacks: [
       {
-        path: (inn) => `/v1/analyze-json/${encodeURIComponent(inn)}`,
-        label: 'GET analyze-json',
-        method: 'GET',
+        path: () => '/v1/analyze-json',
+        label: 'POST analyze-json',
+        method: 'POST',
+        body: true,
       },
     ],
   },
   ib_match: {
     primary: {
-      path: () => '/v1/ib-match',
+      path: (inn) => `/v1/ib-match/by-inn?inn=${encodeURIComponent(inn)}`,
       label: 'Сопоставление продклассов',
-      method: 'POST',
-      body: true,
+      method: 'GET',
     },
     fallbacks: [
       {
-        path: () => '/v1/ib-match/by-inn',
-        label: 'POST ib-match/by-inn',
+        path: () => '/v1/ib-match',
+        label: 'POST ib-match',
         method: 'POST',
         body: true,
       },
       {
-        path: (inn) => `/v1/ib-match/by-inn?inn=${encodeURIComponent(inn)}`,
-        label: 'GET ib-match/by-inn',
-        method: 'GET',
-      },
+        path: () => '/v1/ib-match/by-inn',
+        label: 'POST ib-match/by-inn',
+      method: 'POST',
+      body: true,
+    },
     ],
   },
   equipment_selection: {
@@ -347,10 +360,6 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
           message: `Ошибка шага ${definition.primary.label} (${attempt.label}): ${res.error}`,
           payload: { status: res.status },
         });
-
-        if (![404, 405].includes(res.status)) {
-          break;
-        }
       }
     }
 
@@ -530,7 +539,7 @@ async function consumeStopSignals(existing?: Set<string>) {
   return { stopSet, freshStops: fresh };
 }
 
-async function runFullPipeline(inn: string, timeoutMs: number) {
+async function runFullPipeline(inn: string, timeoutMs: number): Promise<RunResult> {
   let lastStatus = 0;
   let lastError: string | undefined;
 
@@ -666,6 +675,7 @@ export async function POST(request: NextRequest) {
       mode,
       steps: mode === 'steps' ? steps : null,
       defer_count: 0,
+      completed_steps: [],
     };
 
     await ensureQueueTable();
@@ -756,7 +766,12 @@ export async function POST(request: NextRequest) {
             }
 
             const inn = item.inn;
-            const payload = (item.payload || {}) as { mode?: unknown; steps?: unknown; defer_count?: unknown };
+            const payload = (item.payload || {}) as {
+              mode?: unknown;
+              steps?: unknown;
+              defer_count?: unknown;
+              completed_steps?: unknown;
+            };
             const modeFromPayload: 'full' | 'steps' = payload.mode === 'full' ? 'full' : 'steps';
             const stepsFromPayload =
               modeFromPayload === 'steps' ? normalizeSteps(payload.steps) : null;
@@ -795,41 +810,59 @@ export async function POST(request: NextRequest) {
 
             const runInn = async () => {
               if (modeFromPayload === 'steps' && stepsFromPayload) {
+                const completedSteps = new Set<StepKey>(normalizeSteps(payload.completed_steps));
                 const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
-                let progress = 0;
+                const totalSteps = stepsFromPayload.length;
+                let progress = totalSteps ? completedSteps.size / totalSteps : 0;
+                const hasProgressColumn = Boolean(columns.progress);
+
+                const updateProgress = async (value: number) => {
+                  if (!hasProgressColumn) return;
+                  await dbBitrix
+                    .query(`UPDATE dadata_result SET "${columns.progress}" = $2 WHERE inn = $1`, [
+                      inn,
+                      value,
+                    ])
+                    .catch((error) => console.warn('progress update failed', error));
+                };
+
+                if (progress > 0) {
+                  await updateProgress(progress);
+                }
 
                 for (let idx = 0; idx < stepsFromPayload.length; idx++) {
                   const step = stepsFromPayload[idx];
+                  if (completedSteps.has(step)) {
+                    continue;
+                  }
                   const res = await runStep(inn, step, stepTimeoutMs);
                   stepResults.push(res);
                   if (res.ok) {
-                    progress = Math.max(progress, (idx + 1) / stepsFromPayload.length);
-                    if (columns.progress) {
-                      await dbBitrix
-                        .query(`UPDATE dadata_result SET "${columns.progress}" = $2 WHERE inn = $1`, [
-                          inn,
-                          progress,
-                        ])
-                        .catch((error) => console.warn('progress update failed', error));
-                    } else {
-                      console.warn('progress update skipped: no progress column in dadata_result');
-                    }
+                    completedSteps.add(step);
+                    progress = Math.max(progress, completedSteps.size / totalSteps);
+                    await updateProgress(progress);
                   }
                   if (!res.ok) break;
                 }
                 perStep.push({ inn, results: stepResults });
-                const ok = stepResults.every((s) => s.ok);
+                const ok = completedSteps.size === totalSteps && stepResults.every((s) => s.ok);
                 const lastStatus = stepResults.length
                   ? stepResults[stepResults.length - 1]?.status
                   : 0;
                 const firstError = stepResults.find((s) => !s.ok)?.error;
-                return { ok, status: lastStatus ?? 0, error: firstError, progress };
+                return {
+                  ok,
+                  status: lastStatus ?? 0,
+                  error: firstError,
+                  progress,
+                  completedSteps: Array.from(completedSteps),
+                };
               }
 
               return runFullPipeline(inn, stepTimeoutMs);
             };
 
-            let timedResult: { ok: boolean; status: number; error?: string; progress?: number };
+            let timedResult: RunResult;
             try {
               timedResult = (await Promise.race([
                 runInn(),
@@ -839,7 +872,7 @@ export async function POST(request: NextRequest) {
                     overallTimeoutMs,
                   ),
                 ),
-              ])) as { ok: boolean; status: number; error?: string; progress?: number };
+              ])) as RunResult;
             } catch (error: any) {
               timedResult = {
                 ok: false,
@@ -869,7 +902,17 @@ export async function POST(request: NextRequest) {
             integrationResults.push({ inn, ...timedResult, deferred: shouldDefer });
 
             if (shouldDefer) {
-              const nextPayload = { ...payload, defer_count: deferCount + 1 };
+              const completedStepsForRetry =
+                timedResult.completedSteps ??
+                (modeFromPayload === 'steps' && stepsFromPayload
+                  ? normalizeSteps(payload.completed_steps)
+                  : []);
+
+              const nextPayload = {
+                ...payload,
+                defer_count: deferCount + 1,
+                completed_steps: completedStepsForRetry,
+              };
               await safeLog({
                 type: 'notification',
                 source: 'ai-integration',
