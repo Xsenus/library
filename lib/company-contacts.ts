@@ -52,13 +52,28 @@ function normalizeSite(value: any): string | null {
   const raw = String(value).trim();
   if (!raw) return null;
 
-  const cleaned = raw.replace(/^[\s'"<>]+|[\s'"<>]+$/g, '');
+  const cleaned = raw
+    .replace(/^[\s'"<>]+|[\s'"<>]+$/g, '')
+    .replace(/^[({\[]+/, '')
+    .replace(/[)}\]]+$/, '')
+    .replace(/[.,;:!]+$/, '');
+
+  if (!cleaned) return null;
+
   const withProtocol = /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
 
   try {
     const url = new URL(withProtocol);
     if (!url.hostname || !url.hostname.includes('.')) return null;
-    return url.hostname.toLowerCase();
+
+    const sanitizedHost = url.hostname
+      .replace(/^[^a-z0-9]+/i, '')
+      .replace(/[^a-z0-9.-]+/gi, '')
+      .replace(/^[.-]+|[.-]+$/g, '');
+
+    if (!sanitizedHost || !sanitizedHost.includes('.')) return null;
+
+    return sanitizedHost.toLowerCase();
   } catch {
     return null;
   }
