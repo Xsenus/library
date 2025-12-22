@@ -45,7 +45,7 @@ const stepOptions: { key: StepKey; label: string }[] = [
 
 type PipelineStep = { label: string; status?: string | null };
 
-const QUEUE_STALE_MS = 10 * 60 * 1000;
+const QUEUE_STALE_MS = 120 * 60 * 1000;
 
 type AiCompany = {
   inn: string;
@@ -87,6 +87,7 @@ type FetchResponse = {
   page: number;
   pageSize: number;
   available?: Partial<Record<'analysis_ok' | 'server_error' | 'no_valid_site' | 'analysis_progress', boolean>>;
+  active?: { running: number; queued: number; total: number } | null;
   integration?: AiIntegrationHealth | null;
 };
 
@@ -259,6 +260,7 @@ type AvailableMap = FetchResponse['available'];
 export default function AiCompanyAnalysisTab() {
   const [companies, setCompanies] = useState<AiCompany[]>([]);
   const [available, setAvailable] = useState<AvailableMap>({});
+  const [activeSummary, setActiveSummary] = useState<{ running: number; queued: number; total: number } | null>(null);
   const [integrationHealth, setIntegrationHealth] = useState<AiIntegrationHealth | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
@@ -302,13 +304,11 @@ export default function AiCompanyAnalysisTab() {
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
 
-  const isAnyActive = useMemo(
-    () => companies.some((c) => {
-      const state = computeCompanyState(c);
-      return state.running || state.queued;
-    }),
-    [companies],
-  );
+  const activeTotal = useMemo(() => {
+    if (!activeSummary) return 0;
+    if (Number.isFinite(activeSummary.total)) return Math.max(0, Math.floor(activeSummary.total));
+    return Math.max(0, Math.floor((activeSummary.running ?? 0) + (activeSummary.queued ?? 0)));
+  }, [activeSummary]);
 
   const activeCount = useMemo(
     () =>
@@ -317,6 +317,19 @@ export default function AiCompanyAnalysisTab() {
         return state.running || state.queued ? acc + 1 : acc;
       }, 0),
     [companies],
+  );
+
+  const activeOffPage = Math.max(0, activeTotal - activeCount);
+
+  const isAnyActive = useMemo(
+    () => {
+      if (activeTotal > 0) return true;
+      return companies.some((c) => {
+        const state = computeCompanyState(c);
+        return state.running || state.queued;
+      });
+    },
+    [activeTotal, companies],
   );
 
   const integrationHost = useMemo(() => {
@@ -399,12 +412,28 @@ export default function AiCompanyAnalysisTab() {
         if (!res.ok) throw new Error(`Request failed with ${res.status}`);
         const data = (await res.json()) as FetchResponse;
         const items = Array.isArray(data.items) ? (data.items as AiCompany[]) : [];
-        const hasActive = items.some((item) => {
-          const state = computeCompanyState(item);
-          return state.running || state.queued;
-        });
+        const activeFromApi = data.active
+          ? {
+              running: Number.isFinite((data.active as any).running)
+                ? Math.max(0, Math.floor((data.active as any).running))
+                : 0,
+              queued: Number.isFinite((data.active as any).queued)
+                ? Math.max(0, Math.floor((data.active as any).queued))
+                : 0,
+            }
+          : null;
+        const activeTotalFromApi = activeFromApi ? activeFromApi.running + activeFromApi.queued : 0;
+        const hasActive =
+          activeTotalFromApi > 0 ||
+          items.some((item) => {
+            const state = computeCompanyState(item);
+            return state.running || state.queued;
+          });
 
         startTransition(() => {
+          setActiveSummary(
+            activeFromApi ? { ...activeFromApi, total: activeTotalFromApi } : null,
+          );
           setCompanies(items);
           setTotal(typeof data.total === 'number' ? data.total : 0);
           setAvailable(data.available ?? {});
@@ -425,6 +454,7 @@ export default function AiCompanyAnalysisTab() {
           variant: 'destructive',
         });
         startTransition(() => {
+          setActiveSummary(null);
           setCompanies([]);
           setTotal(0);
           setAvailable({});
@@ -946,10 +976,13 @@ export default function AiCompanyAnalysisTab() {
                 <Badge variant="outline" className="bg-background text-foreground">
                   Всего: {total.toLocaleString('ru-RU')}
                 </Badge>
-                {activeCount > 0 && (
+                {activeTotal > 0 && (
                   <Badge variant="secondary" className="gap-1">
                     <Loader2 className="h-3 w-3 animate-spin" />
-                    Активных: {activeCount}
+                    Активных: {activeTotal}
+                    {activeOffPage > 0 ? (
+                      <span className="text-[11px] text-muted-foreground">вне страницы: {activeOffPage}</span>
+                    ) : null}
                   </Badge>
                 )}
                 {autoRefresh && (

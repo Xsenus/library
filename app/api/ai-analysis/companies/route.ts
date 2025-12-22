@@ -96,7 +96,8 @@ const COL_CACHE_TTL_MS = 5 * 60 * 1000;
 
 let cachedQueueCheck: { available: boolean; ts: number } | null = null;
 const QUEUE_CACHE_TTL_MS = 5 * 60 * 1000;
-const QUEUE_STALE_MS = 10 * 60 * 1000;
+const QUEUE_STALE_MS = 120 * 60 * 1000;
+const QUEUE_STALE_INTERVAL = `${QUEUE_STALE_MS / 1000 / 60} minutes`;
 
 async function isQueueTableAvailable(): Promise<boolean> {
   const now = Date.now();
@@ -148,6 +149,61 @@ function buildOptionalSelect(existing: Set<string>): SelectBuild {
   }
 
   return { sql: parts.join(',\n        '), selected };
+}
+
+function buildActivitySql(optionalSelect: SelectBuild, queueAvailable: boolean, whereSql: string): string | null {
+  const statusCol = optionalSelect.selected.get('analysis_status');
+  const progressCol = optionalSelect.selected.get('analysis_progress');
+  const startedCol = optionalSelect.selected.get('analysis_started_at');
+  const finishedCol = optionalSelect.selected.get('analysis_finished_at');
+  const queuedCol = queueAvailable ? 'q.queued_at' : null;
+
+  const runningParts: string[] = [];
+  if (statusCol) {
+    runningParts.push(`LOWER(COALESCE(d.${statusCol}, '')) SIMILAR TO '%(running|processing|in_progress|starting)%'`);
+  }
+  if (progressCol) {
+    runningParts.push(`COALESCE(d.${progressCol}, 0) > 0 AND COALESCE(d.${progressCol}, 0) < 0.999`);
+  }
+  if (startedCol) {
+    const timelineCondition = finishedCol
+      ? `(d.${finishedCol} IS NULL OR d.${startedCol} > d.${finishedCol})`
+      : 'TRUE';
+    runningParts.push(
+      `d.${startedCol} IS NOT NULL AND ${timelineCondition} AND d.${startedCol} > now() - interval '${QUEUE_STALE_INTERVAL}'`,
+    );
+  }
+
+  const queuedParts: string[] = [];
+  if (statusCol) {
+    const statusCondition = `LOWER(COALESCE(d.${statusCol}, '')) SIMILAR TO '%(queued|waiting|pending|scheduled)%'`;
+    queuedParts.push(
+      queuedCol
+        ? `${statusCondition} AND ${queuedCol} > now() - interval '${QUEUE_STALE_INTERVAL}'`
+        : statusCondition,
+    );
+  }
+  if (queuedCol) {
+    queuedParts.push(`${queuedCol} IS NOT NULL AND ${queuedCol} > now() - interval '${QUEUE_STALE_INTERVAL}'`);
+    if (startedCol) {
+      const finishedCheck = finishedCol ? `(d.${finishedCol} IS NULL OR ${queuedCol} > d.${finishedCol})` : 'TRUE';
+      queuedParts.push(`${queuedCol} >= d.${startedCol} AND ${finishedCheck}`);
+    }
+  }
+
+  if (!runningParts.length && !queuedParts.length) return null;
+
+  const runningSql = runningParts.length ? runningParts.map((part) => `(${part})`).join(' OR ') : 'FALSE';
+  const queuedSql = queuedParts.length ? queuedParts.map((part) => `(${part})`).join(' OR ') : 'FALSE';
+  const queueJoinSql = queueAvailable ? `\n      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn` : '';
+
+  return `
+    SELECT
+      COUNT(*) FILTER (WHERE ${runningSql})::int AS running,
+      COUNT(*) FILTER (WHERE ${queuedSql})::int AS queued
+    FROM dadata_result d${queueJoinSql}
+    ${whereSql}
+  `;
 }
 
 function parseString(val: any): string | null {
@@ -412,6 +468,8 @@ export async function GET(request: NextRequest) {
       ${whereSql}
     `;
 
+    const activitySql = buildActivitySql(optionalSelect, queueAvailable, whereSql);
+
     const optionalSql = optionalSelect.sql ? `,\n        ${optionalSelect.sql}` : '';
     const queueSelectSql = queueAvailable ? `,\n        q.queued_at,\n        q.queued_by` : '';
     const queueJoinSql = queueAvailable ? `\n      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn` : '';
@@ -439,10 +497,12 @@ export async function GET(request: NextRequest) {
     `;
 
     const countPromise = dbBitrix.query(countSql, args);
+    const activityPromise = activitySql ? dbBitrix.query(activitySql, args) : Promise.resolve(null);
     const dataPromise = dbBitrix.query(dataSql, [...args, offset, base.pageSize]);
 
-    const [countRes, dataRes, integrationHealth] = await Promise.all([
+    const [countRes, activityRes, dataRes, integrationHealth] = await Promise.all([
       countPromise,
+      activityPromise,
       dataPromise,
       integrationHealthPromise,
     ]);
@@ -568,6 +628,15 @@ export async function GET(request: NextRequest) {
       };
     });
 
+    const activityRow = activityRes?.rows?.[0] ?? null;
+    const active = activityRow
+      ? {
+          running: Number(activityRow.running ?? 0),
+          queued: Number(activityRow.queued ?? 0),
+          total: Number(activityRow.running ?? 0) + Number(activityRow.queued ?? 0),
+        }
+      : null;
+
     const available = {
       analysis_ok: optionalSelect.selected.get('analysis_ok') !== null,
       server_error: optionalSelect.selected.get('server_error') !== null,
@@ -581,6 +650,7 @@ export async function GET(request: NextRequest) {
       page: base.page,
       pageSize: base.pageSize,
       available,
+      active,
       integration: integrationHealth,
     });
   } catch (e) {

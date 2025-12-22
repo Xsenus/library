@@ -431,6 +431,34 @@ async function markQueued(inn: string) {
   await dbBitrix.query(sql, [inn]).catch((error) => console.warn('mark queued failed', error));
 }
 
+async function markQueuedMany(inns: string[]) {
+  if (!inns.length) return;
+
+  const columns = await getDadataColumns();
+  if (!columns.status) {
+    console.warn('mark queued skipped: no status column in dadata_result');
+    return;
+  }
+
+  const sets = [`"${columns.status}" = 'queued'`];
+
+  if (columns.startedAt) {
+    sets.push(`"${columns.startedAt}" = NULL`);
+  }
+
+  if (columns.finishedAt) {
+    sets.push(`"${columns.finishedAt}" = NULL`);
+  }
+
+  if (columns.progress) {
+    sets.push(`"${columns.progress}" = NULL`);
+  }
+
+  const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = ANY($1::text[])`;
+
+  await dbBitrix.query(sql, [inns]).catch((error) => console.warn('mark queued failed', error));
+}
+
 async function markFinished(
   inn: string,
   result:
@@ -705,19 +733,48 @@ export async function POST(request: NextRequest) {
     });
 
     // Немедленно помечаем компании как поставленные в очередь, чтобы UI не ждал долгий запрос
-    await dbBitrix
-      .query(
-        `UPDATE dadata_result SET analysis_status = 'queued', analysis_started_at = NULL, analysis_finished_at = NULL WHERE inn = ANY($1::text[])`,
-        [inns],
-      )
-      .catch((error) => console.warn('mark queued failed', error));
+    await markQueuedMany(inns);
+
+    const sampleInn = inns[0] ?? '{inn}';
+    const stepPlan =
+      mode === 'full'
+        ? [
+            {
+              label: 'Полный пайплайн',
+              request: { method: 'POST' as const, path: '/v1/pipeline/full', body: { inn: sampleInn } },
+              fallbacks: [],
+            },
+          ]
+        : (steps ?? []).map((step) => {
+            const def = STEP_DEFINITIONS[step];
+            return {
+              step,
+              label: def.primary.label,
+              request: {
+                method: def.primary.method,
+                path: def.primary.path(sampleInn),
+                body: def.primary.body ? { inn: sampleInn } : undefined,
+              },
+              fallbacks: (def.fallbacks ?? []).map((fb) => ({
+                method: fb.method,
+                path: fb.path(sampleInn),
+                body: fb.body ? { inn: sampleInn } : undefined,
+              })),
+            };
+          });
 
     const ack = NextResponse.json({
       ok: true,
       queued: inns.length,
       mode,
       steps,
-      integration: { base: integrationBase },
+      integration: {
+        base: integrationBase,
+        mode,
+        modeLocked,
+        steps,
+        plan: stepPlan,
+      },
     });
 
     // Запускаем интеграцию в фоне, чтобы сам запрос отвечал сразу
