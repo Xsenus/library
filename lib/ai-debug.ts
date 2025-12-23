@@ -54,6 +54,7 @@ export const aiDebugEventSchema = z.object({
 type AiDebugEventInput = z.infer<typeof aiDebugEventSchema>;
 
 let ensured = false;
+let dadataFlagsAvailable = true;
 
 async function ensureTables() {
   if (ensured) return;
@@ -78,9 +79,15 @@ async function ensureTables() {
   await dbBitrix.query(`CREATE INDEX IF NOT EXISTS idx_ai_debug_events_request_id ON ai_debug_events (request_id)`);
   await dbBitrix.query(`CREATE INDEX IF NOT EXISTS idx_ai_debug_events_company_id ON ai_debug_events (company_id)`);
 
-  await dbBitrix.query(`ALTER TABLE dadata_result ADD COLUMN IF NOT EXISTS server_error int`);
-  await dbBitrix.query(`ALTER TABLE dadata_result ADD COLUMN IF NOT EXISTS analysis_ok int`);
-  await dbBitrix.query(`ALTER TABLE dadata_result ADD COLUMN IF NOT EXISTS analysis_started_at timestamptz`);
+  try {
+    await dbBitrix.query(`ALTER TABLE dadata_result ADD COLUMN IF NOT EXISTS server_error int`);
+    await dbBitrix.query(`ALTER TABLE dadata_result ADD COLUMN IF NOT EXISTS analysis_ok int`);
+    await dbBitrix.query(`ALTER TABLE dadata_result ADD COLUMN IF NOT EXISTS analysis_started_at timestamptz`);
+    dadataFlagsAvailable = true;
+  } catch (error) {
+    dadataFlagsAvailable = false;
+    console.warn('Skipping dadata_result flag columns for AI debug events', error);
+  }
 
   ensured = true;
 }
@@ -89,7 +96,7 @@ async function updateDadataFlags(
   companyId: string | undefined,
   updates: Partial<{ server_error: number; analysis_ok: number; analysis_started_at: 'now' }>,
 ) {
-  if (!companyId) return;
+  if (!companyId || !dadataFlagsAvailable) return;
   const sets: string[] = [];
   const params: any[] = [];
 
