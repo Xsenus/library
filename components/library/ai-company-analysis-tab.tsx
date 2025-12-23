@@ -132,6 +132,38 @@ function truncateText(value: string | null | undefined, max = 120): string {
   return `${text.slice(0, max - 1).trimEnd()}…`;
 }
 
+function normalizeSite(value: unknown): string | null {
+  if (value == null) return null;
+  const raw = String(value).trim();
+  if (!raw) return null;
+
+  const cleaned = raw
+    .replace(/^[\s'"<>]+|[\s'"<>]+$/g, '')
+    .replace(/^[({\[]+/, '')
+    .replace(/[)}\]]+$/, '')
+    .replace(/[.,;:!]+$/, '');
+
+  if (!cleaned) return null;
+
+  const withProtocol = /^https?:\/\//i.test(cleaned) ? cleaned : `https://${cleaned}`;
+
+  try {
+    const url = new URL(withProtocol);
+    if (!url.hostname || !url.hostname.includes('.')) return null;
+
+    const sanitizedHost = url.hostname
+      .replace(/^[^a-z0-9]+/i, '')
+      .replace(/[^a-z0-9.-]+/gi, '')
+      .replace(/^[.-]+|[.-]+$/g, '');
+
+    if (!sanitizedHost || !sanitizedHost.includes('.')) return null;
+
+    return sanitizedHost.toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
 function toStringArray(value: any): string[] {
   if (!value) return [];
   if (Array.isArray(value)) {
@@ -151,6 +183,14 @@ function toStringArray(value: any): string[] {
       .sort((a, b) => a.localeCompare(b));
   }
   return [];
+}
+
+function toSiteArray(value: any): string[] {
+  const normalized = toStringArray(value)
+    .map((site) => normalizeSite(site))
+    .filter((site): site is string => !!site);
+
+  return Array.from(new Set(normalized)).sort((a, b) => a.localeCompare(b));
 }
 
 function toPipelineSteps(raw: any): PipelineStep[] {
@@ -1308,7 +1348,7 @@ export default function AiCompanyAnalysisTab() {
                         const active = state.running || state.queued;
                         const statusBadge = getStatusBadge(company);
                         const companySelected = selected.has(company.inn);
-                        const sites = toStringArray(company.sites);
+                        const sites = toSiteArray(company.sites);
                         const emails = toStringArray(company.emails);
                         const revenue = formatRevenue(company.revenue);
                         const employees = formatEmployees(company.employee_count ?? null);
