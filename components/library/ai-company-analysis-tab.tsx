@@ -116,6 +116,53 @@ function formatTime(iso: string | null | undefined): string {
   return dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
 }
 
+function formatLogDate(value: string) {
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return { date: '—', time: '—' };
+  return {
+    date: dt.toLocaleDateString('ru-RU'),
+    time: dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+  };
+}
+
+function describeLogEvent(event: AiDebugEventRecord): string {
+  if (event.event_type === 'error') return 'Ошибка';
+  if (event.event_type === 'notification') return 'Уведомление';
+  if (event.event_type === 'request') return event.direction === 'response' ? 'Ответ' : 'Запрос';
+  return 'Ответ';
+}
+
+function summarizePayload(payload: any): string[] {
+  if (!payload) return [];
+  if (typeof payload === 'string') return [payload];
+
+  const summary: string[] = [];
+  const maybeNumber = (value: any) => (Number.isFinite(Number(value)) ? Number(value) : null);
+
+  if (Array.isArray(payload.inns) && payload.inns.length) summary.push(`ИНН: ${payload.inns.join(', ')}`);
+  if (payload.error) summary.push(`Ошибка: ${String(payload.error)}`);
+  if (payload.status != null) summary.push(`Статус: ${payload.status}`);
+  if (payload.stopRequested) summary.push('Запрошена остановка');
+  if (payload.defer_count != null) summary.push(`Попытка: ${payload.defer_count}`);
+  if (payload.progress != null) {
+    const pct = maybeNumber(payload.progress);
+    summary.push(`Прогресс: ${pct != null ? Math.round(pct * 100) + '%' : payload.progress}`);
+  }
+  if (payload.durationMs != null) {
+    const seconds = maybeNumber(payload.durationMs) ? maybeNumber(payload.durationMs)! / 1000 : null;
+    summary.push(`Длительность: ${seconds != null ? seconds.toFixed(1) + ' c' : payload.durationMs}`);
+  }
+  if (Array.isArray(payload.results)) summary.push(`Результаты: ${payload.results.length}`);
+  if (payload.request) summary.push(`Запрос: ${String(payload.request).slice(0, 80)}`);
+
+  if (!summary.length) {
+    const json = JSON.stringify(payload);
+    if (json) summary.push(json.length > 180 ? `${json.slice(0, 180)}…` : json);
+  }
+
+  return summary;
+}
+
 function formatDuration(ms: number | null | undefined): string {
   if (!ms || !Number.isFinite(ms) || ms <= 0) return '—';
   const totalSeconds = Math.floor(ms / 1000);
@@ -429,55 +476,9 @@ export default function AiCompanyAnalysisTab() {
         parts.push(`API: ${new URL(base).host}`);
       } catch {
         parts.push(`API: ${base}`);
-  }
-}
+      }
+    }
 
-function formatLogDate(value: string) {
-  const dt = new Date(value);
-  if (Number.isNaN(dt.getTime())) return { date: '—', time: '—' };
-  return {
-    date: dt.toLocaleDateString('ru-RU'),
-    time: dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
-  };
-}
-
-function describeLogEvent(event: AiDebugEventRecord): string {
-  if (event.event_type === 'error') return 'Ошибка';
-  if (event.event_type === 'notification') return 'Уведомление';
-  if (event.event_type === 'request') return event.direction === 'response' ? 'Ответ' : 'Запрос';
-  return 'Ответ';
-}
-
-function summarizePayload(payload: any): string[] {
-  if (!payload) return [];
-  if (typeof payload === 'string') return [payload];
-
-  const summary: string[] = [];
-  const maybeNumber = (value: any) => (Number.isFinite(Number(value)) ? Number(value) : null);
-
-  if (Array.isArray(payload.inns) && payload.inns.length) summary.push(`ИНН: ${payload.inns.join(', ')}`);
-  if (payload.error) summary.push(`Ошибка: ${String(payload.error)}`);
-  if (payload.status != null) summary.push(`Статус: ${payload.status}`);
-  if (payload.stopRequested) summary.push('Запрошена остановка');
-  if (payload.defer_count != null) summary.push(`Попытка: ${payload.defer_count}`);
-  if (payload.progress != null) {
-    const pct = maybeNumber(payload.progress);
-    summary.push(`Прогресс: ${pct != null ? Math.round(pct * 100) + '%' : payload.progress}`);
-  }
-  if (payload.durationMs != null) {
-    const seconds = maybeNumber(payload.durationMs) ? maybeNumber(payload.durationMs)! / 1000 : null;
-    summary.push(`Длительность: ${seconds != null ? seconds.toFixed(1) + ' c' : payload.durationMs}`);
-  }
-  if (Array.isArray(payload.results)) summary.push(`Результаты: ${payload.results.length}`);
-  if (payload.request) summary.push(`Запрос: ${String(payload.request).slice(0, 80)}`);
-
-  if (!summary.length) {
-    const json = JSON.stringify(payload);
-    if (json) summary.push(json.length > 180 ? `${json.slice(0, 180)}…` : json);
-  }
-
-  return summary;
-}
     if (attempted > 0) {
       parts.push(`успешно ${succeeded} из ${attempted}`);
       if (failedCount > 0) parts.push(`ошибки: ${failedCount}`);
