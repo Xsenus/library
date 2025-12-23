@@ -212,7 +212,7 @@ function computeCompanyState(company: AiCompany): CompanyState {
     : false;
   const runningByProgress = progress != null && progress > 0 && progress < 0.999;
   const runningByTimeline =
-    startedTs != null && (finishedTs == null || startedTs > finishedTs || Date.now() - startedTs < QUEUE_STALE_MS);
+    startedTs != null && finishedTs == null && Date.now() - startedTs < QUEUE_STALE_MS;
   const running = runningByStatus || runningByProgress || runningByTimeline;
 
   const queuedByStatus = status
