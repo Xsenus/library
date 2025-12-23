@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { ChevronDown, ChevronUp, Filter, Info, Loader2, Play, Square } from 'lucide-react';
+import { ChevronDown, ChevronUp, FileText, Filter, Info, Loader2, Play, RefreshCw, Square } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -26,6 +26,7 @@ import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
 import type { Industry } from '@/lib/validators';
 import type { AiIntegrationHealth } from '@/lib/ai-integration';
+import type { AiDebugEventRecord } from '@/lib/ai-debug';
 import { getDefaultSteps, getForcedLaunchMode, getForcedSteps, isLaunchModeLocked } from '@/lib/ai-analysis-config';
 import type { StepKey } from '@/lib/ai-analysis-types';
 
@@ -315,6 +316,14 @@ export default function AiCompanyAnalysisTab() {
   const [industriesLoading, setIndustriesLoading] = useState(false);
   const [okvedOptions, setOkvedOptions] = useState<Array<{ id: number; okved_code: string; okved_main: string }>>([]);
   const [infoCompany, setInfoCompany] = useState<AiCompany | null>(null);
+  const [logs, setLogs] = useState<AiDebugEventRecord[]>([]);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [logsError, setLogsError] = useState<string | null>(null);
+  const [jsonState, setJsonState] = useState<{ open: boolean; title: string; payload: any }>({
+    open: false,
+    title: '',
+    payload: null,
+  });
   const [bulkLoading, setBulkLoading] = useState(false);
   const [runInn, setRunInn] = useState<string | null>(null);
   const [stopInn, setStopInn] = useState<string | null>(null);
@@ -381,6 +390,11 @@ export default function AiCompanyAnalysisTab() {
     }
   }, [integrationHealth]);
 
+  const integrationOffline = useMemo(
+    () => integrationHealth != null && !integrationHealth.available,
+    [integrationHealth],
+  );
+
   const isRefreshing = loading || isPending;
   const okvedSelectValue = okvedCode ?? '__all__';
   const autoRefreshLabel = useMemo(() => {
@@ -415,8 +429,55 @@ export default function AiCompanyAnalysisTab() {
         parts.push(`API: ${new URL(base).host}`);
       } catch {
         parts.push(`API: ${base}`);
-      }
-    }
+  }
+}
+
+function formatLogDate(value: string) {
+  const dt = new Date(value);
+  if (Number.isNaN(dt.getTime())) return { date: '—', time: '—' };
+  return {
+    date: dt.toLocaleDateString('ru-RU'),
+    time: dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
+  };
+}
+
+function describeLogEvent(event: AiDebugEventRecord): string {
+  if (event.event_type === 'error') return 'Ошибка';
+  if (event.event_type === 'notification') return 'Уведомление';
+  if (event.event_type === 'request') return event.direction === 'response' ? 'Ответ' : 'Запрос';
+  return 'Ответ';
+}
+
+function summarizePayload(payload: any): string[] {
+  if (!payload) return [];
+  if (typeof payload === 'string') return [payload];
+
+  const summary: string[] = [];
+  const maybeNumber = (value: any) => (Number.isFinite(Number(value)) ? Number(value) : null);
+
+  if (Array.isArray(payload.inns) && payload.inns.length) summary.push(`ИНН: ${payload.inns.join(', ')}`);
+  if (payload.error) summary.push(`Ошибка: ${String(payload.error)}`);
+  if (payload.status != null) summary.push(`Статус: ${payload.status}`);
+  if (payload.stopRequested) summary.push('Запрошена остановка');
+  if (payload.defer_count != null) summary.push(`Попытка: ${payload.defer_count}`);
+  if (payload.progress != null) {
+    const pct = maybeNumber(payload.progress);
+    summary.push(`Прогресс: ${pct != null ? Math.round(pct * 100) + '%' : payload.progress}`);
+  }
+  if (payload.durationMs != null) {
+    const seconds = maybeNumber(payload.durationMs) ? maybeNumber(payload.durationMs)! / 1000 : null;
+    summary.push(`Длительность: ${seconds != null ? seconds.toFixed(1) + ' c' : payload.durationMs}`);
+  }
+  if (Array.isArray(payload.results)) summary.push(`Результаты: ${payload.results.length}`);
+  if (payload.request) summary.push(`Запрос: ${String(payload.request).slice(0, 80)}`);
+
+  if (!summary.length) {
+    const json = JSON.stringify(payload);
+    if (json) summary.push(json.length > 180 ? `${json.slice(0, 180)}…` : json);
+  }
+
+  return summary;
+}
     if (attempted > 0) {
       parts.push(`успешно ${succeeded} из ${attempted}`);
       if (failedCount > 0) parts.push(`ошибки: ${failedCount}`);
@@ -514,6 +575,29 @@ export default function AiCompanyAnalysisTab() {
   useEffect(() => {
     fetchCompanies(page, pageSize);
   }, [fetchCompanies, page, pageSize]);
+
+  const fetchCompanyLogs = useCallback(
+    async (inn?: string | null) => {
+      if (!inn) return;
+      setLogsLoading(true);
+      setLogsError(null);
+      try {
+        const res = await fetch(`/api/ai-debug/events?companyId=${encodeURIComponent(inn)}&pageSize=100`, {
+          cache: 'no-store',
+        });
+        if (!res.ok) throw new Error(`Request failed with ${res.status}`);
+        const data = (await res.json()) as { items?: AiDebugEventRecord[] };
+        setLogs(Array.isArray(data.items) ? data.items : []);
+      } catch (error: any) {
+        console.error('Failed to load logs for company', error);
+        setLogs([]);
+        setLogsError(error?.message ?? 'Не удалось загрузить логи компании');
+      } finally {
+        setLogsLoading(false);
+      }
+    },
+    [],
+  );
 
   const scheduleAutoRefresh = useCallback(() => {
     const deadline = Date.now() + 2 * 60 * 1000;
@@ -773,9 +857,27 @@ export default function AiCompanyAnalysisTab() {
     return () => clearTimeout(timeout);
   }, [stopSignalAt]);
 
+  useEffect(() => {
+    if (!infoCompany) {
+      setLogs([]);
+      setLogsError(null);
+      setLogsLoading(false);
+      return;
+    }
+    fetchCompanyLogs(infoCompany.inn);
+  }, [fetchCompanyLogs, infoCompany]);
+
   const handleRunSelected = useCallback(async () => {
     const inns = Array.from(selected);
     if (!inns.length) return;
+    if (integrationOffline) {
+      toast({
+        title: 'AI integration недоступна',
+        description: integrationHealth?.detail ?? 'Проверьте соединение с сервисом AI.',
+        variant: 'destructive',
+      });
+      return;
+    }
     setBulkLoading(true);
     try {
       const res = await fetch('/api/ai-analysis/run', {
@@ -824,10 +926,20 @@ export default function AiCompanyAnalysisTab() {
     integrationSummaryText,
     launchMode,
     selectedSteps,
+    integrationOffline,
+    integrationHealth,
   ]);
 
   const handleRunSingle = useCallback(
     async (inn: string) => {
+      if (integrationOffline) {
+        toast({
+          title: 'AI integration недоступна',
+          description: integrationHealth?.detail ?? 'Проверьте соединение с сервисом AI.',
+          variant: 'destructive',
+        });
+        return;
+      }
       setRunInn(inn);
       try {
         const res = await fetch('/api/ai-analysis/run', {
@@ -876,6 +988,8 @@ export default function AiCompanyAnalysisTab() {
       integrationSummaryText,
       launchMode,
       selectedSteps,
+      integrationOffline,
+      integrationHealth,
     ],
   );
 
@@ -1178,7 +1292,7 @@ export default function AiCompanyAnalysisTab() {
                       type="button"
                       className="h-9"
                       onClick={handleRunSelected}
-                      disabled={bulkLoading || selected.size === 0}
+                      disabled={bulkLoading || selected.size === 0 || integrationOffline}
                     >
                       {bulkLoading ? 'Запуск…' : 'Запустить выбранные'}
                     </Button>
@@ -1391,8 +1505,16 @@ export default function AiCompanyAnalysisTab() {
                           Math.max(0, Math.round((company.analysis_progress ?? 0) * 100)),
                         );
                         const runDisabled =
-                          runInn === company.inn || bulkLoading || state.running || state.queued;
-                        const runTooltip = state.running
+                          runInn === company.inn ||
+                          bulkLoading ||
+                          state.running ||
+                          state.queued ||
+                          integrationOffline;
+                        const runTooltip = integrationOffline
+                          ? integrationHealth?.detail
+                            ? `AI integration недоступна: ${integrationHealth.detail}`
+                            : 'AI integration недоступна'
+                          : state.running
                           ? 'Анализ выполняется'
                           : state.queued
                           ? 'Компания уже в очереди'
@@ -1783,6 +1905,86 @@ export default function AiCompanyAnalysisTab() {
                   );
                 })()}
 
+                <div className="space-y-2">
+                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                    <span className="uppercase">Логи задачи</span>
+                    <Button
+                      type="button"
+                      size="xs"
+                      variant="outline"
+                      onClick={() => fetchCompanyLogs(infoCompany.inn)}
+                      disabled={logsLoading}
+                    >
+                      {logsLoading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
+                      <span className="ml-1">Обновить</span>
+                    </Button>
+                    {logs.length > 0 && (
+                      <span className="text-[11px] text-muted-foreground">
+                        Показано {logs.length} последних записей
+                      </span>
+                    )}
+                    {logsError && <span className="text-destructive">{logsError}</span>}
+                  </div>
+
+                  <div className="max-h-64 divide-y overflow-y-auto rounded-lg border bg-muted/30">
+                    {logsLoading && !logs.length ? (
+                      <div className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
+                        <Loader2 className="h-4 w-4 animate-spin" />
+                        Загружаем логи…
+                      </div>
+                    ) : logs.length ? (
+                      logs.map((log) => {
+                        const dt = formatLogDate(log.created_at);
+                        const summary = summarizePayload(log.payload);
+                        return (
+                          <div key={log.id} className="space-y-1 px-3 py-2">
+                            <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
+                              <Badge variant="outline" className="border-border/60 bg-background text-foreground">
+                                {describeLogEvent(log)}
+                              </Badge>
+                              <span>
+                                {dt.date} · {dt.time}
+                              </span>
+                              {log.source && <span className="text-[11px]">{log.source}</span>}
+                              {log.request_id && <span className="text-[11px]">req: {log.request_id}</span>}
+                            </div>
+                            <div className="flex flex-wrap items-start gap-2">
+                              <div className="flex-1 space-y-1">
+                                {log.message && <div className="text-sm text-foreground">{log.message}</div>}
+                                {summary.length > 0 && (
+                                  <div className="text-xs text-muted-foreground">
+                                    {summary.join(' · ')}
+                                  </div>
+                                )}
+                              </div>
+                              {log.payload ? (
+                                <Button
+                                  type="button"
+                                  variant="ghost"
+                                  size="sm"
+                                  className="h-8 gap-1 text-xs"
+                                  onClick={() =>
+                                    setJsonState({
+                                      open: true,
+                                      title: `${describeLogEvent(log)} · ${dt.date} ${dt.time}`,
+                                      payload: log.payload,
+                                    })
+                                  }
+                                >
+                                  <FileText className="h-4 w-4" />
+                                  JSON
+                                </Button>
+                              ) : null}
+                            </div>
+                          </div>
+                        );
+                      })
+                    ) : (
+                      <div className="px-3 py-4 text-sm text-muted-foreground">Логи пока отсутствуют</div>
+                    )}
+                  </div>
+                </div>
+
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>
@@ -1848,6 +2050,17 @@ export default function AiCompanyAnalysisTab() {
                 </div>
               </div>
             )}
+          </DialogContent>
+        </Dialog>
+
+        <Dialog open={jsonState.open} onOpenChange={(open) => !open && setJsonState({ open: false, title: '', payload: null })}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>{jsonState.title || 'Детали лога'}</DialogTitle>
+            </DialogHeader>
+            <pre className="max-h-[70vh] overflow-auto rounded-md bg-muted/50 p-3 text-xs">
+              {jsonState.payload ? JSON.stringify(jsonState.payload, null, 2) : 'Нет данных'}
+            </pre>
           </DialogContent>
         </Dialog>
       </div>

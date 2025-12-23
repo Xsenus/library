@@ -11,12 +11,13 @@ export async function GET(req: NextRequest) {
     const sp = req.nextUrl.searchParams;
     const pageRaw = sp.get('page');
     const pageSizeRaw = sp.get('pageSize');
+    const companyId = sp.get('companyId') || undefined;
 
     const page = Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1;
     const pageSize = Number.isFinite(Number(pageSizeRaw)) ? Number(pageSizeRaw) : 50;
     const categories = sp.getAll('category').filter(Boolean) as ('traffic' | 'error' | 'notification')[];
 
-    const data = await listAiDebugEvents({ categories, page, pageSize });
+    const data = await listAiDebugEvents({ categories, page, pageSize, companyId });
     return NextResponse.json(data);
   } catch (error: any) {
     console.error('GET /api/ai-debug/events failed', error);
