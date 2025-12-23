@@ -166,11 +166,8 @@ function buildActivitySql(optionalSelect: SelectBuild, queueAvailable: boolean, 
     runningParts.push(`COALESCE(d.${progressCol}, 0) > 0 AND COALESCE(d.${progressCol}, 0) < 0.999`);
   }
   if (startedCol) {
-    const timelineCondition = finishedCol
-      ? `(d.${finishedCol} IS NULL OR d.${startedCol} > d.${finishedCol})`
-      : 'TRUE';
     runningParts.push(
-      `d.${startedCol} IS NOT NULL AND ${timelineCondition} AND d.${startedCol} > now() - interval '${QUEUE_STALE_INTERVAL}'`,
+      `d.${startedCol} IS NOT NULL AND ${finishedCol ? `d.${finishedCol} IS NULL AND ` : ''}d.${startedCol} > now() - interval '${QUEUE_STALE_INTERVAL}'`,
     );
   }
 
