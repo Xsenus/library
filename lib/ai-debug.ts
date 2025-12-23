@@ -214,6 +214,7 @@ export async function listAiDebugEvents(params: {
   categories?: ('traffic' | 'error' | 'notification')[];
   page?: number;
   pageSize?: number;
+  companyId?: string;
 }): Promise<{ items: AiDebugEventRecord[]; total: number; page: number; pageSize: number }> {
   await ensureTables();
 
@@ -224,6 +225,7 @@ export async function listAiDebugEvents(params: {
   const pageSize = Math.min(Math.max(1, Number.isFinite(rawPageSize) ? rawPageSize : 30), 100);
 
   const filters: string[] = [];
+  const filterParams: any[] = [];
 
   const cats = params.categories?.length ? params.categories : ['traffic', 'error', 'notification'];
   const typeConditions: string[] = [];
@@ -238,6 +240,11 @@ export async function listAiDebugEvents(params: {
     filters.push(`(${typeConditions.join(' OR ')})`);
   }
 
+  if (params.companyId) {
+    filterParams.push(params.companyId);
+    filters.push(`company_id = $${filterParams.length}`);
+  }
+
   const whereSql = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
 
   const { rows } = await dbBitrix.query<AiDebugEventRecord>(
@@ -248,11 +255,12 @@ export async function listAiDebugEvents(params: {
       ORDER BY created_at DESC, id DESC
       LIMIT $1 OFFSET $2
     `,
-    [pageSize, (page - 1) * pageSize],
+    [...filterParams, pageSize, (page - 1) * pageSize],
   );
 
   const totalRes = await dbBitrix.query<{ count: string }>(
     `SELECT COUNT(*)::text AS count FROM ai_debug_events ${whereSql}`,
+    filterParams,
   );
   const total = Number(totalRes.rows?.[0]?.count ?? 0);
 
