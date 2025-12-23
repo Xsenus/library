@@ -1910,7 +1910,7 @@ function summarizePayload(payload: any): string[] {
                     <span className="uppercase">Логи задачи</span>
                     <Button
                       type="button"
-                      size="xs"
+                      size="sm"
                       variant="outline"
                       onClick={() => fetchCompanyLogs(infoCompany.inn)}
                       disabled={logsLoading}
