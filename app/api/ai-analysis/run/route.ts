@@ -695,6 +695,9 @@ export async function POST(request: NextRequest) {
         ? String((payloadRaw as any).source)
         : 'manual';
 
+    const session = await getSession();
+    const requestedBy = session?.login ?? session?.id?.toString() ?? null;
+
     const payload: Record<string, unknown> = {
       ...payloadRaw,
       source,
@@ -706,10 +709,45 @@ export async function POST(request: NextRequest) {
       completed_steps: [],
     };
 
-    await ensureQueueTable();
+    const isImmediateDebugStep =
+      source === 'debug-step' && mode === 'steps' && inns.length === 1 && (steps?.length ?? 0) === 1;
 
-    const session = await getSession();
-    const requestedBy = session?.login ?? session?.id?.toString() ?? null;
+    if (isImmediateDebugStep) {
+      const inn = inns[0];
+      const step = steps![0]!;
+      const stepTimeoutMs = getStepTimeoutMs();
+
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        message: 'Запуск одиночного шага для отладки (без очереди)',
+        payload: { step, requestedBy, source },
+      });
+
+      const runResult = await runStep(inn, step, stepTimeoutMs);
+
+      await safeLog({
+        type: runResult.ok ? 'response' : 'error',
+        source: 'ai-integration',
+        companyId: inn,
+        message: runResult.ok
+          ? `Шаг ${step} завершился успешно (debug)`
+          : `Шаг ${step} завершился ошибкой (debug): ${runResult.error ?? 'unknown'}`,
+        payload: { status: runResult.status },
+      });
+
+      return NextResponse.json({
+        ok: runResult.ok,
+        status: runResult.status,
+        error: runResult.error,
+        mode,
+        steps,
+        integration: { base: integrationBase, mode, modeLocked, steps },
+      });
+    }
+
+    await ensureQueueTable();
 
     const placeholders = inns.map((_, idx) => `($${idx + 1})`).join(', ');
 
