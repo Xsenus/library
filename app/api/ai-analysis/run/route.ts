@@ -727,9 +727,11 @@ export async function POST(request: NextRequest) {
         : {};
 
     const source =
-      typeof (payloadRaw as any).source === 'string' && (payloadRaw as any).source
-        ? String((payloadRaw as any).source)
-        : 'manual';
+      typeof body?.source === 'string' && body.source
+        ? String(body.source)
+        : typeof (payloadRaw as any).source === 'string' && (payloadRaw as any).source
+          ? String((payloadRaw as any).source)
+          : 'manual';
 
     const session = await getSession();
     const requestedBy = session?.login ?? session?.id?.toString() ?? null;
