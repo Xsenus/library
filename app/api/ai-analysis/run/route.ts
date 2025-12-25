@@ -707,6 +707,18 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const payloadRaw =
+      body?.payload && typeof body.payload === 'object' && body.payload !== null
+        ? (body.payload as Record<string, unknown>)
+        : {};
+
+    const source =
+      typeof body?.source === 'string' && body.source
+        ? String(body.source)
+        : typeof (payloadRaw as any).source === 'string' && (payloadRaw as any).source
+          ? String((payloadRaw as any).source)
+          : 'manual';
+
     const forcedMode = getForcedLaunchMode();
     const isDebugRequest = source === 'debug-step';
     const modeLocked = isDebugRequest ? false : isLaunchModeLocked();
@@ -720,18 +732,6 @@ export async function POST(request: NextRequest) {
         ? getForcedSteps()
         : requestedSteps
       : null;
-
-    const payloadRaw =
-      body?.payload && typeof body.payload === 'object' && body.payload !== null
-        ? (body.payload as Record<string, unknown>)
-        : {};
-
-    const source =
-      typeof body?.source === 'string' && body.source
-        ? String(body.source)
-        : typeof (payloadRaw as any).source === 'string' && (payloadRaw as any).source
-          ? String((payloadRaw as any).source)
-          : 'manual';
 
     const session = await getSession();
     const requestedBy = session?.login ?? session?.id?.toString() ?? null;
