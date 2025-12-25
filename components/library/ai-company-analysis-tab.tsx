@@ -373,6 +373,7 @@ export default function AiCompanyAnalysisTab() {
   });
   const [bulkLoading, setBulkLoading] = useState(false);
   const [runInn, setRunInn] = useState<string | null>(null);
+  const [debugStepLoading, setDebugStepLoading] = useState<{ inn: string; step: StepKey } | null>(null);
   const [stopInn, setStopInn] = useState<string | null>(null);
   const [stopLoading, setStopLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -931,6 +932,52 @@ export default function AiCompanyAnalysisTab() {
     integrationHealth,
   ]);
 
+  const handleRunDebugStep = useCallback(
+    async (inn: string, step: StepKey) => {
+      if (integrationOffline) {
+        toast({
+          title: 'AI integration недоступна',
+          description: integrationHealth?.detail ?? 'Проверьте соединение с сервисом AI.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      setDebugStepLoading({ inn, step });
+      try {
+        const res = await fetch('/api/ai-analysis/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inns: [inn], mode: 'steps', steps: [step], source: 'debug-step' }),
+        });
+        const data = (await res.json().catch(() => null)) as { integration?: any; error?: string } | null;
+        if (!res.ok) {
+          const message = data?.error ? `Ошибка запуска: ${data.error}` : `Request failed with ${res.status}`;
+          throw new Error(message);
+        }
+        const note = integrationSummaryText(data?.integration);
+        toast({
+          title: `Шаг «${stepLabelMap[step] ?? step}» выполнен для ИНН ${inn}`,
+          description: note && note.length > 0 ? note : undefined,
+        });
+        fetchCompanies(page, pageSize);
+      } catch (error) {
+        console.error('Failed to start debug step', error);
+        toast({
+          title: 'Ошибка запуска шага',
+          description:
+            error instanceof Error && error.message
+              ? error.message
+              : 'Не удалось выполнить запрос. Попробуйте позже.',
+          variant: 'destructive',
+        });
+      } finally {
+        setDebugStepLoading(null);
+      }
+    },
+    [fetchCompanies, integrationHealth, integrationOffline, integrationSummaryText, page, pageSize, stepLabelMap, toast],
+  );
+
   const handleRunSingle = useCallback(
     async (inn: string) => {
       if (integrationOffline) {
@@ -1286,9 +1333,9 @@ export default function AiCompanyAnalysisTab() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Tooltip>
-                  <TooltipTrigger asChild>
+            <div className="flex flex-wrap items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
                     <Button
                       type="button"
                       className="h-9"
@@ -1298,13 +1345,13 @@ export default function AiCompanyAnalysisTab() {
                       {bulkLoading ? 'Запуск…' : 'Запустить выбранные'}
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    Поставить в очередь выбранные компании
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
+                <TooltipContent side="bottom">
+                  Поставить в очередь выбранные компании
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
                       type="button"
                       variant="destructive"
                       className="h-9"
@@ -1699,63 +1746,90 @@ export default function AiCompanyAnalysisTab() {
                               )}
                             </td>
                             <td className="px-4 py-4 align-top text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="icon"
-                                      className="h-8 w-8"
-                                      onClick={() => handleRunSingle(company.inn)}
-                                      disabled={runDisabled}
-                                    >
-                                      {runInn === company.inn ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                      ) : (
-                                        <Play className="h-4 w-4" />
-                                      )}
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="bottom">{runTooltip}</TooltipContent>
-                                </Tooltip>
-                                {(state.running || state.queued) && (
+                              <div className="flex flex-col items-end gap-2">
+                                <div className="flex items-center justify-end gap-2">
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button
                                         type="button"
-                                        variant="destructive"
+                                        variant="outline"
                                         size="icon"
                                         className="h-8 w-8"
-                                        onClick={() => handleStopSingle(company.inn)}
-                                        disabled={stopInn === company.inn}
-                                        aria-label={`Остановить компанию ${company.short_name}`}
+                                        onClick={() => handleRunSingle(company.inn)}
+                                        disabled={runDisabled}
                                       >
-                                        {stopInn === company.inn ? (
+                                        {runInn === company.inn ? (
                                           <Loader2 className="h-4 w-4 animate-spin" />
                                         ) : (
-                                          <Square className="h-4 w-4" />
+                                          <Play className="h-4 w-4" />
                                         )}
                                       </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent side="bottom">Отменить запуск</TooltipContent>
+                                    <TooltipContent side="bottom">{runTooltip}</TooltipContent>
                                   </Tooltip>
-                                )}
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-8 w-8"
-                                      onClick={() => setInfoCompany(company)}
-                                      aria-label={`Подробности по компании ${company.short_name}`}
-                                    >
-                                      <Info className="h-4 w-4" />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="bottom">Подробнее</TooltipContent>
-                                </Tooltip>
+                                  {(state.running || state.queued) && (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          type="button"
+                                          variant="destructive"
+                                          size="icon"
+                                          className="h-8 w-8"
+                                          onClick={() => handleStopSingle(company.inn)}
+                                          disabled={stopInn === company.inn}
+                                          aria-label={`Остановить компанию ${company.short_name}`}
+                                        >
+                                          {stopInn === company.inn ? (
+                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                          ) : (
+                                            <Square className="h-4 w-4" />
+                                          )}
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="bottom">Отменить запуск</TooltipContent>
+                                    </Tooltip>
+                                  )}
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => setInfoCompany(company)}
+                                        aria-label={`Подробности по компании ${company.short_name}`}
+                                      >
+                                        <Info className="h-4 w-4" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom">Подробнее</TooltipContent>
+                                  </Tooltip>
+                                </div>
+                                <div className="flex flex-wrap items-center justify-end gap-1 rounded-md border border-dashed border-muted-foreground/40 bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground">
+                                  <span className="font-medium text-foreground">Шаги:</span>
+                                  {stepOptions.map((opt) => {
+                                    const loading = debugStepLoading?.inn === company.inn && debugStepLoading.step === opt.key;
+                                    return (
+                                      <Tooltip key={`${company.inn}-debug-${opt.key}`}>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7"
+                                            onClick={() => handleRunDebugStep(company.inn, opt.key)}
+                                            disabled={integrationOffline || !!debugStepLoading || state.running || state.queued}
+                                          >
+                                            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : opt.label}
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="bottom">
+                                          Запустить только шаг «{opt.label}» для компании {company.short_name}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    );
+                                  })}
+                                </div>
                               </div>
                             </td>
                           </tr>
