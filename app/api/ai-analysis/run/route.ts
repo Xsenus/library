@@ -421,6 +421,10 @@ async function markRunning(inn: string) {
     sets.push(`"${columns.serverError}" = 0`);
   }
 
+  if (columns.outcome) {
+    sets.push(`"${columns.outcome}" = 'pending'`);
+  }
+
   const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = $1`;
 
   await dbBitrix.query(sql, params).catch((error) => console.warn('mark running failed', error));
@@ -441,6 +445,10 @@ async function markQueued(inn: string) {
 
   if (columns.finishedAt) {
     sets.push(`"${columns.finishedAt}" = NULL`);
+  }
+
+  if (columns.outcome) {
+    sets.push(`"${columns.outcome}" = 'pending'`);
   }
 
   const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = $1`;
@@ -469,6 +477,10 @@ async function markQueuedMany(inns: string[]) {
 
   if (columns.progress) {
     sets.push(`"${columns.progress}" = NULL`);
+  }
+
+  if (columns.outcome) {
+    sets.push(`"${columns.outcome}" = 'pending'`);
   }
 
   const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = ANY($1::text[])`;
@@ -520,6 +532,13 @@ async function markFinished(
     setters.push(`"${columns.serverError}" = CASE WHEN $${statusIdx} = 'failed' THEN 1 ELSE 0 END`);
   }
 
+  if (columns.outcome) {
+    const outcomeValue = result.status === 'completed' ? 'completed' : 'partial';
+    params.push(outcomeValue);
+    const idx = params.length;
+    setters.push(`"${columns.outcome}" = $${idx}`);
+  }
+
   if (!setters.length) {
     console.warn('mark finished skipped: no writable columns');
     return;
@@ -549,6 +568,10 @@ async function markStopped(inns: string[]) {
 
   if (columns.progress) {
     sets.push(`"${columns.progress}" = NULL`);
+  }
+
+  if (columns.outcome) {
+    sets.push(`"${columns.outcome}" = 'partial'`);
   }
 
   const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = ANY($1::text[])`;

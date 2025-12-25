@@ -1,7 +1,22 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { ChevronDown, ChevronUp, FileText, Filter, Info, Loader2, Play, RefreshCw, Square } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  CircleDashed,
+  Clock3,
+  FileText,
+  Filter,
+  Info,
+  Loader2,
+  Play,
+  RefreshCw,
+  Square,
+  XCircle,
+} from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -59,6 +74,7 @@ type AiCompany = {
   sites?: string[] | null;
   emails?: string[] | null;
   analysis_status?: string | null;
+  analysis_outcome?: string | null;
   analysis_progress?: number | null;
   analysis_started_at?: string | null;
   analysis_finished_at?: string | null;
@@ -288,6 +304,18 @@ function toTimestamp(value: string | null | undefined): number | null {
 
 type CompanyState = { running: boolean; queued: boolean };
 
+type OutcomeKey = 'completed' | 'partial' | 'failed' | 'not_started' | 'pending';
+
+type OutcomeMeta = {
+  key: OutcomeKey;
+  label: string;
+  rowClass: string;
+  textClass?: string;
+  icon: typeof CheckCircle2;
+  iconClass: string;
+  badgeVariant: 'default' | 'secondary' | 'destructive' | 'outline';
+};
+
 function computeCompanyState(company: AiCompany): CompanyState {
   const status = (company.analysis_status ?? '').toLowerCase();
   const progress = company.analysis_progress ?? null;
@@ -317,7 +345,78 @@ function computeCompanyState(company: AiCompany): CompanyState {
   return { running, queued };
 }
 
-function getStatusBadge(company: AiCompany): {
+function resolveOutcome(company: AiCompany, state: CompanyState): OutcomeMeta {
+  const rawOutcome = (company.analysis_outcome ?? '').toLowerCase();
+  let key: OutcomeKey = 'not_started';
+
+  if (state.running || state.queued) {
+    key = 'pending';
+  } else if (rawOutcome === 'completed') {
+    key = 'completed';
+  } else if (rawOutcome === 'partial') {
+    key = 'partial';
+  } else if (rawOutcome === 'failed') {
+    key = 'failed';
+  } else if (company.analysis_ok === 1) {
+    key = 'completed';
+  } else if (company.server_error || company.no_valid_site) {
+    key = 'failed';
+  } else if (company.analysis_finished_at) {
+    key = 'partial';
+  }
+
+  const config: Record<OutcomeKey, OutcomeMeta> = {
+    completed: {
+      key: 'completed',
+      label: 'Проанализирован',
+      rowClass: 'bg-emerald-50',
+      textClass: 'text-emerald-900',
+      icon: CheckCircle2,
+      iconClass: 'text-emerald-600',
+      badgeVariant: 'secondary',
+    },
+    partial: {
+      key: 'partial',
+      label: 'Выполнен частично',
+      rowClass: 'bg-amber-50',
+      textClass: 'text-amber-900',
+      icon: AlertTriangle,
+      iconClass: 'text-amber-600',
+      badgeVariant: 'default',
+    },
+    failed: {
+      key: 'failed',
+      label: 'Не выполнен',
+      rowClass: 'bg-rose-50',
+      textClass: 'text-rose-900',
+      icon: XCircle,
+      iconClass: 'text-rose-600',
+      badgeVariant: 'destructive',
+    },
+    not_started: {
+      key: 'not_started',
+      label: 'Не запускался',
+      rowClass: 'bg-rose-50',
+      textClass: 'text-muted-foreground',
+      icon: CircleDashed,
+      iconClass: 'text-muted-foreground',
+      badgeVariant: 'outline',
+    },
+    pending: {
+      key: 'pending',
+      label: 'Ожидает запуска',
+      rowClass: 'bg-sky-50',
+      textClass: 'text-sky-900',
+      icon: Clock3,
+      iconClass: 'text-sky-600',
+      badgeVariant: 'outline',
+    },
+  };
+
+  return config[key] ?? config.not_started;
+}
+
+function getStatusBadge(company: AiCompany, outcome: OutcomeMeta): {
   label: string;
   variant: 'default' | 'secondary' | 'destructive' | 'outline';
 } {
@@ -328,19 +427,7 @@ function getStatusBadge(company: AiCompany): {
   if (state.queued) {
     return { label: 'В очереди', variant: 'outline' };
   }
-  if (company.analysis_ok === 1) {
-    return { label: 'Успех', variant: 'secondary' };
-  }
-  if (company.server_error) {
-    return { label: 'Сервер недоступен', variant: 'destructive' };
-  }
-  if (company.no_valid_site) {
-    return { label: 'Нет доменов', variant: 'destructive' };
-  }
-  if (company.analysis_finished_at) {
-    return { label: 'Завершено', variant: 'outline' };
-  }
-  return { label: 'Не запускался', variant: 'outline' };
+  return { label: outcome.label, variant: outcome.badgeVariant };
 }
 
 type AvailableMap = FetchResponse['available'];
@@ -1507,14 +1594,15 @@ export default function AiCompanyAnalysisTab() {
                         const steps = toPipelineSteps(company.analysis_pipeline);
                         const currentStage = getCurrentStage(steps, company.analysis_status);
                         const state = computeCompanyState(company);
+                        const outcome = resolveOutcome(company, state);
                         const active = state.running || state.queued;
-                        const statusBadge = getStatusBadge(company);
+                        const statusBadge = getStatusBadge(company, outcome);
                         const companySelected = selected.has(company.inn);
                         const sites = toSiteArray(company.sites);
                         const emails = toStringArray(company.emails);
                         const revenue = formatRevenue(company.revenue);
                         const employees = formatEmployees(company.employee_count ?? null);
-                        const rowFinished = !active && !!company.analysis_finished_at;
+                        const rowTone = active ? 'bg-sky-50' : outcome.rowClass;
                         const isEmailExpanded = expandedEmails.has(company.inn);
                         const isSiteExpanded = expandedSites.has(company.inn);
                         const displaySites = isSiteExpanded ? sites : sites.slice(0, 3);
@@ -1573,8 +1661,8 @@ export default function AiCompanyAnalysisTab() {
                             key={company.inn}
                             className={cn(
                               'border-b border-border/60 align-top transition-colors hover:bg-muted/20',
-                              companySelected && 'bg-muted/30',
-                              rowFinished && 'bg-destructive/5',
+                              companySelected && 'ring-1 ring-primary/40',
+                              rowTone,
                             )}
                           >
                             <td className="px-4 py-4 align-top">
@@ -1586,8 +1674,16 @@ export default function AiCompanyAnalysisTab() {
                             </td>
                             <td className="px-4 py-4 align-top">
                               <div className="space-y-2">
-                                <div className={cn('text-sm font-semibold leading-tight', rowFinished && 'text-destructive')}>
-                                  {company.short_name}
+                                <div className="flex items-center gap-2">
+                                  <outcome.icon className={cn('h-4 w-4', outcome.iconClass)} />
+                                  <div
+                                    className={cn(
+                                      'text-sm font-semibold leading-tight',
+                                      outcome.textClass ?? 'text-foreground',
+                                    )}
+                                  >
+                                    {company.short_name}
+                                  </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                                   <span>ИНН {company.inn}</span>
@@ -1861,9 +1957,10 @@ export default function AiCompanyAnalysisTab() {
             {infoCompany && (
               <div className="space-y-4 text-sm">
                 {(() => {
-                  const status = getStatusBadge(infoCompany);
                   const steps = toPipelineSteps(infoCompany.analysis_pipeline);
                   const state = computeCompanyState(infoCompany);
+                  const outcome = resolveOutcome(infoCompany, state);
+                  const status = getStatusBadge(infoCompany, outcome);
                   const progressPercent = Math.min(
                     100,
                     Math.max(0, Math.round((infoCompany.analysis_progress ?? 0) * 100)),
