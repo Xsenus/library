@@ -751,6 +751,7 @@ export async function POST(request: NextRequest) {
       source === 'debug-step' && mode === 'steps' && inns.length === 1 && (steps?.length ?? 0) === 1;
 
     const isImmediateFullRun = !isDebugRequest && mode === 'full' && inns.length === 1;
+    const isImmediateSingleSteps = !isDebugRequest && mode === 'steps' && inns.length === 1;
 
     if (isImmediateFullRun) {
       const inn = inns[0];
@@ -799,6 +800,118 @@ export async function POST(request: NextRequest) {
         ok: runResult.ok,
         status: runResult.status,
         error: runResult.error,
+        mode,
+        steps,
+        integration: { base: integrationBase, mode, modeLocked, steps },
+      });
+    }
+
+    if (isImmediateSingleSteps) {
+      const inn = inns[0];
+      const stepsToRun = steps && steps.length ? steps : DEFAULT_STEPS;
+      const stepTimeoutMs = getStepTimeoutMs();
+      const overallTimeoutMs = getOverallTimeoutMs();
+      const companyNameMap = await getCompanyNames([inn]);
+      const companyName = companyNameMap.get(inn);
+      const columns = await getDadataColumns();
+      const hasProgressColumn = Boolean(columns.progress);
+
+      const updateProgress = async (value: number) => {
+        if (!hasProgressColumn) return;
+        await dbBitrix
+          .query(`UPDATE dadata_result SET "${columns.progress}" = $2 WHERE inn = $1`, [inn, value])
+          .catch((error) => console.warn('progress update failed', error));
+      };
+
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        companyName,
+        notificationKey: 'analysis_start',
+        message: 'Старт одиночного анализа (без очереди)',
+        payload: { steps: stepsToRun, mode },
+      });
+
+      await markRunning(inn);
+
+      const runAllSteps = async (): Promise<RunResult> => {
+        const totalSteps = stepsToRun.length;
+        const completedSteps = new Set<StepKey>();
+        if (totalSteps === 0) {
+          return { ok: true as const, status: 200, completedSteps: [] };
+        }
+
+        let progress = 0;
+        await updateProgress(progress);
+
+        for (let idx = 0; idx < stepsToRun.length; idx++) {
+          const step = stepsToRun[idx];
+          const result = await runStep(inn, step, stepTimeoutMs);
+          if (result.ok) {
+            completedSteps.add(step);
+            progress = completedSteps.size / totalSteps;
+            await updateProgress(progress);
+            continue;
+          }
+
+          return {
+            ok: false as const,
+            status: result.status,
+            error: result.error,
+            progress,
+            completedSteps: Array.from(completedSteps),
+          };
+        }
+
+        return { ok: true as const, status: 200, progress: 1, completedSteps: Array.from(completedSteps) };
+      };
+
+      const startedAt = Date.now();
+      let timedResult: RunResult;
+      try {
+        timedResult = (await Promise.race([
+          runAllSteps(),
+          new Promise<{ ok: false; status: number; error: string }>((resolve) =>
+            setTimeout(() => resolve({ ok: false, status: 504, error: 'AI integration timed out' }), overallTimeoutMs),
+          ),
+        ])) as RunResult;
+      } catch (error: any) {
+        timedResult = { ok: false, status: 500, error: error?.message ?? 'AI integration run failed' };
+      }
+
+      const durationMs = Date.now() - startedAt;
+      if (timedResult.ok) {
+        await markFinished(inn, { status: 'completed', durationMs, progress: timedResult.progress });
+        await safeLog({
+          type: 'notification',
+          source: 'ai-integration',
+          companyId: inn,
+          companyName,
+          notificationKey: 'analysis_success',
+          message: 'Полный анализ завершён (без очереди)',
+          payload: { status: timedResult.status },
+        });
+      } else {
+        await markFinished(inn, {
+          status: 'failed',
+          durationMs,
+          progress: timedResult.progress,
+        });
+        await safeLog({
+          type: 'error',
+          source: 'ai-integration',
+          companyId: inn,
+          companyName,
+          message: `Полный анализ завершился ошибкой: ${timedResult.error ?? 'unknown'}`,
+          payload: { status: timedResult.status },
+        });
+      }
+
+      return NextResponse.json({
+        ok: timedResult.ok,
+        status: timedResult.status,
+        error: timedResult.error,
         mode,
         steps,
         integration: { base: integrationBase, mode, modeLocked, steps },
