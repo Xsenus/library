@@ -287,7 +287,17 @@ async function ensureIntegrationHealthy(context: {
   attempt: number;
   totalAttempts: number;
 }) {
-  const health = await callAiIntegration('/health', { timeoutMs: 3000 });
+  const path = '/health';
+
+  await safeLog({
+    type: 'request',
+    source: 'ai-integration',
+    companyId: context.inn,
+    message: `Проверка /health перед шагом ${context.stepLabel ?? 'pipeline'} (${context.attempt}/${context.totalAttempts})`,
+    payload: { path, method: 'GET' },
+  });
+
+  const health = await callAiIntegration(path, { timeoutMs: 3000 });
   if (!health.ok) {
     await safeLog({
       type: 'error',
@@ -298,6 +308,13 @@ async function ensureIntegrationHealthy(context: {
     });
     return { ok: false as const, status: health.status, error: health.error };
   }
+  await safeLog({
+    type: 'response',
+    source: 'ai-integration',
+    companyId: context.inn,
+    message: `Health ok перед шагом ${context.stepLabel ?? 'pipeline'}`,
+    payload: { path, status: health.status, data: health.data },
+  });
   return { ok: true as const };
 }
 
@@ -340,28 +357,28 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
         lastStatus = res.status;
 
         if (res.ok) {
-          await safeLog({
-            type: 'response',
-            source: 'ai-integration',
-            requestId,
-            companyId: inn,
-            message: `Шаг успешно принят: ${definition.primary.label} (${attempt.label})`,
-            payload: res.data,
-          });
-          return { step, ok: true, status: res.status };
-        }
-
-        lastError = res.error;
         await safeLog({
-          type: 'error',
+          type: 'response',
           source: 'ai-integration',
           requestId,
           companyId: inn,
-          message: `Ошибка шага ${definition.primary.label} (${attempt.label}): ${res.error}`,
-          payload: { status: res.status },
+          message: `Шаг успешно принят: ${definition.primary.label} (${attempt.label})`,
+          payload: { path, method: attempt.method, status: res.status, data: res.data },
         });
+        return { step, ok: true, status: res.status };
       }
+
+      lastError = res.error;
+      await safeLog({
+        type: 'error',
+        source: 'ai-integration',
+        requestId,
+        companyId: inn,
+        message: `Ошибка шага ${definition.primary.label} (${attempt.label}): ${res.error}`,
+        payload: { path, method: attempt.method, status: res.status },
+      });
     }
+  }
 
     if (attemptNo < MAX_STEP_ATTEMPTS) {
       await safeLog({
@@ -664,7 +681,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    await safeLog({
+      type: 'request',
+      source: 'ai-integration',
+      message: 'Проверка доступности AI integration перед запуском',
+      payload: { path: '/health', method: 'GET' },
+    });
+
     const health = await callAiIntegration('/health', { timeoutMs: 3000 });
+    await safeLog({
+      type: health.ok ? 'response' : 'error',
+      source: 'ai-integration',
+      message: health.ok
+        ? 'AI integration доступна перед запуском'
+        : `AI integration недоступна перед запуском: ${health.error}`,
+      payload: { path: '/health', status: health.status, data: health.ok ? health.data : undefined },
+    });
     if (!health.ok) {
       return NextResponse.json(
         {
@@ -676,14 +708,18 @@ export async function POST(request: NextRequest) {
     }
 
     const forcedMode = getForcedLaunchMode();
-    const modeLocked = isLaunchModeLocked();
-    const mode: 'full' | 'steps' = modeLocked
-      ? forcedMode
-      : body?.mode === 'full'
-      ? 'full'
-      : 'steps';
-    const steps =
-      mode === 'steps' ? (modeLocked ? getForcedSteps() : normalizeSteps(body?.steps)) : null;
+    const isDebugRequest = source === 'debug-step';
+    const modeLocked = isDebugRequest ? false : isLaunchModeLocked();
+    const requestedMode: 'full' | 'steps' = body?.mode === 'full' ? 'full' : 'steps';
+    const mode: 'full' | 'steps' = modeLocked ? forcedMode : isDebugRequest ? 'steps' : requestedMode;
+    const requestedSteps = normalizeSteps(body?.steps);
+    const steps = mode === 'steps'
+      ? isDebugRequest
+        ? requestedSteps.slice(0, 1)
+        : modeLocked
+        ? getForcedSteps()
+        : requestedSteps
+      : null;
 
     const payloadRaw =
       body?.payload && typeof body.payload === 'object' && body.payload !== null
