@@ -685,6 +685,7 @@ export async function POST(request: NextRequest) {
       payload?: unknown;
       mode?: unknown;
       steps?: unknown;
+      source?: unknown;
     } | null;
 
     const inns = normalizeInns(body?.inns);
