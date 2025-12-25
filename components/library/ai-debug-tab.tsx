@@ -341,21 +341,21 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-full text-xs">
+          <table className="min-w-full text-xs table-fixed">
             <thead className="sticky top-0 bg-muted border-b">
-              <tr className="[&>th]:px-2 [&>th]:py-2 text-left align-middle">
-                <th className="w-[40px] text-center">№</th>
-                <th className="w-[48px]">Тип</th>
+              <tr className="[&>th]:px-2 [&>th]:py-2 [&>th]:text-center align-middle">
+                <th className="w-[50px]">№</th>
+                <th className="w-[70px]">Тип</th>
                 <th className="w-[120px]">Источник</th>
-                <th className="w-[90px]">Направление</th>
+                <th className="w-[100px]">Направление</th>
                 <th className="w-[110px]">Дата</th>
-                <th className="w-[100px]">Время</th>
-                <th className="w-[150px]">ID request</th>
+                <th className="w-[110px]">Время</th>
+                <th className="w-[160px]">ID request</th>
                 <th className="w-[140px]">ИНН</th>
-                <th className="w-[240px]">Название компании</th>
+                <th className="w-[220px]">Название компании</th>
                 <th className="w-[260px]">Сообщение</th>
                 <th className="w-[260px]">Детали</th>
-                <th className="w-[160px] text-center">Действия</th>
+                <th className="w-[160px]">Действия</th>
               </tr>
             </thead>
             <tbody className="[&>tr>td]:px-2 [&>tr>td]:py-2 align-top">
@@ -407,19 +407,23 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                     <td className="max-w-[240px] truncate" title={item.company_name || undefined}>
                       {item.company_name || '—'}
                     </td>
-                    <td className={`whitespace-pre-wrap leading-5 ${item.event_type === 'error' ? 'text-destructive font-medium' : ''}`} title={item.message || undefined}>
+                    <td
+                      className={`whitespace-pre-wrap leading-5 max-h-32 overflow-y-auto pr-1 ${item.event_type === 'error' ? 'text-destructive font-medium' : ''}`}
+                      title={item.message || undefined}>
                       {item.message || '—'}
                     </td>
-                    <td className="space-y-1">
-                      {payloadSummary.length ? (
-                        payloadSummary.map((line, lineIdx) => (
-                          <div key={lineIdx} className="whitespace-pre-wrap break-words leading-5">
-                            {line}
-                          </div>
-                        ))
-                      ) : (
-                        <span className="text-muted-foreground">—</span>
-                      )}
+                    <td>
+                      <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                        {payloadSummary.length ? (
+                          payloadSummary.map((line, lineIdx) => (
+                            <div key={lineIdx} className="whitespace-pre-wrap break-words leading-5">
+                              {line}
+                            </div>
+                          ))
+                        ) : (
+                          <span className="text-muted-foreground">—</span>
+                        )}
+                      </div>
                     </td>
                     <td>
                       <div className="flex flex-wrap gap-1 justify-center">
