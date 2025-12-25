@@ -906,7 +906,7 @@ export async function POST(request: NextRequest) {
 
       const durationMs = Date.now() - startedAt;
       if (timedResult.ok) {
-        await markFinished(inn, { status: 'completed', durationMs, progress: timedResult.progress });
+        await markFinished(inn, { status: 'completed', durationMs });
         await safeLog({
           type: 'notification',
           source: 'ai-integration',
