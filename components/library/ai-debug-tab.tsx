@@ -341,7 +341,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
         </div>
 
         <div className="overflow-x-auto">
-          <table className="min-w-full text-xs table-fixed">
+          <table className="min-w-[1500px] text-xs table-fixed">
             <thead className="sticky top-0 bg-muted border-b">
               <tr className="[&>th]:px-2 [&>th]:py-2 [&>th]:text-center align-middle">
                 <th className="w-[50px]">№</th>
@@ -353,8 +353,8 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                 <th className="w-[160px]">ID request</th>
                 <th className="w-[140px]">ИНН</th>
                 <th className="w-[220px]">Название компании</th>
-                <th className="w-[260px]">Сообщение</th>
-                <th className="w-[260px]">Детали</th>
+                <th className="w-[360px]">Сообщение</th>
+                <th className="w-[300px]">Детали</th>
                 <th className="w-[160px]">Действия</th>
               </tr>
             </thead>
@@ -408,15 +408,15 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                       {item.company_name || '—'}
                     </td>
                     <td
-                      className={`whitespace-pre-wrap leading-5 max-h-32 overflow-y-auto pr-1 ${item.event_type === 'error' ? 'text-destructive font-medium' : ''}`}
+                      className={`whitespace-pre leading-5 max-h-32 max-w-[420px] overflow-auto pr-1 ${item.event_type === 'error' ? 'text-destructive font-medium' : ''}`}
                       title={item.message || undefined}>
                       {item.message || '—'}
                     </td>
                     <td>
-                      <div className="space-y-1 max-h-32 overflow-y-auto pr-1">
+                      <div className="space-y-1 max-h-32 max-w-[360px] overflow-auto pr-1">
                         {payloadSummary.length ? (
                           payloadSummary.map((line, lineIdx) => (
-                            <div key={lineIdx} className="whitespace-pre-wrap break-words leading-5">
+                            <div key={lineIdx} className="whitespace-pre break-words leading-5">
                               {line}
                             </div>
                           ))
