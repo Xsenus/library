@@ -243,7 +243,23 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                 const { date, time } = formatDate(item.created_at);
                 const text = extractText(item.payload);
                 const payloadSummary = summarizePayload(item.payload);
-                const rowClasses = item.event_type === 'error' ? 'bg-destructive/5' : '';
+                const statusCode = Number.isFinite(Number((item.payload as any)?.status))
+                  ? Number((item.payload as any)?.status)
+                  : null;
+                const payloadOk = (item.payload as any)?.ok;
+                const isErrorEvent =
+                  item.event_type === 'error' ||
+                  payloadOk === false ||
+                  (statusCode != null && statusCode >= 400);
+                const isSuccessEvent =
+                  !isErrorEvent &&
+                  (payloadOk === true || (statusCode != null ? statusCode < 400 : item.event_type !== 'error'));
+
+                const rowClasses = isErrorEvent
+                  ? 'bg-destructive/10'
+                  : isSuccessEvent
+                    ? 'bg-emerald-50'
+                    : '';
                 return (
                   <tr key={item.id} className={`border-b last:border-0 ${rowClasses}`}>
                     <td className="text-center text-muted-foreground">{(page - 1) * pageSize + idx + 1}</td>

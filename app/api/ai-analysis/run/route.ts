@@ -750,6 +750,61 @@ export async function POST(request: NextRequest) {
     const isImmediateDebugStep =
       source === 'debug-step' && mode === 'steps' && inns.length === 1 && (steps?.length ?? 0) === 1;
 
+    const isImmediateFullRun = !isDebugRequest && mode === 'full' && inns.length === 1;
+
+    if (isImmediateFullRun) {
+      const inn = inns[0];
+      const stepTimeoutMs = getStepTimeoutMs();
+      const companyNameMap = await getCompanyNames([inn]);
+      const companyName = companyNameMap.get(inn);
+
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        companyName,
+        message: 'Запуск полного анализа без очереди',
+        payload: { requestedBy, source },
+      });
+
+      await markRunning(inn);
+      const startedAt = Date.now();
+      const runResult = await runFullPipeline(inn, stepTimeoutMs);
+      const durationMs = Date.now() - startedAt;
+
+      if (runResult.ok) {
+        await markFinished(inn, { status: 'completed', durationMs });
+        await safeLog({
+          type: 'notification',
+          source: 'ai-integration',
+          companyId: inn,
+          companyName,
+          notificationKey: 'analysis_success',
+          message: 'Полный анализ завершён (без очереди)',
+          payload: { status: runResult.status },
+        });
+      } else {
+        await markFinished(inn, { status: 'failed', durationMs, progress: runResult.progress });
+        await safeLog({
+          type: 'error',
+          source: 'ai-integration',
+          companyId: inn,
+          companyName,
+          message: `Полный анализ завершился ошибкой: ${runResult.error ?? 'unknown'}`,
+          payload: { status: runResult.status },
+        });
+      }
+
+      return NextResponse.json({
+        ok: runResult.ok,
+        status: runResult.status,
+        error: runResult.error,
+        mode,
+        steps,
+        integration: { base: integrationBase, mode, modeLocked, steps },
+      });
+    }
+
     if (isImmediateDebugStep) {
       const inn = inns[0];
       const step = steps![0]!;
