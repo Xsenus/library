@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useDebounce } from '@/hooks/use-debounce';
 import {
   AlertTriangle,
   ArrowDownLeft,
@@ -17,6 +18,9 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Input } from '@/components/ui/input';
+import { Label } from '@/components/ui/label';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 
 type FilterKey = 'traffic' | 'error' | 'notification';
@@ -120,6 +124,15 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jsonState, setJsonState] = useState<JsonState>({ open: false, payload: null, title: '' });
+  const [source, setSource] = useState('');
+  const [direction, setDirection] = useState<string>('all');
+  const [type, setType] = useState<string>('all');
+  const [dateFrom, setDateFrom] = useState('');
+  const [dateTo, setDateTo] = useState('');
+  const [inn, setInn] = useState('');
+  const [companyName, setCompanyName] = useState('');
+  const [search, setSearch] = useState('');
+  const debouncedSearch = useDebounce(search, 400);
 
   const activeCategories = useMemo(
     () =>
@@ -129,31 +142,47 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
     [filters],
   );
 
-  const fetchData = useCallback(async (pageOverride?: number) => {
-    const pageToLoad = pageOverride ?? page;
-    setLoading(true);
-    setError(null);
-    try {
-      const params = new URLSearchParams({ page: String(pageToLoad), pageSize: String(pageSize) });
-      activeCategories.forEach((cat) => params.append('category', cat));
-      const res = await fetch(`/api/ai-debug/events?${params.toString()}`, { cache: 'no-store' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { items: AiDebugEventRecord[]; total: number; page: number; pageSize: number };
-      setItems(Array.isArray(data.items) ? data.items : []);
-      setTotal(Number(data.total ?? 0));
-      setPage(data.page ?? pageToLoad);
-    } catch (e: any) {
-      setError(e?.message ?? 'Не удалось загрузить логи');
-      setItems([]);
-      setTotal(0);
-    } finally {
-      setLoading(false);
-    }
-  }, [activeCategories, page, pageSize]);
+  const fetchData = useCallback(
+    async (pageOverride?: number) => {
+      const pageToLoad = pageOverride ?? page;
+      setLoading(true);
+      setError(null);
+      try {
+        const params = new URLSearchParams({ page: String(pageToLoad), pageSize: String(pageSize) });
+        activeCategories.forEach((cat) => params.append('category', cat));
+        if (source.trim()) params.set('source', source.trim());
+        if (direction !== 'all') params.set('direction', direction);
+        if (type !== 'all') params.set('type', type);
+        if (dateFrom) params.set('dateFrom', dateFrom);
+        if (dateTo) params.set('dateTo', dateTo);
+        if (inn.trim()) params.set('inn', inn.trim());
+        if (companyName.trim()) params.set('name', companyName.trim());
+        if (debouncedSearch.trim()) params.set('q', debouncedSearch.trim());
+
+        const res = await fetch(`/api/ai-debug/events?${params.toString()}`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = (await res.json()) as { items: AiDebugEventRecord[]; total: number; page: number; pageSize: number };
+        setItems(Array.isArray(data.items) ? data.items : []);
+        setTotal(Number(data.total ?? 0));
+        setPage(data.page ?? pageToLoad);
+      } catch (e: any) {
+        setError(e?.message ?? 'Не удалось загрузить логи');
+        setItems([]);
+        setTotal(0);
+      } finally {
+        setLoading(false);
+      }
+    },
+    [activeCategories, companyName, dateFrom, dateTo, debouncedSearch, direction, inn, page, pageSize, source, type],
+  );
 
   useEffect(() => {
     fetchData();
   }, [fetchData]);
+
+  useEffect(() => {
+    setPage(1);
+  }, [source, direction, type, dateFrom, dateTo, inn, companyName, debouncedSearch, filters]);
 
   const handleClear = useCallback(async () => {
     if (!isAdmin) return;
@@ -192,6 +221,42 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
           ))}
         </div>
 
+        <div className="flex flex-wrap items-center gap-2 ml-auto text-sm">
+          <div className="flex items-center gap-2">
+            <Label htmlFor="direction" className="text-xs text-muted-foreground">
+              Направление
+            </Label>
+            <Select value={direction} onValueChange={setDirection}>
+              <SelectTrigger id="direction" className="h-8 w-36">
+                <SelectValue placeholder="Все" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все</SelectItem>
+                <SelectItem value="request">Запрос</SelectItem>
+                <SelectItem value="response">Ответ</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+
+          <div className="flex items-center gap-2">
+            <Label htmlFor="type" className="text-xs text-muted-foreground">
+              Тип
+            </Label>
+            <Select value={type} onValueChange={setType}>
+              <SelectTrigger id="type" className="h-8 w-36">
+                <SelectValue placeholder="Все" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="all">Все</SelectItem>
+                <SelectItem value="request">Запрос</SelectItem>
+                <SelectItem value="response">Ответ</SelectItem>
+                <SelectItem value="error">Ошибка</SelectItem>
+                <SelectItem value="notification">Уведомление</SelectItem>
+              </SelectContent>
+            </Select>
+          </div>
+        </div>
+
         <div className="flex items-center gap-2 ml-auto">
           <Badge variant="outline" className="px-2 py-1 text-xs">
             Всего записей: {total}
@@ -211,6 +276,61 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
               <span className="ml-2">Очистить логи</span>
             </Button>
           )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="source" className="text-xs text-muted-foreground">
+            Источник
+          </Label>
+          <Input
+            id="source"
+            value={source}
+            placeholder="ai-integration, worker, ui"
+            onChange={(e) => setSource(e.target.value)}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="inn" className="text-xs text-muted-foreground">
+            ИНН
+          </Label>
+          <Input id="inn" value={inn} placeholder="7712345678" onChange={(e) => setInn(e.target.value)} />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="companyName" className="text-xs text-muted-foreground">
+            Компания
+          </Label>
+          <Input
+            id="companyName"
+            value={companyName}
+            placeholder="Название компании"
+            onChange={(e) => setCompanyName(e.target.value)}
+          />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Период с</Label>
+          <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <Label className="text-xs text-muted-foreground">Период по</Label>
+          <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+        </div>
+
+        <div className="flex flex-col gap-1">
+          <Label htmlFor="search" className="text-xs text-muted-foreground">
+            Поиск по сообщению/ответу
+          </Label>
+          <Input
+            id="search"
+            value={search}
+            placeholder="Текст, source, requestId"
+            onChange={(e) => setSearch(e.target.value)}
+          />
         </div>
       </div>
 

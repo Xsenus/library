@@ -53,6 +53,8 @@ export const aiDebugEventSchema = z.object({
 
 type AiDebugEventInput = z.infer<typeof aiDebugEventSchema>;
 
+const companyNameCache = new Map<string, string | null>();
+
 let ensured = false;
 let dadataFlagsAvailable = true;
 
@@ -178,6 +180,29 @@ async function applyTemplates(entry: AiDebugEventInput): Promise<{ message?: str
   return {};
 }
 
+async function resolveCompanyName(companyId?: string | null, provided?: string | null): Promise<string | null | undefined> {
+  if (provided) return provided;
+  if (!companyId) return provided;
+
+  if (companyNameCache.has(companyId)) {
+    return companyNameCache.get(companyId) ?? undefined;
+  }
+
+  try {
+    const { rows } = await dbBitrix.query<{ short_name: string | null }>(
+      `SELECT short_name FROM dadata_result WHERE inn = $1 LIMIT 1`,
+      [companyId],
+    );
+    const name = rows?.[0]?.short_name ?? null;
+    companyNameCache.set(companyId, name);
+    return name ?? undefined;
+  } catch (error) {
+    console.warn('Failed to resolve company name for AI debug', error);
+    companyNameCache.set(companyId, null);
+    return undefined;
+  }
+}
+
 export async function logAiDebugEvent(rawEntry: AiDebugEventInput): Promise<void> {
   await ensureTables();
 
@@ -188,6 +213,8 @@ export async function logAiDebugEvent(rawEntry: AiDebugEventInput): Promise<void
     message: rawEntry.message ?? message ?? null,
     direction: rawEntry.direction ?? (rawEntry.type === 'request' ? 'request' : rawEntry.type === 'response' ? 'response' : null),
   };
+
+  const companyName = await resolveCompanyName(entry.companyId, entry.companyName ?? null);
 
   const payload = entry.payload == null ? null : entry.payload;
 
@@ -202,7 +229,7 @@ export async function logAiDebugEvent(rawEntry: AiDebugEventInput): Promise<void
       entry.direction ?? null,
       entry.requestId ?? null,
       entry.companyId ?? null,
-      entry.companyName ?? null,
+      companyName ?? null,
       entry.message ?? null,
       payload == null ? null : JSON.stringify(payload),
     ],
@@ -222,6 +249,14 @@ export async function listAiDebugEvents(params: {
   page?: number;
   pageSize?: number;
   companyId?: string;
+  source?: string;
+  direction?: string;
+  type?: string;
+  dateFrom?: string;
+  dateTo?: string;
+  inn?: string;
+  companyName?: string;
+  search?: string;
 }): Promise<{ items: AiDebugEventRecord[]; total: number; page: number; pageSize: number }> {
   await ensureTables();
 
@@ -247,9 +282,54 @@ export async function listAiDebugEvents(params: {
     filters.push(`(${typeConditions.join(' OR ')})`);
   }
 
-  if (params.companyId) {
-    filterParams.push(params.companyId);
+  if (params.companyId || params.inn) {
+    filterParams.push(params.companyId ?? params.inn);
     filters.push(`company_id = $${filterParams.length}`);
+  }
+
+  if (params.source) {
+    filterParams.push(`%${params.source.trim()}%`);
+    filters.push(`source ILIKE $${filterParams.length}`);
+  }
+
+  if (params.direction) {
+    filterParams.push(params.direction.trim());
+    filters.push(`direction = $${filterParams.length}`);
+  }
+
+  if (params.type) {
+    filterParams.push(params.type.trim());
+    filters.push(`event_type = $${filterParams.length}`);
+  }
+
+  if (params.companyName) {
+    filterParams.push(`%${params.companyName.trim()}%`);
+    filters.push(`company_name ILIKE $${filterParams.length}`);
+  }
+
+  if (params.dateFrom) {
+    const start = new Date(params.dateFrom);
+    if (!Number.isNaN(start.getTime())) {
+      filterParams.push(start);
+      filters.push(`created_at >= $${filterParams.length}`);
+    }
+  }
+
+  if (params.dateTo) {
+    const end = new Date(params.dateTo);
+    if (!Number.isNaN(end.getTime())) {
+      end.setHours(23, 59, 59, 999);
+      filterParams.push(end);
+      filters.push(`created_at <= $${filterParams.length}`);
+    }
+  }
+
+  if (params.search) {
+    filterParams.push(`%${params.search.trim()}%`);
+    const idx = filterParams.length;
+    filters.push(
+      `(message ILIKE $${idx} OR company_name ILIKE $${idx} OR source ILIKE $${idx} OR request_id ILIKE $${idx} OR CAST(payload AS text) ILIKE $${idx})`,
+    );
   }
 
   const whereSql = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
