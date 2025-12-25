@@ -1,7 +1,22 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
-import { ChevronDown, ChevronUp, FileText, Filter, Info, Loader2, Play, RefreshCw, Square } from 'lucide-react';
+import {
+  AlertTriangle,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
+  CircleDashed,
+  Clock3,
+  FileText,
+  Filter,
+  Info,
+  Loader2,
+  Play,
+  RefreshCw,
+  Square,
+  XCircle,
+} from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
 import { useToast } from '@/hooks/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -59,6 +74,7 @@ type AiCompany = {
   sites?: string[] | null;
   emails?: string[] | null;
   analysis_status?: string | null;
+  analysis_outcome?: string | null;
   analysis_progress?: number | null;
   analysis_started_at?: string | null;
   analysis_finished_at?: string | null;
@@ -288,6 +304,18 @@ function toTimestamp(value: string | null | undefined): number | null {
 
 type CompanyState = { running: boolean; queued: boolean };
 
+type OutcomeKey = 'completed' | 'partial' | 'failed' | 'not_started' | 'pending';
+
+type OutcomeMeta = {
+  key: OutcomeKey;
+  label: string;
+  rowClass: string;
+  textClass?: string;
+  icon: typeof CheckCircle2;
+  iconClass: string;
+  badgeVariant: 'default' | 'secondary' | 'destructive' | 'outline';
+};
+
 function computeCompanyState(company: AiCompany): CompanyState {
   const status = (company.analysis_status ?? '').toLowerCase();
   const progress = company.analysis_progress ?? null;
@@ -317,7 +345,78 @@ function computeCompanyState(company: AiCompany): CompanyState {
   return { running, queued };
 }
 
-function getStatusBadge(company: AiCompany): {
+function resolveOutcome(company: AiCompany, state: CompanyState): OutcomeMeta {
+  const rawOutcome = (company.analysis_outcome ?? '').toLowerCase();
+  let key: OutcomeKey = 'not_started';
+
+  if (state.running || state.queued) {
+    key = 'pending';
+  } else if (rawOutcome === 'completed') {
+    key = 'completed';
+  } else if (rawOutcome === 'partial') {
+    key = 'partial';
+  } else if (rawOutcome === 'failed') {
+    key = 'failed';
+  } else if (company.analysis_ok === 1) {
+    key = 'completed';
+  } else if (company.server_error || company.no_valid_site) {
+    key = 'failed';
+  } else if (company.analysis_finished_at) {
+    key = 'partial';
+  }
+
+  const config: Record<OutcomeKey, OutcomeMeta> = {
+    completed: {
+      key: 'completed',
+      label: 'Проанализирован',
+      rowClass: 'bg-emerald-50',
+      textClass: 'text-emerald-900',
+      icon: CheckCircle2,
+      iconClass: 'text-emerald-600',
+      badgeVariant: 'secondary',
+    },
+    partial: {
+      key: 'partial',
+      label: 'Выполнен частично',
+      rowClass: 'bg-amber-50',
+      textClass: 'text-amber-900',
+      icon: AlertTriangle,
+      iconClass: 'text-amber-600',
+      badgeVariant: 'default',
+    },
+    failed: {
+      key: 'failed',
+      label: 'Не выполнен',
+      rowClass: 'bg-rose-50',
+      textClass: 'text-rose-900',
+      icon: XCircle,
+      iconClass: 'text-rose-600',
+      badgeVariant: 'destructive',
+    },
+    not_started: {
+      key: 'not_started',
+      label: 'Не запускался',
+      rowClass: 'bg-rose-50',
+      textClass: 'text-muted-foreground',
+      icon: CircleDashed,
+      iconClass: 'text-muted-foreground',
+      badgeVariant: 'outline',
+    },
+    pending: {
+      key: 'pending',
+      label: 'Ожидает запуска',
+      rowClass: 'bg-sky-50',
+      textClass: 'text-sky-900',
+      icon: Clock3,
+      iconClass: 'text-sky-600',
+      badgeVariant: 'outline',
+    },
+  };
+
+  return config[key] ?? config.not_started;
+}
+
+function getStatusBadge(company: AiCompany, outcome: OutcomeMeta): {
   label: string;
   variant: 'default' | 'secondary' | 'destructive' | 'outline';
 } {
@@ -328,19 +427,7 @@ function getStatusBadge(company: AiCompany): {
   if (state.queued) {
     return { label: 'В очереди', variant: 'outline' };
   }
-  if (company.analysis_ok === 1) {
-    return { label: 'Успех', variant: 'secondary' };
-  }
-  if (company.server_error) {
-    return { label: 'Сервер недоступен', variant: 'destructive' };
-  }
-  if (company.no_valid_site) {
-    return { label: 'Нет доменов', variant: 'destructive' };
-  }
-  if (company.analysis_finished_at) {
-    return { label: 'Завершено', variant: 'outline' };
-  }
-  return { label: 'Не запускался', variant: 'outline' };
+  return { label: outcome.label, variant: outcome.badgeVariant };
 }
 
 type AvailableMap = FetchResponse['available'];
@@ -373,6 +460,7 @@ export default function AiCompanyAnalysisTab() {
   });
   const [bulkLoading, setBulkLoading] = useState(false);
   const [runInn, setRunInn] = useState<string | null>(null);
+  const [debugStepLoading, setDebugStepLoading] = useState<{ inn: string; step: StepKey } | null>(null);
   const [stopInn, setStopInn] = useState<string | null>(null);
   const [stopLoading, setStopLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
@@ -931,6 +1019,52 @@ export default function AiCompanyAnalysisTab() {
     integrationHealth,
   ]);
 
+  const handleRunDebugStep = useCallback(
+    async (inn: string, step: StepKey) => {
+      if (integrationOffline) {
+        toast({
+          title: 'AI integration недоступна',
+          description: integrationHealth?.detail ?? 'Проверьте соединение с сервисом AI.',
+          variant: 'destructive',
+        });
+        return;
+      }
+
+      setDebugStepLoading({ inn, step });
+      try {
+        const res = await fetch('/api/ai-analysis/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inns: [inn], mode: 'steps', steps: [step], source: 'debug-step' }),
+        });
+        const data = (await res.json().catch(() => null)) as { integration?: any; error?: string } | null;
+        if (!res.ok) {
+          const message = data?.error ? `Ошибка запуска: ${data.error}` : `Request failed with ${res.status}`;
+          throw new Error(message);
+        }
+        const note = integrationSummaryText(data?.integration);
+        toast({
+          title: `Шаг «${stepLabelMap[step] ?? step}» выполнен для ИНН ${inn}`,
+          description: note && note.length > 0 ? note : undefined,
+        });
+        fetchCompanies(page, pageSize);
+      } catch (error) {
+        console.error('Failed to start debug step', error);
+        toast({
+          title: 'Ошибка запуска шага',
+          description:
+            error instanceof Error && error.message
+              ? error.message
+              : 'Не удалось выполнить запрос. Попробуйте позже.',
+          variant: 'destructive',
+        });
+      } finally {
+        setDebugStepLoading(null);
+      }
+    },
+    [fetchCompanies, integrationHealth, integrationOffline, integrationSummaryText, page, pageSize, stepLabelMap, toast],
+  );
+
   const handleRunSingle = useCallback(
     async (inn: string) => {
       if (integrationOffline) {
@@ -1286,9 +1420,9 @@ export default function AiCompanyAnalysisTab() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                <Tooltip>
-                  <TooltipTrigger asChild>
+            <div className="flex flex-wrap items-center gap-2">
+              <Tooltip>
+                <TooltipTrigger asChild>
                     <Button
                       type="button"
                       className="h-9"
@@ -1298,13 +1432,13 @@ export default function AiCompanyAnalysisTab() {
                       {bulkLoading ? 'Запуск…' : 'Запустить выбранные'}
                     </Button>
                   </TooltipTrigger>
-                  <TooltipContent side="bottom">
-                    Поставить в очередь выбранные компании
-                  </TooltipContent>
-                </Tooltip>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <Button
+                <TooltipContent side="bottom">
+                  Поставить в очередь выбранные компании
+                </TooltipContent>
+              </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
                       type="button"
                       variant="destructive"
                       className="h-9"
@@ -1460,14 +1594,15 @@ export default function AiCompanyAnalysisTab() {
                         const steps = toPipelineSteps(company.analysis_pipeline);
                         const currentStage = getCurrentStage(steps, company.analysis_status);
                         const state = computeCompanyState(company);
+                        const outcome = resolveOutcome(company, state);
                         const active = state.running || state.queued;
-                        const statusBadge = getStatusBadge(company);
+                        const statusBadge = getStatusBadge(company, outcome);
                         const companySelected = selected.has(company.inn);
                         const sites = toSiteArray(company.sites);
                         const emails = toStringArray(company.emails);
                         const revenue = formatRevenue(company.revenue);
                         const employees = formatEmployees(company.employee_count ?? null);
-                        const rowFinished = !active && !!company.analysis_finished_at;
+                        const rowTone = active ? 'bg-sky-50' : outcome.rowClass;
                         const isEmailExpanded = expandedEmails.has(company.inn);
                         const isSiteExpanded = expandedSites.has(company.inn);
                         const displaySites = isSiteExpanded ? sites : sites.slice(0, 3);
@@ -1526,8 +1661,8 @@ export default function AiCompanyAnalysisTab() {
                             key={company.inn}
                             className={cn(
                               'border-b border-border/60 align-top transition-colors hover:bg-muted/20',
-                              companySelected && 'bg-muted/30',
-                              rowFinished && 'bg-destructive/5',
+                              companySelected && 'ring-1 ring-primary/40',
+                              rowTone,
                             )}
                           >
                             <td className="px-4 py-4 align-top">
@@ -1539,8 +1674,16 @@ export default function AiCompanyAnalysisTab() {
                             </td>
                             <td className="px-4 py-4 align-top">
                               <div className="space-y-2">
-                                <div className={cn('text-sm font-semibold leading-tight', rowFinished && 'text-destructive')}>
-                                  {company.short_name}
+                                <div className="flex items-center gap-2">
+                                  <outcome.icon className={cn('h-4 w-4', outcome.iconClass)} />
+                                  <div
+                                    className={cn(
+                                      'text-sm font-semibold leading-tight',
+                                      outcome.textClass ?? 'text-foreground',
+                                    )}
+                                  >
+                                    {company.short_name}
+                                  </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                                   <span>ИНН {company.inn}</span>
@@ -1699,63 +1842,90 @@ export default function AiCompanyAnalysisTab() {
                               )}
                             </td>
                             <td className="px-4 py-4 align-top text-right">
-                              <div className="flex items-center justify-end gap-2">
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="outline"
-                                      size="icon"
-                                      className="h-8 w-8"
-                                      onClick={() => handleRunSingle(company.inn)}
-                                      disabled={runDisabled}
-                                    >
-                                      {runInn === company.inn ? (
-                                        <Loader2 className="h-4 w-4 animate-spin" />
-                                      ) : (
-                                        <Play className="h-4 w-4" />
-                                      )}
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="bottom">{runTooltip}</TooltipContent>
-                                </Tooltip>
-                                {(state.running || state.queued) && (
+                              <div className="flex flex-col items-end gap-2">
+                                <div className="flex items-center justify-end gap-2">
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button
                                         type="button"
-                                        variant="destructive"
+                                        variant="outline"
                                         size="icon"
                                         className="h-8 w-8"
-                                        onClick={() => handleStopSingle(company.inn)}
-                                        disabled={stopInn === company.inn}
-                                        aria-label={`Остановить компанию ${company.short_name}`}
+                                        onClick={() => handleRunSingle(company.inn)}
+                                        disabled={runDisabled}
                                       >
-                                        {stopInn === company.inn ? (
+                                        {runInn === company.inn ? (
                                           <Loader2 className="h-4 w-4 animate-spin" />
                                         ) : (
-                                          <Square className="h-4 w-4" />
+                                          <Play className="h-4 w-4" />
                                         )}
                                       </Button>
                                     </TooltipTrigger>
-                                    <TooltipContent side="bottom">Отменить запуск</TooltipContent>
+                                    <TooltipContent side="bottom">{runTooltip}</TooltipContent>
                                   </Tooltip>
-                                )}
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Button
-                                      type="button"
-                                      variant="ghost"
-                                      size="icon"
-                                      className="h-8 w-8"
-                                      onClick={() => setInfoCompany(company)}
-                                      aria-label={`Подробности по компании ${company.short_name}`}
-                                    >
-                                      <Info className="h-4 w-4" />
-                                    </Button>
-                                  </TooltipTrigger>
-                                  <TooltipContent side="bottom">Подробнее</TooltipContent>
-                                </Tooltip>
+                                  {(state.running || state.queued) && (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Button
+                                          type="button"
+                                          variant="destructive"
+                                          size="icon"
+                                          className="h-8 w-8"
+                                          onClick={() => handleStopSingle(company.inn)}
+                                          disabled={stopInn === company.inn}
+                                          aria-label={`Остановить компанию ${company.short_name}`}
+                                        >
+                                          {stopInn === company.inn ? (
+                                            <Loader2 className="h-4 w-4 animate-spin" />
+                                          ) : (
+                                            <Square className="h-4 w-4" />
+                                          )}
+                                        </Button>
+                                      </TooltipTrigger>
+                                      <TooltipContent side="bottom">Отменить запуск</TooltipContent>
+                                    </Tooltip>
+                                  )}
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => setInfoCompany(company)}
+                                        aria-label={`Подробности по компании ${company.short_name}`}
+                                      >
+                                        <Info className="h-4 w-4" />
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom">Подробнее</TooltipContent>
+                                  </Tooltip>
+                                </div>
+                                <div className="flex flex-wrap items-center justify-end gap-1 rounded-md border border-dashed border-muted-foreground/40 bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground">
+                                  <span className="font-medium text-foreground">Шаги:</span>
+                                  {stepOptions.map((opt) => {
+                                    const loading = debugStepLoading?.inn === company.inn && debugStepLoading.step === opt.key;
+                                    return (
+                                      <Tooltip key={`${company.inn}-debug-${opt.key}`}>
+                                        <TooltipTrigger asChild>
+                                          <Button
+                                            type="button"
+                                            variant="outline"
+                                            size="sm"
+                                            className="h-7"
+                                            onClick={() => handleRunDebugStep(company.inn, opt.key)}
+                                            disabled={integrationOffline || !!debugStepLoading || state.running || state.queued}
+                                          >
+                                            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : opt.label}
+                                          </Button>
+                                        </TooltipTrigger>
+                                        <TooltipContent side="bottom">
+                                          Запустить только шаг «{opt.label}» для компании {company.short_name}
+                                        </TooltipContent>
+                                      </Tooltip>
+                                    );
+                                  })}
+                                </div>
                               </div>
                             </td>
                           </tr>
@@ -1787,9 +1957,10 @@ export default function AiCompanyAnalysisTab() {
             {infoCompany && (
               <div className="space-y-4 text-sm">
                 {(() => {
-                  const status = getStatusBadge(infoCompany);
                   const steps = toPipelineSteps(infoCompany.analysis_pipeline);
                   const state = computeCompanyState(infoCompany);
+                  const outcome = resolveOutcome(infoCompany, state);
+                  const status = getStatusBadge(infoCompany, outcome);
                   const progressPercent = Math.min(
                     100,
                     Math.max(0, Math.round((infoCompany.analysis_progress ?? 0) * 100)),

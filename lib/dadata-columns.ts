@@ -1,7 +1,15 @@
 import { dbBitrix } from './db-bitrix';
 
 const COLUMN_SPECS: Record<
-  'status' | 'startedAt' | 'finishedAt' | 'progress' | 'durationMs' | 'okFlag' | 'serverError' | 'attempts',
+  | 'status'
+  | 'startedAt'
+  | 'finishedAt'
+  | 'progress'
+  | 'durationMs'
+  | 'okFlag'
+  | 'serverError'
+  | 'attempts'
+  | 'outcome',
   string[]
 > = {
   status: ['analysis_status', 'analysis_state', 'analysis_stage'],
@@ -12,6 +20,7 @@ const COLUMN_SPECS: Record<
   attempts: ['analysis_attempts', 'analysis_retry_count'],
   okFlag: ['analysis_ok'],
   serverError: ['server_error', 'analysis_server_error'],
+  outcome: ['analysis_outcome', 'analysis_result', 'analysis_summary'],
 };
 
 const COLUMN_DEFAULTS: Record<
@@ -31,6 +40,7 @@ const COLUMN_DEFAULTS: Record<
   attempts: { name: 'analysis_attempts', type: 'integer', default: '0' },
   okFlag: { name: 'analysis_ok', type: 'integer', default: '0' },
   serverError: { name: 'analysis_server_error', type: 'integer', default: '0' },
+  outcome: { name: 'analysis_outcome', type: 'text', default: "'not_started'" },
 };
 
 export type DadataColumns = {
@@ -42,6 +52,7 @@ export type DadataColumns = {
   okFlag: string | null;
   serverError: string | null;
   attempts: string | null;
+  outcome: string | null;
 };
 
 let cachedColumns: { columns: DadataColumns; ts: number } | null = null;
@@ -104,6 +115,7 @@ export async function getDadataColumns(): Promise<DadataColumns> {
     okFlag: null,
     serverError: null,
     attempts: null,
+    outcome: null,
   };
 
   (Object.keys(COLUMN_SPECS) as (keyof typeof COLUMN_SPECS)[]).forEach((key) => {

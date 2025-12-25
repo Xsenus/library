@@ -287,7 +287,17 @@ async function ensureIntegrationHealthy(context: {
   attempt: number;
   totalAttempts: number;
 }) {
-  const health = await callAiIntegration('/health', { timeoutMs: 3000 });
+  const path = '/health';
+
+  await safeLog({
+    type: 'request',
+    source: 'ai-integration',
+    companyId: context.inn,
+    message: `Проверка /health перед шагом ${context.stepLabel ?? 'pipeline'} (${context.attempt}/${context.totalAttempts})`,
+    payload: { path, method: 'GET' },
+  });
+
+  const health = await callAiIntegration(path, { timeoutMs: 3000 });
   if (!health.ok) {
     await safeLog({
       type: 'error',
@@ -298,6 +308,13 @@ async function ensureIntegrationHealthy(context: {
     });
     return { ok: false as const, status: health.status, error: health.error };
   }
+  await safeLog({
+    type: 'response',
+    source: 'ai-integration',
+    companyId: context.inn,
+    message: `Health ok перед шагом ${context.stepLabel ?? 'pipeline'}`,
+    payload: { path, status: health.status, data: health.data },
+  });
   return { ok: true as const };
 }
 
@@ -340,28 +357,28 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
         lastStatus = res.status;
 
         if (res.ok) {
-          await safeLog({
-            type: 'response',
-            source: 'ai-integration',
-            requestId,
-            companyId: inn,
-            message: `Шаг успешно принят: ${definition.primary.label} (${attempt.label})`,
-            payload: res.data,
-          });
-          return { step, ok: true, status: res.status };
-        }
-
-        lastError = res.error;
         await safeLog({
-          type: 'error',
+          type: 'response',
           source: 'ai-integration',
           requestId,
           companyId: inn,
-          message: `Ошибка шага ${definition.primary.label} (${attempt.label}): ${res.error}`,
-          payload: { status: res.status },
+          message: `Шаг успешно принят: ${definition.primary.label} (${attempt.label})`,
+          payload: { path, method: attempt.method, status: res.status, data: res.data },
         });
+        return { step, ok: true, status: res.status };
       }
+
+      lastError = res.error;
+      await safeLog({
+        type: 'error',
+        source: 'ai-integration',
+        requestId,
+        companyId: inn,
+        message: `Ошибка шага ${definition.primary.label} (${attempt.label}): ${res.error}`,
+        payload: { path, method: attempt.method, status: res.status },
+      });
     }
+  }
 
     if (attemptNo < MAX_STEP_ATTEMPTS) {
       await safeLog({
@@ -404,6 +421,10 @@ async function markRunning(inn: string) {
     sets.push(`"${columns.serverError}" = 0`);
   }
 
+  if (columns.outcome) {
+    sets.push(`"${columns.outcome}" = 'pending'`);
+  }
+
   const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = $1`;
 
   await dbBitrix.query(sql, params).catch((error) => console.warn('mark running failed', error));
@@ -424,6 +445,10 @@ async function markQueued(inn: string) {
 
   if (columns.finishedAt) {
     sets.push(`"${columns.finishedAt}" = NULL`);
+  }
+
+  if (columns.outcome) {
+    sets.push(`"${columns.outcome}" = 'pending'`);
   }
 
   const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = $1`;
@@ -452,6 +477,10 @@ async function markQueuedMany(inns: string[]) {
 
   if (columns.progress) {
     sets.push(`"${columns.progress}" = NULL`);
+  }
+
+  if (columns.outcome) {
+    sets.push(`"${columns.outcome}" = 'pending'`);
   }
 
   const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = ANY($1::text[])`;
@@ -503,6 +532,13 @@ async function markFinished(
     setters.push(`"${columns.serverError}" = CASE WHEN $${statusIdx} = 'failed' THEN 1 ELSE 0 END`);
   }
 
+  if (columns.outcome) {
+    const outcomeValue = result.status === 'completed' ? 'completed' : 'partial';
+    params.push(outcomeValue);
+    const idx = params.length;
+    setters.push(`"${columns.outcome}" = $${idx}`);
+  }
+
   if (!setters.length) {
     console.warn('mark finished skipped: no writable columns');
     return;
@@ -532,6 +568,10 @@ async function markStopped(inns: string[]) {
 
   if (columns.progress) {
     sets.push(`"${columns.progress}" = NULL`);
+  }
+
+  if (columns.outcome) {
+    sets.push(`"${columns.outcome}" = 'partial'`);
   }
 
   const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = ANY($1::text[])`;
@@ -664,7 +704,22 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    await safeLog({
+      type: 'request',
+      source: 'ai-integration',
+      message: 'Проверка доступности AI integration перед запуском',
+      payload: { path: '/health', method: 'GET' },
+    });
+
     const health = await callAiIntegration('/health', { timeoutMs: 3000 });
+    await safeLog({
+      type: health.ok ? 'response' : 'error',
+      source: 'ai-integration',
+      message: health.ok
+        ? 'AI integration доступна перед запуском'
+        : `AI integration недоступна перед запуском: ${health.error}`,
+      payload: { path: '/health', status: health.status, data: health.ok ? health.data : undefined },
+    });
     if (!health.ok) {
       return NextResponse.json(
         {
@@ -675,25 +730,34 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const forcedMode = getForcedLaunchMode();
-    const modeLocked = isLaunchModeLocked();
-    const mode: 'full' | 'steps' = modeLocked
-      ? forcedMode
-      : body?.mode === 'full'
-      ? 'full'
-      : 'steps';
-    const steps =
-      mode === 'steps' ? (modeLocked ? getForcedSteps() : normalizeSteps(body?.steps)) : null;
-
     const payloadRaw =
       body?.payload && typeof body.payload === 'object' && body.payload !== null
         ? (body.payload as Record<string, unknown>)
         : {};
 
     const source =
-      typeof (payloadRaw as any).source === 'string' && (payloadRaw as any).source
-        ? String((payloadRaw as any).source)
-        : 'manual';
+      typeof body?.source === 'string' && body.source
+        ? String(body.source)
+        : typeof (payloadRaw as any).source === 'string' && (payloadRaw as any).source
+          ? String((payloadRaw as any).source)
+          : 'manual';
+
+    const forcedMode = getForcedLaunchMode();
+    const isDebugRequest = source === 'debug-step';
+    const modeLocked = isDebugRequest ? false : isLaunchModeLocked();
+    const requestedMode: 'full' | 'steps' = body?.mode === 'full' ? 'full' : 'steps';
+    const mode: 'full' | 'steps' = modeLocked ? forcedMode : isDebugRequest ? 'steps' : requestedMode;
+    const requestedSteps = normalizeSteps(body?.steps);
+    const steps = mode === 'steps'
+      ? isDebugRequest
+        ? requestedSteps.slice(0, 1)
+        : modeLocked
+        ? getForcedSteps()
+        : requestedSteps
+      : null;
+
+    const session = await getSession();
+    const requestedBy = session?.login ?? session?.id?.toString() ?? null;
 
     const payload: Record<string, unknown> = {
       ...payloadRaw,
@@ -706,10 +770,213 @@ export async function POST(request: NextRequest) {
       completed_steps: [],
     };
 
-    await ensureQueueTable();
+    const isImmediateDebugStep =
+      source === 'debug-step' && mode === 'steps' && inns.length === 1 && (steps?.length ?? 0) === 1;
 
-    const session = await getSession();
-    const requestedBy = session?.login ?? session?.id?.toString() ?? null;
+    const isImmediateFullRun = !isDebugRequest && mode === 'full' && inns.length === 1;
+    const isImmediateSingleSteps = !isDebugRequest && mode === 'steps' && inns.length === 1;
+
+    if (isImmediateFullRun) {
+      const inn = inns[0];
+      const stepTimeoutMs = getStepTimeoutMs();
+      const companyNameMap = await getCompanyNames([inn]);
+      const companyName = companyNameMap.get(inn);
+
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        companyName,
+        message: 'Запуск полного анализа без очереди',
+        payload: { requestedBy, source },
+      });
+
+      await markRunning(inn);
+      const startedAt = Date.now();
+      const runResult = await runFullPipeline(inn, stepTimeoutMs);
+      const durationMs = Date.now() - startedAt;
+
+      if (runResult.ok) {
+        await markFinished(inn, { status: 'completed', durationMs });
+        await safeLog({
+          type: 'notification',
+          source: 'ai-integration',
+          companyId: inn,
+          companyName,
+          notificationKey: 'analysis_success',
+          message: 'Полный анализ завершён (без очереди)',
+          payload: { status: runResult.status },
+        });
+      } else {
+        await markFinished(inn, { status: 'failed', durationMs, progress: runResult.progress });
+        await safeLog({
+          type: 'error',
+          source: 'ai-integration',
+          companyId: inn,
+          companyName,
+          message: `Полный анализ завершился ошибкой: ${runResult.error ?? 'unknown'}`,
+          payload: { status: runResult.status },
+        });
+      }
+
+      return NextResponse.json({
+        ok: runResult.ok,
+        status: runResult.status,
+        error: runResult.error,
+        mode,
+        steps,
+        integration: { base: integrationBase, mode, modeLocked, steps },
+      });
+    }
+
+    if (isImmediateSingleSteps) {
+      const inn = inns[0];
+      const stepsToRun = steps && steps.length ? steps : DEFAULT_STEPS;
+      const stepTimeoutMs = getStepTimeoutMs();
+      const overallTimeoutMs = getOverallTimeoutMs();
+      const companyNameMap = await getCompanyNames([inn]);
+      const companyName = companyNameMap.get(inn);
+      const columns = await getDadataColumns();
+      const hasProgressColumn = Boolean(columns.progress);
+
+      const updateProgress = async (value: number) => {
+        if (!hasProgressColumn) return;
+        await dbBitrix
+          .query(`UPDATE dadata_result SET "${columns.progress}" = $2 WHERE inn = $1`, [inn, value])
+          .catch((error) => console.warn('progress update failed', error));
+      };
+
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        companyName,
+        notificationKey: 'analysis_start',
+        message: 'Старт одиночного анализа (без очереди)',
+        payload: { steps: stepsToRun, mode },
+      });
+
+      await markRunning(inn);
+
+      const runAllSteps = async (): Promise<RunResult> => {
+        const totalSteps = stepsToRun.length;
+        const completedSteps = new Set<StepKey>();
+        if (totalSteps === 0) {
+          return { ok: true as const, status: 200, completedSteps: [] };
+        }
+
+        let progress = 0;
+        await updateProgress(progress);
+
+        for (let idx = 0; idx < stepsToRun.length; idx++) {
+          const step = stepsToRun[idx];
+          const result = await runStep(inn, step, stepTimeoutMs);
+          if (result.ok) {
+            completedSteps.add(step);
+            progress = completedSteps.size / totalSteps;
+            await updateProgress(progress);
+            continue;
+          }
+
+          return {
+            ok: false as const,
+            status: result.status,
+            error: result.error,
+            progress,
+            completedSteps: Array.from(completedSteps),
+          };
+        }
+
+        return { ok: true as const, status: 200, progress: 1, completedSteps: Array.from(completedSteps) };
+      };
+
+      const startedAt = Date.now();
+      let timedResult: RunResult;
+      try {
+        timedResult = (await Promise.race([
+          runAllSteps(),
+          new Promise<{ ok: false; status: number; error: string }>((resolve) =>
+            setTimeout(() => resolve({ ok: false, status: 504, error: 'AI integration timed out' }), overallTimeoutMs),
+          ),
+        ])) as RunResult;
+      } catch (error: any) {
+        timedResult = { ok: false, status: 500, error: error?.message ?? 'AI integration run failed' };
+      }
+
+      const durationMs = Date.now() - startedAt;
+      if (timedResult.ok) {
+        await markFinished(inn, { status: 'completed', durationMs, progress: timedResult.progress });
+        await safeLog({
+          type: 'notification',
+          source: 'ai-integration',
+          companyId: inn,
+          companyName,
+          notificationKey: 'analysis_success',
+          message: 'Полный анализ завершён (без очереди)',
+          payload: { status: timedResult.status },
+        });
+      } else {
+        await markFinished(inn, {
+          status: 'failed',
+          durationMs,
+          progress: timedResult.progress,
+        });
+        await safeLog({
+          type: 'error',
+          source: 'ai-integration',
+          companyId: inn,
+          companyName,
+          message: `Полный анализ завершился ошибкой: ${timedResult.error ?? 'unknown'}`,
+          payload: { status: timedResult.status },
+        });
+      }
+
+      return NextResponse.json({
+        ok: timedResult.ok,
+        status: timedResult.status,
+        error: timedResult.error,
+        mode,
+        steps,
+        integration: { base: integrationBase, mode, modeLocked, steps },
+      });
+    }
+
+    if (isImmediateDebugStep) {
+      const inn = inns[0];
+      const step = steps![0]!;
+      const stepTimeoutMs = getStepTimeoutMs();
+
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        message: 'Запуск одиночного шага для отладки (без очереди)',
+        payload: { step, requestedBy, source },
+      });
+
+      const runResult = await runStep(inn, step, stepTimeoutMs);
+
+      await safeLog({
+        type: runResult.ok ? 'response' : 'error',
+        source: 'ai-integration',
+        companyId: inn,
+        message: runResult.ok
+          ? `Шаг ${step} завершился успешно (debug)`
+          : `Шаг ${step} завершился ошибкой (debug): ${runResult.error ?? 'unknown'}`,
+        payload: { status: runResult.status },
+      });
+
+      return NextResponse.json({
+        ok: runResult.ok,
+        status: runResult.status,
+        error: runResult.error,
+        mode,
+        steps,
+        integration: { base: integrationBase, mode, modeLocked, steps },
+      });
+    }
+
+    await ensureQueueTable();
 
     const placeholders = inns.map((_, idx) => `($${idx + 1})`).join(', ');
 

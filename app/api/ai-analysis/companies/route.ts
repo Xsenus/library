@@ -44,6 +44,7 @@ const OPTIONAL_COLUMNS: OptionalColumnSpec[] = [
   { alias: 'sites', candidates: ['sites', 'site_urls', 'domains', 'site_list'], fallback: 'NULL::jsonb' },
   { alias: 'emails', candidates: ['emails', 'email_list', 'contacts_email'], fallback: 'NULL::jsonb' },
   { alias: 'analysis_status', candidates: ['analysis_status', 'analysis_state', 'analysis_stage'], fallback: 'NULL::text' },
+  { alias: 'analysis_outcome', candidates: ['analysis_outcome', 'analysis_result', 'analysis_summary'], fallback: 'NULL::text' },
   { alias: 'analysis_progress', candidates: ['analysis_progress', 'analysis_percent', 'analysis_ratio'], fallback: 'NULL::numeric' },
   {
     alias: 'analysis_started_at',
@@ -541,6 +542,7 @@ export async function GET(request: NextRequest) {
       const queuedAt = queueAvailable ? parseIso(row.queued_at) : null;
       const queuedBy = queueAvailable ? parseString(row.queued_by) : null;
       const rawStatus = parseString(row.analysis_status);
+      const outcome = parseString(row.analysis_outcome);
       const statusLower = rawStatus ? rawStatus.toLowerCase() : '';
       const runningStatus = ['run', 'process', 'progress', 'start'].some((token) =>
         statusLower.includes(token),
@@ -601,6 +603,7 @@ export async function GET(request: NextRequest) {
         sites,
         emails,
         analysis_status: status,
+        analysis_outcome: outcome,
         analysis_progress: progress,
         analysis_started_at: startedAt,
         analysis_finished_at: finishedAt,

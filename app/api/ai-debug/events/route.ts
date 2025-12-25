@@ -12,12 +12,33 @@ export async function GET(req: NextRequest) {
     const pageRaw = sp.get('page');
     const pageSizeRaw = sp.get('pageSize');
     const companyId = sp.get('companyId') || undefined;
+    const source = sp.get('source') || undefined;
+    const direction = sp.get('direction') || undefined;
+    const type = sp.get('type') || undefined;
+    const dateFrom = sp.get('dateFrom') || undefined;
+    const dateTo = sp.get('dateTo') || undefined;
+    const inn = sp.get('inn') || undefined;
+    const name = sp.get('name') || undefined;
+    const search = sp.get('q') || undefined;
 
     const page = Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1;
     const pageSize = Number.isFinite(Number(pageSizeRaw)) ? Number(pageSizeRaw) : 50;
     const categories = sp.getAll('category').filter(Boolean) as ('traffic' | 'error' | 'notification')[];
 
-    const data = await listAiDebugEvents({ categories, page, pageSize, companyId });
+    const data = await listAiDebugEvents({
+      categories,
+      page,
+      pageSize,
+      companyId,
+      source,
+      direction,
+      type,
+      dateFrom,
+      dateTo,
+      inn,
+      companyName: name,
+      search,
+    });
     return NextResponse.json(data);
   } catch (error: any) {
     console.error('GET /api/ai-debug/events failed', error);
