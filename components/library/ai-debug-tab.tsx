@@ -242,6 +242,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
 
   const stopResize = useCallback(() => {
     resizeState.current = null;
+    document.body.style.cursor = '';
     window.removeEventListener('mousemove', handleMouseMove);
     window.removeEventListener('mouseup', stopResize);
   }, [handleMouseMove]);
@@ -251,6 +252,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
       event.preventDefault();
       const currentWidth = columnSettings[key]?.width ?? columnConfigs.find((c) => c.key === key)?.defaultWidth ?? 120;
       resizeState.current = { key, startWidth: currentWidth, startX: event.clientX };
+      document.body.style.cursor = 'col-resize';
       window.addEventListener('mousemove', handleMouseMove);
       window.addEventListener('mouseup', stopResize);
     },
@@ -278,7 +280,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
     localStorage.setItem('ai-debug-page-size', String(pageSize));
   }, [pageSize]);
 
-  useEffect(() => stopResize, [stopResize]);
+  useEffect(() => () => stopResize(), [stopResize]);
 
   const fetchData = useCallback(
     async (pageOverride?: number) => {
@@ -373,26 +375,13 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
         onOpenChange={setFiltersOpen}
         className="rounded-xl border bg-card shadow-sm">
         <div className="flex flex-wrap items-center gap-2 px-3 py-2">
-          <div className="flex flex-wrap items-center gap-2">
-            {filterOptions.map((opt) => (
-              <Button
-                key={opt.key}
-                variant={filters[opt.key] ? 'secondary' : 'outline'}
-                size="sm"
-                className="h-8 rounded-full"
-                onClick={() => toggleFilter(opt.key)}>
-                {opt.label}
-              </Button>
-            ))}
-          </div>
-
+          <Badge variant="outline" className="px-2 py-1 text-xs">
+            Всего записей: {total}
+          </Badge>
+          <Badge variant={activeFiltersCount ? 'secondary' : 'outline'} className="px-2 py-1 text-xs">
+            Активные фильтры: {activeFiltersCount}
+          </Badge>
           <div className="flex flex-wrap items-center gap-2 ml-auto">
-            <Badge variant="outline" className="px-2 py-1 text-xs">
-              Всего записей: {total}
-            </Badge>
-            <Badge variant={activeFiltersCount ? 'secondary' : 'outline'} className="px-2 py-1 text-xs">
-              Активные фильтры: {activeFiltersCount}
-            </Badge>
             <Button variant="outline" size="sm" onClick={() => fetchData()} disabled={loading}>
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               <span className="ml-2">Обновить</span>
@@ -418,6 +407,19 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
         </div>
 
         <CollapsibleContent className="border-t px-3 py-3 space-y-3">
+          <div className="flex flex-wrap items-center gap-2">
+            {filterOptions.map((opt) => (
+              <Button
+                key={opt.key}
+                variant={filters[opt.key] ? 'secondary' : 'outline'}
+                size="sm"
+                className="h-8 rounded-full"
+                onClick={() => toggleFilter(opt.key)}>
+                {opt.label}
+              </Button>
+            ))}
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
             <div className="flex flex-col gap-1">
               <Label htmlFor="source" className="text-xs text-muted-foreground">
@@ -448,7 +450,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                 Направление
               </Label>
               <Select value={direction} onValueChange={setDirection}>
-                <SelectTrigger id="direction" className="h-9">
+                <SelectTrigger id="direction" className="h-9 max-w-[220px]">
                   <SelectValue placeholder="Все" />
                 </SelectTrigger>
                 <SelectContent>
@@ -464,7 +466,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                 Тип
               </Label>
               <Select value={type} onValueChange={setType}>
-                <SelectTrigger id="type" className="h-9">
+                <SelectTrigger id="type" className="h-9 max-w-[220px]">
                   <SelectValue placeholder="Все" />
                 </SelectTrigger>
                 <SelectContent>
@@ -481,7 +483,13 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
               <Label htmlFor="inn" className="text-xs text-muted-foreground">
                 ИНН
               </Label>
-              <Input id="inn" value={inn} placeholder="7712345678" onChange={(e) => setInn(e.target.value)} />
+              <Input
+                id="inn"
+                value={inn}
+                placeholder="7712345678"
+                className="max-w-[220px]"
+                onChange={(e) => setInn(e.target.value)}
+              />
             </div>
 
             <div className="flex flex-col gap-1">
@@ -498,12 +506,22 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
 
             <div className="flex flex-col gap-1">
               <Label className="text-xs text-muted-foreground">Период с</Label>
-              <Input type="date" value={dateFrom} onChange={(e) => setDateFrom(e.target.value)} />
+              <Input
+                type="date"
+                value={dateFrom}
+                className="max-w-[220px]"
+                onChange={(e) => setDateFrom(e.target.value)}
+              />
             </div>
 
             <div className="flex flex-col gap-1">
               <Label className="text-xs text-muted-foreground">Период по</Label>
-              <Input type="date" value={dateTo} onChange={(e) => setDateTo(e.target.value)} />
+              <Input
+                type="date"
+                value={dateTo}
+                className="max-w-[220px]"
+                onChange={(e) => setDateTo(e.target.value)}
+              />
             </div>
           </div>
         </CollapsibleContent>
@@ -547,20 +565,23 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
         </div>
 
         <div className="relative max-h-[72vh] overflow-auto">
-          <table className="min-w-[1200px] w-full text-xs">
+          <table className="min-w-[1200px] w-full text-xs table-fixed">
             <thead className="sticky top-0 bg-muted border-b z-10">
               <tr className="[&>th]:px-2 [&>th]:py-2 [&>th]:text-center align-middle">
                 {visibleColumns.map((col) => {
                   const width = columnSettings[col.key]?.width ?? col.defaultWidth;
                   return (
-                    <th key={col.key} style={{ width, minWidth: col.minWidth }}>
-                      <div className="flex items-center justify-between gap-2">
-                        <span className="text-xs font-semibold text-muted-foreground">{col.label}</span>
-                        <div
-                          className="h-6 w-2 cursor-col-resize select-none"
-                          onMouseDown={(e) => handleResizeStart(col.key, e)}>
-                          <div className="mx-auto h-full w-px bg-border" />
-                        </div>
+                    <th
+                      key={col.key}
+                      style={{ width, minWidth: col.minWidth }}
+                      className="relative select-none">
+                      <div className="flex items-center justify-center gap-2 pr-3">
+                        <span className="text-xs font-semibold text-muted-foreground whitespace-nowrap">{col.label}</span>
+                      </div>
+                      <div
+                        className="absolute inset-y-0 right-0 w-1 cursor-col-resize group"
+                        onMouseDown={(e) => handleResizeStart(col.key, e)}>
+                        <div className="mx-auto h-full w-px bg-border group-hover:bg-foreground/50" />
                       </div>
                     </th>
                   );

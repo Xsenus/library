@@ -334,13 +334,16 @@ export async function listAiDebugEvents(params: {
 
   const whereSql = filters.length ? `WHERE ${filters.join(' AND ')}` : '';
 
+  const limitIdx = filterParams.length + 1;
+  const offsetIdx = filterParams.length + 2;
+
   const { rows } = await dbBitrix.query<AiDebugEventRecord>(
     `
       SELECT id, created_at, event_type, source, direction, request_id, company_id, company_name, message, payload
       FROM ai_debug_events
       ${whereSql}
       ORDER BY created_at DESC, id DESC
-      LIMIT $1 OFFSET $2
+      LIMIT $${limitIdx} OFFSET $${offsetIdx}
     `,
     [...filterParams, pageSize, (page - 1) * pageSize],
   );
