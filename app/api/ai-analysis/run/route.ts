@@ -326,8 +326,8 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
   },
 };
 
-function normalizeSteps(raw: unknown): StepKey[] {
-  if (!Array.isArray(raw)) return DEFAULT_STEPS;
+function normalizeSteps(raw: unknown, fallback: StepKey[] = DEFAULT_STEPS): StepKey[] {
+  if (!Array.isArray(raw)) return fallback;
 
   const seen = new Set<StepKey>();
   const ordered: StepKey[] = [];
@@ -342,7 +342,7 @@ function normalizeSteps(raw: unknown): StepKey[] {
     }
   }
 
-  return ordered.length ? ordered : DEFAULT_STEPS;
+  return ordered.length ? ordered : fallback;
 }
 
 async function safeLog(entry: Parameters<typeof logAiDebugEvent>[0]) {
@@ -861,7 +861,7 @@ async function processQueue(lockClient: PoolClient) {
 
     const runInn = async () => {
       if (modeFromPayload === 'steps' && stepsFromPayload) {
-        const completedSteps = new Set<StepKey>(normalizeSteps(payload.completed_steps));
+        const completedSteps = new Set<StepKey>(normalizeSteps(payload.completed_steps, []));
         const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
         const totalSteps = stepsFromPayload.length;
         let progress = totalSteps ? completedSteps.size / totalSteps : 0;
@@ -967,7 +967,9 @@ async function processQueue(lockClient: PoolClient) {
     if (shouldRetry) {
       const completedStepsForRetry =
         timedResult.completedSteps ??
-        (modeFromPayload === 'steps' && stepsFromPayload ? normalizeSteps(payload.completed_steps) : []);
+        (modeFromPayload === 'steps' && stepsFromPayload
+          ? normalizeSteps(payload.completed_steps, [])
+          : []);
 
       const nextPayload = {
         ...payload,
