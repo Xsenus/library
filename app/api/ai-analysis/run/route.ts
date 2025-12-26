@@ -20,6 +20,7 @@ export const revalidate = 0;
 
 let ensuredQueue = false;
 let ensuredCommands = false;
+let queueRunnerPromise: Promise<void> | null = null;
 const PROCESS_LOCK_KEY = 42_111;
 const MAX_STEP_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 2000;
@@ -96,6 +97,32 @@ async function acquireQueueLock(): Promise<PoolClient | null> {
 
   client?.release();
   return null;
+}
+
+function scheduleQueueRetry() {
+  if (queueRunnerPromise) return;
+
+  queueRunnerPromise = (async () => {
+    try {
+      const lockClient = await acquireQueueLock();
+      if (!lockClient) {
+        return;
+      }
+
+      try {
+        await processQueue(lockClient);
+      } finally {
+        await releaseQueueLock(lockClient);
+      }
+    } catch (error) {
+      console.error('AI analysis queue runner failed', error);
+    } finally {
+      queueRunnerPromise = null;
+
+      // Если после завершения остались элементы, запустим новую попытку.
+      setTimeout(() => void triggerQueueProcessing(), 1500);
+    }
+  })();
 }
 
 async function releaseQueueLock(client: PoolClient | null) {
@@ -740,6 +767,289 @@ async function runFullPipeline(inn: string, timeoutMs: number): Promise<RunResul
   return { ok: false as const, status: lastStatus, error: lastError ?? 'Unknown error' };
 }
 
+async function hasQueuedItems(): Promise<boolean> {
+  await ensureQueueTable();
+  const res = await dbBitrix.query('SELECT 1 FROM ai_analysis_queue LIMIT 1');
+  return (res.rowCount ?? 0) > 0;
+}
+
+async function processQueue(lockClient: PoolClient) {
+  const integrationResults: Array<{
+    inn: string;
+    ok: boolean;
+    status: number;
+    error?: string;
+    progress?: number;
+    deferred?: boolean;
+  }> = [];
+  const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
+  const stepTimeoutMs = getStepTimeoutMs();
+  const overallTimeoutMs = getOverallTimeoutMs();
+
+  let item: QueueItem | null;
+  let stopRequests = new Set<string>();
+  const failedSequence = new Set<string>();
+
+  while ((item = await dequeueNext())) {
+    const stopSignals = await consumeStopSignals(stopRequests);
+    stopRequests = stopSignals.stopSet;
+    if (stopSignals.freshStops.length) {
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        message: 'Обнаружены сигналы остановки, часть компаний пропущена',
+        payload: { inns: stopSignals.freshStops },
+      });
+    }
+
+    if (stopRequests.has(item.inn)) {
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: item.inn,
+        message: 'Анализ пропущен из-за запроса на остановку',
+      });
+      continue;
+    }
+
+    const inn = item.inn;
+    const payload = (item.payload || {}) as {
+      mode?: unknown;
+      steps?: unknown;
+      defer_count?: unknown;
+      completed_steps?: unknown;
+    };
+    const modeFromPayload: 'full' | 'steps' = payload.mode === 'full' ? 'full' : 'steps';
+    const stepsFromPayload = modeFromPayload === 'steps' ? normalizeSteps(payload.steps) : null;
+    const deferCount = Number.isFinite((payload as any).defer_count)
+      ? Number((payload as any).defer_count)
+      : 0;
+    const attemptNo = Math.max(1, deferCount + 1);
+    const companyNameMap = await getCompanyNames([inn]);
+    const companyName = companyNameMap.get(inn);
+    const startedAt = Date.now();
+
+    const stopCheckBeforeRun = await consumeStopSignals(stopRequests);
+    stopRequests = stopCheckBeforeRun.stopSet;
+    if (stopRequests.has(inn)) {
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        companyName,
+        message: 'Анализ отменён перед запуском по запросу пользователя',
+        payload: { stopRequested: true },
+      });
+      await markStopped([inn]);
+      continue;
+    }
+
+    await safeLog({
+      type: 'notification',
+      source: 'ai-integration',
+      companyId: inn,
+      companyName,
+      notificationKey: 'analysis_start',
+    });
+
+    const columns = await getDadataColumns();
+    await markRunning(inn, attemptNo);
+
+    const runInn = async () => {
+      if (modeFromPayload === 'steps' && stepsFromPayload) {
+        const completedSteps = new Set<StepKey>(normalizeSteps(payload.completed_steps));
+        const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
+        const totalSteps = stepsFromPayload.length;
+        let progress = totalSteps ? completedSteps.size / totalSteps : 0;
+        const hasProgressColumn = Boolean(columns.progress);
+
+        const updateProgress = async (value: number) => {
+          if (!hasProgressColumn) return;
+          await dbBitrix
+            .query(`UPDATE dadata_result SET "${columns.progress}" = $2 WHERE inn = $1`, [inn, value])
+            .catch((error) => console.warn('progress update failed', error));
+        };
+
+        if (progress > 0) {
+          await updateProgress(progress);
+        }
+
+        for (let idx = 0; idx < stepsFromPayload.length; idx++) {
+          const step = stepsFromPayload[idx];
+          if (completedSteps.has(step)) {
+            continue;
+          }
+          const res = await runStep(inn, step, stepTimeoutMs);
+          stepResults.push(res);
+          if (res.ok) {
+            completedSteps.add(step);
+            progress = Math.max(progress, completedSteps.size / totalSteps);
+            await updateProgress(progress);
+          }
+          if (!res.ok) break;
+        }
+        perStep.push({ inn, results: stepResults });
+        const ok = completedSteps.size === totalSteps && stepResults.every((s) => s.ok);
+        const lastStatus = stepResults.length ? stepResults[stepResults.length - 1]?.status : 0;
+        const firstError = stepResults.find((s) => !s.ok)?.error;
+        return {
+          ok,
+          status: lastStatus ?? 0,
+          error: firstError,
+          progress,
+          completedSteps: Array.from(completedSteps),
+        };
+      }
+
+      return runFullPipeline(inn, stepTimeoutMs);
+    };
+
+    let timedResult: RunResult;
+    try {
+      timedResult = (await Promise.race([
+        runInn(),
+        new Promise<{ ok: false; status: number; error: string }>((resolve) =>
+          setTimeout(() => resolve({ ok: false, status: 504, error: 'AI integration timed out' }), overallTimeoutMs),
+        ),
+      ])) as RunResult;
+    } catch (error: any) {
+      timedResult = {
+        ok: false,
+        status: 500,
+        error: error?.message ?? 'AI integration run failed',
+      };
+    } finally {
+      await removeFromQueue([inn]);
+    }
+
+    const stopSignalsAfterRun = await consumeStopSignals(stopRequests);
+    stopRequests = stopSignalsAfterRun.stopSet;
+    if (stopRequests.has(inn)) {
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        companyName,
+        message: 'Анализ остановлен по запросу пользователя',
+        payload: { stopRequested: true },
+      });
+      await markStopped([inn]);
+      continue;
+    }
+
+    const shouldRetry = !timedResult.ok && attemptNo < MAX_COMPANY_ATTEMPTS;
+    if (timedResult.ok) {
+      failedSequence.clear();
+    } else {
+      failedSequence.add(inn);
+    }
+
+    integrationResults.push({ inn, ...timedResult, deferred: shouldRetry });
+
+    if (!timedResult.ok && failedSequence.size >= MAX_FAILURE_STREAK) {
+      await markFinished(inn, { status: 'failed', durationMs: Date.now() - startedAt }, {
+        attempts: attemptNo,
+        outcome: 'failed',
+      });
+      await safeLog({
+        type: 'error',
+        source: 'ai-integration',
+        message: 'Анализ остановлен: слишком много ошибок подряд',
+        payload: { streak: Array.from(failedSequence), limit: MAX_FAILURE_STREAK },
+      });
+      break;
+    }
+
+    if (shouldRetry) {
+      const completedStepsForRetry =
+        timedResult.completedSteps ??
+        (modeFromPayload === 'steps' && stepsFromPayload ? normalizeSteps(payload.completed_steps) : []);
+
+      const nextPayload = {
+        ...payload,
+        defer_count: attemptNo,
+        completed_steps: completedStepsForRetry,
+      };
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        companyName,
+        message: `Анализ отложен после ошибки (попытка ${attemptNo + 1}/${MAX_COMPANY_ATTEMPTS})`,
+        payload: { error: timedResult.error, status: timedResult.status },
+      });
+      await markQueued(inn);
+      await enqueueItem(inn, nextPayload, item.queued_by);
+      continue;
+    }
+
+    const durationMs = Date.now() - startedAt;
+    if (timedResult.ok) {
+      await markFinished(inn, { status: 'completed', durationMs }, { attempts: attemptNo });
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        companyName,
+        notificationKey: 'analysis_success',
+        message: 'Анализ завершён',
+      });
+    } else {
+      await markFinished(
+        inn,
+        {
+          status: 'failed',
+          durationMs,
+          progress: timedResult.progress,
+        },
+        { attempts: attemptNo, outcome: 'failed' },
+      );
+      await safeLog({
+        type: 'error',
+        source: 'ai-integration',
+        companyId: inn,
+        companyName,
+        message: `Анализ завершён с ошибкой: ${timedResult.error ?? 'неизвестная ошибка'}`,
+      });
+    }
+  }
+
+  if (integrationResults.length) {
+    await safeLog({
+      type: 'notification',
+      source: 'ai-integration',
+      message: 'Фоновый запуск анализа завершён',
+      payload: { results: integrationResults, perStep },
+    });
+  }
+}
+
+async function triggerQueueProcessing() {
+  if (queueRunnerPromise) return queueRunnerPromise;
+
+  queueRunnerPromise = (async () => {
+    const lockClient = await acquireQueueLock();
+    if (!lockClient) {
+      queueRunnerPromise = null;
+      setTimeout(() => void triggerQueueProcessing(), 1500);
+      return;
+    }
+
+    try {
+      await processQueue(lockClient);
+    } finally {
+      await releaseQueueLock(lockClient);
+      queueRunnerPromise = null;
+
+      if (await hasQueuedItems()) {
+        scheduleQueueRetry();
+      }
+    }
+  })();
+
+  return queueRunnerPromise;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => null)) as {
@@ -1115,277 +1425,8 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    // Запускаем интеграцию в фоне, чтобы сам запрос отвечал сразу
-    void (async () => {
-      try {
-        const integrationResults: Array<{
-          inn: string;
-          ok: boolean;
-          status: number;
-          error?: string;
-          progress?: number;
-          deferred?: boolean;
-        }> = [];
-        const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
-        const stepTimeoutMs = getStepTimeoutMs();
-        const overallTimeoutMs = getOverallTimeoutMs();
-
-        const lockClient = await acquireQueueLock();
-        if (!lockClient) {
-          console.warn('AI analysis queue is already being processed, skipping duplicate runner');
-          return;
-        }
-
-        try {
-          let item: QueueItem | null;
-          let stopRequests = new Set<string>();
-          const failedSequence = new Set<string>();
-          while ((item = await dequeueNext())) {
-            const stopSignals = await consumeStopSignals(stopRequests);
-            stopRequests = stopSignals.stopSet;
-            if (stopSignals.freshStops.length) {
-              await safeLog({
-                type: 'notification',
-                source: 'ai-integration',
-                message: 'Обнаружены сигналы остановки, часть компаний пропущена',
-                payload: { inns: stopSignals.freshStops },
-              });
-            }
-
-            if (stopRequests.has(item.inn)) {
-              await safeLog({
-                type: 'notification',
-                source: 'ai-integration',
-                companyId: item.inn,
-                message: 'Анализ пропущен из-за запроса на остановку',
-              });
-              continue;
-            }
-
-            const inn = item.inn;
-            const payload = (item.payload || {}) as {
-              mode?: unknown;
-              steps?: unknown;
-              defer_count?: unknown;
-              completed_steps?: unknown;
-            };
-            const modeFromPayload: 'full' | 'steps' = payload.mode === 'full' ? 'full' : 'steps';
-            const stepsFromPayload =
-              modeFromPayload === 'steps' ? normalizeSteps(payload.steps) : null;
-            const deferCount = Number.isFinite((payload as any).defer_count)
-              ? Number((payload as any).defer_count)
-              : 0;
-            const attemptNo = Math.max(1, deferCount + 1);
-            const companyNameMap = await getCompanyNames([inn]);
-            const companyName = companyNameMap.get(inn);
-            const startedAt = Date.now();
-
-            const stopCheckBeforeRun = await consumeStopSignals(stopRequests);
-            stopRequests = stopCheckBeforeRun.stopSet;
-            if (stopRequests.has(inn)) {
-              await safeLog({
-                type: 'notification',
-                source: 'ai-integration',
-                companyId: inn,
-                companyName,
-                message: 'Анализ отменён перед запуском по запросу пользователя',
-                payload: { stopRequested: true },
-              });
-              await markStopped([inn]);
-              continue;
-            }
-
-            await safeLog({
-              type: 'notification',
-              source: 'ai-integration',
-              companyId: inn,
-              companyName,
-              notificationKey: 'analysis_start',
-            });
-
-            const columns = await getDadataColumns();
-            await markRunning(inn, attemptNo);
-
-            const runInn = async () => {
-              if (modeFromPayload === 'steps' && stepsFromPayload) {
-                const completedSteps = new Set<StepKey>(normalizeSteps(payload.completed_steps));
-                const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
-                const totalSteps = stepsFromPayload.length;
-                let progress = totalSteps ? completedSteps.size / totalSteps : 0;
-                const hasProgressColumn = Boolean(columns.progress);
-
-                const updateProgress = async (value: number) => {
-                  if (!hasProgressColumn) return;
-                  await dbBitrix
-                    .query(`UPDATE dadata_result SET "${columns.progress}" = $2 WHERE inn = $1`, [
-                      inn,
-                      value,
-                    ])
-                    .catch((error) => console.warn('progress update failed', error));
-                };
-
-                if (progress > 0) {
-                  await updateProgress(progress);
-                }
-
-                for (let idx = 0; idx < stepsFromPayload.length; idx++) {
-                  const step = stepsFromPayload[idx];
-                  if (completedSteps.has(step)) {
-                    continue;
-                  }
-                  const res = await runStep(inn, step, stepTimeoutMs);
-                  stepResults.push(res);
-                  if (res.ok) {
-                    completedSteps.add(step);
-                    progress = Math.max(progress, completedSteps.size / totalSteps);
-                    await updateProgress(progress);
-                  }
-                  if (!res.ok) break;
-                }
-                perStep.push({ inn, results: stepResults });
-                const ok = completedSteps.size === totalSteps && stepResults.every((s) => s.ok);
-                const lastStatus = stepResults.length
-                  ? stepResults[stepResults.length - 1]?.status
-                  : 0;
-                const firstError = stepResults.find((s) => !s.ok)?.error;
-                return {
-                  ok,
-                  status: lastStatus ?? 0,
-                  error: firstError,
-                  progress,
-                  completedSteps: Array.from(completedSteps),
-                };
-              }
-
-              return runFullPipeline(inn, stepTimeoutMs);
-            };
-
-            let timedResult: RunResult;
-            try {
-              timedResult = (await Promise.race([
-                runInn(),
-                new Promise<{ ok: false; status: number; error: string }>((resolve) =>
-                  setTimeout(
-                    () => resolve({ ok: false, status: 504, error: 'AI integration timed out' }),
-                    overallTimeoutMs,
-                  ),
-                ),
-              ])) as RunResult;
-            } catch (error: any) {
-              timedResult = {
-                ok: false,
-                status: 500,
-                error: error?.message ?? 'AI integration run failed',
-              };
-            } finally {
-              await removeFromQueue([inn]);
-            }
-
-            const stopSignalsAfterRun = await consumeStopSignals(stopRequests);
-            stopRequests = stopSignalsAfterRun.stopSet;
-            if (stopRequests.has(inn)) {
-              await safeLog({
-                type: 'notification',
-                source: 'ai-integration',
-                companyId: inn,
-                companyName,
-                message: 'Анализ остановлен по запросу пользователя',
-                payload: { stopRequested: true },
-              });
-              await markStopped([inn]);
-              continue;
-            }
-
-            const shouldRetry = !timedResult.ok && attemptNo < MAX_COMPANY_ATTEMPTS;
-            if (timedResult.ok) {
-              failedSequence.clear();
-            } else {
-              failedSequence.add(inn);
-            }
-
-            integrationResults.push({ inn, ...timedResult, deferred: shouldRetry });
-
-            if (!timedResult.ok && failedSequence.size >= MAX_FAILURE_STREAK) {
-              await markFinished(inn, { status: 'failed', durationMs: Date.now() - startedAt }, {
-                attempts: attemptNo,
-                outcome: 'failed',
-              });
-              await safeLog({
-                type: 'error',
-                source: 'ai-integration',
-                message: 'Анализ остановлен: слишком много ошибок подряд',
-                payload: { streak: Array.from(failedSequence), limit: MAX_FAILURE_STREAK },
-              });
-              break;
-            }
-
-            if (shouldRetry) {
-              const completedStepsForRetry =
-                timedResult.completedSteps ??
-                (modeFromPayload === 'steps' && stepsFromPayload
-                  ? normalizeSteps(payload.completed_steps)
-                  : []);
-
-              const nextPayload = {
-                ...payload,
-                defer_count: attemptNo,
-                completed_steps: completedStepsForRetry,
-              };
-              await safeLog({
-                type: 'notification',
-                source: 'ai-integration',
-                companyId: inn,
-                companyName,
-                message: `Анализ отложен после ошибки (попытка ${attemptNo + 1}/${MAX_COMPANY_ATTEMPTS})`,
-                payload: { error: timedResult.error, status: timedResult.status },
-              });
-              await markQueued(inn);
-              await enqueueItem(inn, nextPayload, item.queued_by);
-              continue;
-            }
-
-            const durationMs = Date.now() - startedAt;
-            if (timedResult.ok) {
-              await markFinished(inn, { status: 'completed', durationMs }, { attempts: attemptNo });
-              await safeLog({
-                type: 'notification',
-                source: 'ai-integration',
-                companyId: inn,
-                companyName,
-                notificationKey: 'analysis_success',
-                message: 'Анализ завершён',
-              });
-            } else {
-              await markFinished(inn, {
-                status: 'failed',
-                durationMs,
-                progress: timedResult.progress,
-              }, { attempts: attemptNo, outcome: 'failed' });
-              await safeLog({
-                type: 'error',
-                source: 'ai-integration',
-                companyId: inn,
-                companyName,
-                message: `Анализ завершён с ошибкой: ${timedResult.error ?? 'неизвестная ошибка'}`,
-              });
-            }
-          }
-
-          if (integrationResults.length) {
-            await safeLog({
-              type: 'notification',
-              source: 'ai-integration',
-              message: 'Фоновый запуск анализа завершён',
-              payload: { results: integrationResults, perStep },
-            });
-          }
-        } finally {
-          await releaseQueueLock(lockClient);
-        }
-      } catch (error) {
-        console.error('Background AI analysis run failed', error);
-      }
-    })();
+    // Запускаем обработку очереди в фоне, чтобы ответ вернулся сразу
+    void triggerQueueProcessing();
 
     return ack;
   } catch (e) {
