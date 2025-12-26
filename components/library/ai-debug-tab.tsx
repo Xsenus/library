@@ -349,6 +349,19 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
     setFilters((prev) => ({ ...prev, [key]: !prev[key] }));
   };
 
+  const resetFilters = useCallback(() => {
+    setFilters({ traffic: true, error: true, notification: true });
+    setSource('');
+    setDirection('all');
+    setType('all');
+    setDateFrom('');
+    setDateTo('');
+    setInn('');
+    setCompanyName('');
+    setSearch('');
+    setPage(1);
+  }, []);
+
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
   const rangeStart = total ? (page - 1) * pageSize + 1 : 0;
   const rangeEnd = total ? Math.min(page * pageSize, total) : 0;
@@ -368,6 +381,8 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
     return base + disabledCategories;
   }, [activeCategories.length, companyName, dateFrom, dateTo, debouncedSearch, direction, inn, source, type]);
 
+  const hasActiveFilters = activeFiltersCount > 0;
+
   return (
     <div className="py-4 space-y-4">
       <Collapsible
@@ -382,6 +397,11 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
             Активные фильтры: {activeFiltersCount}
           </Badge>
           <div className="flex flex-wrap items-center gap-2 ml-auto">
+            {hasActiveFilters && (
+              <Button variant="outline" size="sm" onClick={resetFilters} disabled={loading}>
+                <Trash2 className="h-4 w-4 mr-2" /> Сбросить фильтры
+              </Button>
+            )}
             <Button variant="outline" size="sm" onClick={() => fetchData()} disabled={loading}>
               {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
               <span className="ml-2">Обновить</span>
@@ -420,7 +440,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
             ))}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4 items-start">
             <div className="flex flex-col gap-1">
               <Label htmlFor="source" className="text-xs text-muted-foreground">
                 Источник
@@ -429,6 +449,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                 id="source"
                 value={source}
                 placeholder="ai-integration, worker, ui"
+                className="h-9"
                 onChange={(e) => setSource(e.target.value)}
               />
             </div>
@@ -441,6 +462,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                 id="search"
                 value={search}
                 placeholder="Текст, source, requestId"
+                className="h-9"
                 onChange={(e) => setSearch(e.target.value)}
               />
             </div>
@@ -450,7 +472,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                 Направление
               </Label>
               <Select value={direction} onValueChange={setDirection}>
-                <SelectTrigger id="direction" className="h-9 max-w-[220px]">
+                <SelectTrigger id="direction" className="h-9 w-full">
                   <SelectValue placeholder="Все" />
                 </SelectTrigger>
                 <SelectContent>
@@ -466,7 +488,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                 Тип
               </Label>
               <Select value={type} onValueChange={setType}>
-                <SelectTrigger id="type" className="h-9 max-w-[220px]">
+                <SelectTrigger id="type" className="h-9 w-full">
                   <SelectValue placeholder="Все" />
                 </SelectTrigger>
                 <SelectContent>
@@ -487,7 +509,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                 id="inn"
                 value={inn}
                 placeholder="7712345678"
-                className="max-w-[220px]"
+                className="h-9"
                 onChange={(e) => setInn(e.target.value)}
               />
             </div>
@@ -500,6 +522,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                 id="companyName"
                 value={companyName}
                 placeholder="Название компании"
+                className="h-9"
                 onChange={(e) => setCompanyName(e.target.value)}
               />
             </div>
@@ -509,7 +532,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
               <Input
                 type="date"
                 value={dateFrom}
-                className="max-w-[220px]"
+                className="h-9"
                 onChange={(e) => setDateFrom(e.target.value)}
               />
             </div>
@@ -519,7 +542,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
               <Input
                 type="date"
                 value={dateTo}
-                className="max-w-[220px]"
+                className="h-9"
                 onChange={(e) => setDateTo(e.target.value)}
               />
             </div>
@@ -668,7 +691,10 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
 
                       if (col.key === 'date') {
                         return (
-                          <td key={col.key} {...commonProps} className={`${commonProps.className} whitespace-nowrap`}>
+                          <td
+                            key={col.key}
+                            {...commonProps}
+                            className={`${commonProps.className} whitespace-nowrap text-center align-middle`}>
                             {date}
                           </td>
                         );
@@ -699,7 +725,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                           <td
                             key={col.key}
                             {...commonProps}
-                            className={`${commonProps.className} whitespace-nowrap font-mono text-[11px]`}>
+                            className={`${commonProps.className} whitespace-nowrap font-mono text-[11px] text-center align-middle`}>
                             {item.company_id || '—'}
                           </td>
                         );
@@ -710,7 +736,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
                           <td
                             key={col.key}
                             {...commonProps}
-                            className={`${commonProps.className} whitespace-nowrap`}
+                            className={`${commonProps.className} whitespace-nowrap text-center align-middle`}
                             title={item.company_name || undefined}>
                             {item.company_name || '—'}
                           </td>
