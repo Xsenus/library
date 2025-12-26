@@ -6,6 +6,8 @@ export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const revalidate = 0;
 
+const allowedPageSizes = [10, 20, 35, 50, 100];
+
 export async function GET(req: NextRequest) {
   try {
     const sp = req.nextUrl.searchParams;
@@ -22,7 +24,8 @@ export async function GET(req: NextRequest) {
     const search = sp.get('q') || undefined;
 
     const page = Number.isFinite(Number(pageRaw)) ? Number(pageRaw) : 1;
-    const pageSize = Number.isFinite(Number(pageSizeRaw)) ? Number(pageSizeRaw) : 50;
+    const requestedPageSize = Number.isFinite(Number(pageSizeRaw)) ? Number(pageSizeRaw) : 50;
+    const pageSize = allowedPageSizes.includes(requestedPageSize) ? requestedPageSize : 50;
     const categories = sp.getAll('category').filter(Boolean) as ('traffic' | 'error' | 'notification')[];
 
     const data = await listAiDebugEvents({
