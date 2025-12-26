@@ -22,7 +22,8 @@ let ensuredCommands = false;
 const PROCESS_LOCK_KEY = 42_111;
 const MAX_STEP_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 2000;
-const MAX_DEFER_ATTEMPTS = 3;
+const MAX_COMPANY_ATTEMPTS = 3;
+const MAX_FAILURE_STREAK = 5;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -128,12 +129,42 @@ type QueueItem = { inn: string; payload: Record<string, unknown> | null; queued_
 
 async function dequeueNext(): Promise<QueueItem | null> {
   await ensureQueueTable();
+  const columns = await getDadataColumns();
+
+  const outcomeCol = columns.outcome ? `LOWER(COALESCE(d."${columns.outcome}", ''))` : null;
+  const statusCol = columns.status ? `LOWER(COALESCE(d."${columns.status}", ''))` : null;
+  const progressCol = columns.progress ? `COALESCE(d."${columns.progress}", 0)` : null;
+  const finishedCol = columns.finishedAt ? `d."${columns.finishedAt}"` : null;
+
+  const incompleteOutcomeSql = outcomeCol ? `${outcomeCol} IN ('partial', 'failed')` : 'FALSE';
+  const notStartedOutcomeSql = outcomeCol
+    ? `${outcomeCol} IN ('not_started', 'pending', '')`
+    : finishedCol
+      ? `${finishedCol} IS NULL`
+      : 'TRUE';
+  const incompleteProgressSql = progressCol
+    ? `${progressCol} > 0 AND ${progressCol} < 0.999`
+    : 'FALSE';
+  const failedStatusSql = statusCol
+    ? `${statusCol} SIMILAR TO '%(failed|error|partial)%'`
+    : 'FALSE';
+
   const res = await dbBitrix.query<QueueItem>(
     `
       WITH next_item AS (
-        SELECT inn, payload, queued_at, queued_by
-        FROM ai_analysis_queue
-        ORDER BY queued_at ASC
+        SELECT
+          q.inn,
+          q.payload,
+          q.queued_at,
+          q.queued_by,
+          CASE
+            WHEN ${incompleteOutcomeSql} OR ${incompleteProgressSql} OR ${failedStatusSql} THEN 0
+            WHEN ${notStartedOutcomeSql} THEN 1
+            ELSE 2
+          END AS priority
+        FROM ai_analysis_queue q
+        LEFT JOIN dadata_result d ON d.inn = q.inn
+        ORDER BY priority ASC, q.queued_at ASC
         LIMIT 1
         FOR UPDATE SKIP LOCKED
       )
@@ -395,7 +426,7 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
   return { step, ok: false as const, status: lastStatus, error: lastError ?? 'Unknown error' };
 }
 
-async function markRunning(inn: string) {
+async function markRunning(inn: string, attempt?: number) {
   const columns = await getDadataColumns();
   if (!columns.status) {
     console.warn('mark running skipped: no status column in dadata_result');
@@ -404,6 +435,12 @@ async function markRunning(inn: string) {
 
   const params: any[] = [inn];
   const sets = [`"${columns.status}" = 'running'`];
+
+  if (columns.attempts && Number.isFinite(attempt)) {
+    params.push(attempt);
+    const idx = params.length;
+    sets.push(`"${columns.attempts}" = $${idx}`);
+  }
 
   if (columns.startedAt) {
     sets.push(`"${columns.startedAt}" = COALESCE("${columns.startedAt}", now())`);
@@ -451,6 +488,10 @@ async function markQueued(inn: string) {
     sets.push(`"${columns.outcome}" = 'pending'`);
   }
 
+  if (columns.attempts) {
+    sets.push(`"${columns.attempts}" = 0`);
+  }
+
   const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = $1`;
 
   await dbBitrix.query(sql, [inn]).catch((error) => console.warn('mark queued failed', error));
@@ -483,6 +524,10 @@ async function markQueuedMany(inns: string[]) {
     sets.push(`"${columns.outcome}" = 'pending'`);
   }
 
+  if (columns.attempts) {
+    sets.push(`"${columns.attempts}" = 0`);
+  }
+
   const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = ANY($1::text[])`;
 
   await dbBitrix.query(sql, [inns]).catch((error) => console.warn('mark queued failed', error));
@@ -493,6 +538,7 @@ async function markFinished(
   result:
     | { status: 'completed'; durationMs: number }
     | { status: 'failed'; durationMs: number; progress?: number },
+  options?: { attempts?: number; outcome?: 'partial' | 'failed' },
 ) {
   const columns = await getDadataColumns();
   if (!columns.status) {
@@ -510,6 +556,12 @@ async function markFinished(
 
   if (columns.finishedAt) {
     setters.push(`"${columns.finishedAt}" = now()`);
+  }
+
+  if (columns.attempts && Number.isFinite(options?.attempts)) {
+    params.push(options?.attempts);
+    const idx = params.length;
+    setters.push(`"${columns.attempts}" = $${idx}`);
   }
 
   if (columns.durationMs) {
@@ -533,7 +585,7 @@ async function markFinished(
   }
 
   if (columns.outcome) {
-    const outcomeValue = result.status === 'completed' ? 'completed' : 'partial';
+    const outcomeValue = options?.outcome ?? (result.status === 'completed' ? 'completed' : 'partial');
     params.push(outcomeValue);
     const idx = params.length;
     setters.push(`"${columns.outcome}" = $${idx}`);
@@ -792,13 +844,13 @@ export async function POST(request: NextRequest) {
         payload: { requestedBy, source },
       });
 
-      await markRunning(inn);
+      await markRunning(inn, 1);
       const startedAt = Date.now();
       const runResult = await runFullPipeline(inn, stepTimeoutMs);
       const durationMs = Date.now() - startedAt;
 
       if (runResult.ok) {
-        await markFinished(inn, { status: 'completed', durationMs });
+        await markFinished(inn, { status: 'completed', durationMs }, { attempts: 1 });
         await safeLog({
           type: 'notification',
           source: 'ai-integration',
@@ -809,7 +861,11 @@ export async function POST(request: NextRequest) {
           payload: { status: runResult.status },
         });
       } else {
-        await markFinished(inn, { status: 'failed', durationMs, progress: runResult.progress });
+        await markFinished(
+          inn,
+          { status: 'failed', durationMs, progress: runResult.progress },
+          { attempts: 1, outcome: 'failed' },
+        );
         await safeLog({
           type: 'error',
           source: 'ai-integration',
@@ -857,7 +913,7 @@ export async function POST(request: NextRequest) {
         payload: { steps: stepsToRun, mode },
       });
 
-      await markRunning(inn);
+      await markRunning(inn, 1);
 
       const runAllSteps = async (): Promise<RunResult> => {
         const totalSteps = stepsToRun.length;
@@ -906,7 +962,7 @@ export async function POST(request: NextRequest) {
 
       const durationMs = Date.now() - startedAt;
       if (timedResult.ok) {
-        await markFinished(inn, { status: 'completed', durationMs });
+        await markFinished(inn, { status: 'completed', durationMs }, { attempts: 1 });
         await safeLog({
           type: 'notification',
           source: 'ai-integration',
@@ -917,11 +973,15 @@ export async function POST(request: NextRequest) {
           payload: { status: timedResult.status },
         });
       } else {
-        await markFinished(inn, {
-          status: 'failed',
-          durationMs,
-          progress: timedResult.progress,
-        });
+        await markFinished(
+          inn,
+          {
+            status: 'failed',
+            durationMs,
+            progress: timedResult.progress,
+          },
+          { attempts: 1, outcome: 'failed' },
+        );
         await safeLog({
           type: 'error',
           source: 'ai-integration',
@@ -1068,6 +1128,7 @@ export async function POST(request: NextRequest) {
         try {
           let item: QueueItem | null;
           let stopRequests = new Set<string>();
+          const failedSequence = new Set<string>();
           while ((item = await dequeueNext())) {
             const stopSignals = await consumeStopSignals(stopRequests);
             stopRequests = stopSignals.stopSet;
@@ -1103,6 +1164,7 @@ export async function POST(request: NextRequest) {
             const deferCount = Number.isFinite((payload as any).defer_count)
               ? Number((payload as any).defer_count)
               : 0;
+            const attemptNo = Math.max(1, deferCount + 1);
             const companyNameMap = await getCompanyNames([inn]);
             const companyName = companyNameMap.get(inn);
             const startedAt = Date.now();
@@ -1131,7 +1193,7 @@ export async function POST(request: NextRequest) {
             });
 
             const columns = await getDadataColumns();
-            await markRunning(inn);
+            await markRunning(inn, attemptNo);
 
             const runInn = async () => {
               if (modeFromPayload === 'steps' && stepsFromPayload) {
@@ -1223,10 +1285,30 @@ export async function POST(request: NextRequest) {
               continue;
             }
 
-            const shouldDefer = !timedResult.ok && deferCount < MAX_DEFER_ATTEMPTS;
-            integrationResults.push({ inn, ...timedResult, deferred: shouldDefer });
+            const shouldRetry = !timedResult.ok && attemptNo < MAX_COMPANY_ATTEMPTS;
+            if (timedResult.ok) {
+              failedSequence.clear();
+            } else {
+              failedSequence.add(inn);
+            }
 
-            if (shouldDefer) {
+            integrationResults.push({ inn, ...timedResult, deferred: shouldRetry });
+
+            if (!timedResult.ok && failedSequence.size >= MAX_FAILURE_STREAK) {
+              await markFinished(inn, { status: 'failed', durationMs: Date.now() - startedAt }, {
+                attempts: attemptNo,
+                outcome: 'failed',
+              });
+              await safeLog({
+                type: 'error',
+                source: 'ai-integration',
+                message: 'Анализ остановлен: слишком много ошибок подряд',
+                payload: { streak: Array.from(failedSequence), limit: MAX_FAILURE_STREAK },
+              });
+              break;
+            }
+
+            if (shouldRetry) {
               const completedStepsForRetry =
                 timedResult.completedSteps ??
                 (modeFromPayload === 'steps' && stepsFromPayload
@@ -1235,7 +1317,7 @@ export async function POST(request: NextRequest) {
 
               const nextPayload = {
                 ...payload,
-                defer_count: deferCount + 1,
+                defer_count: attemptNo,
                 completed_steps: completedStepsForRetry,
               };
               await safeLog({
@@ -1243,7 +1325,7 @@ export async function POST(request: NextRequest) {
                 source: 'ai-integration',
                 companyId: inn,
                 companyName,
-                message: `Анализ отложен после ошибки (попытка ${deferCount + 1}/${MAX_DEFER_ATTEMPTS})`,
+                message: `Анализ отложен после ошибки (попытка ${attemptNo + 1}/${MAX_COMPANY_ATTEMPTS})`,
                 payload: { error: timedResult.error, status: timedResult.status },
               });
               await markQueued(inn);
@@ -1253,7 +1335,7 @@ export async function POST(request: NextRequest) {
 
             const durationMs = Date.now() - startedAt;
             if (timedResult.ok) {
-              await markFinished(inn, { status: 'completed', durationMs });
+              await markFinished(inn, { status: 'completed', durationMs }, { attempts: attemptNo });
               await safeLog({
                 type: 'notification',
                 source: 'ai-integration',
@@ -1267,7 +1349,7 @@ export async function POST(request: NextRequest) {
                 status: 'failed',
                 durationMs,
                 progress: timedResult.progress,
-              });
+              }, { attempts: attemptNo, outcome: 'failed' });
               await safeLog({
                 type: 'error',
                 source: 'ai-integration',
