@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
+import type { PoolClient } from 'pg';
 import { getSession } from '@/lib/auth';
 import { aiRequestId, callAiIntegration, getAiIntegrationBase } from '@/lib/ai-integration';
 import { logAiDebugEvent } from '@/lib/ai-debug';
@@ -79,23 +80,32 @@ async function ensureCommandsTable() {
   ensuredCommands = true;
 }
 
-async function acquireQueueLock(): Promise<boolean> {
+async function acquireQueueLock(): Promise<PoolClient | null> {
+  let client: PoolClient | null = null;
   try {
-    const res = await dbBitrix.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1) AS locked', [
+    client = await dbBitrix.connect();
+    const res = await client.query<{ locked: boolean }>('SELECT pg_try_advisory_lock($1) AS locked', [
       PROCESS_LOCK_KEY,
     ]);
-    return !!res.rows?.[0]?.locked;
+    if (res.rows?.[0]?.locked) {
+      return client;
+    }
   } catch (error) {
     console.warn('Failed to acquire AI analysis queue lock', error);
-    return false;
   }
+
+  client?.release();
+  return null;
 }
 
-async function releaseQueueLock() {
+async function releaseQueueLock(client: PoolClient | null) {
+  if (!client) return;
   try {
-    await dbBitrix.query('SELECT pg_advisory_unlock($1)', [PROCESS_LOCK_KEY]);
+    await client.query('SELECT pg_advisory_unlock($1)', [PROCESS_LOCK_KEY]);
   } catch (error) {
     console.warn('Failed to release AI analysis queue lock', error);
+  } finally {
+    client.release();
   }
 }
 
@@ -1120,7 +1130,8 @@ export async function POST(request: NextRequest) {
         const stepTimeoutMs = getStepTimeoutMs();
         const overallTimeoutMs = getOverallTimeoutMs();
 
-        if (!(await acquireQueueLock())) {
+        const lockClient = await acquireQueueLock();
+        if (!lockClient) {
           console.warn('AI analysis queue is already being processed, skipping duplicate runner');
           return;
         }
@@ -1369,7 +1380,7 @@ export async function POST(request: NextRequest) {
             });
           }
         } finally {
-          await releaseQueueLock();
+          await releaseQueueLock(lockClient);
         }
       } catch (error) {
         console.error('Background AI analysis run failed', error);
