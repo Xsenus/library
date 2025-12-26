@@ -194,16 +194,20 @@ async function dequeueNext(): Promise<QueueItem | null> {
           q.payload,
           q.queued_at,
           q.queued_by,
-          CASE
+          COALESCE(d.priority, 2) AS priority
+        FROM ai_analysis_queue q
+        LEFT JOIN LATERAL (
+          SELECT CASE
             WHEN ${incompleteOutcomeSql} OR ${incompleteProgressSql} OR ${failedStatusSql} THEN 0
             WHEN ${notStartedOutcomeSql} THEN 1
             ELSE 2
           END AS priority
-        FROM ai_analysis_queue q
-        LEFT JOIN dadata_result d ON d.inn = q.inn
+          FROM dadata_result d
+          WHERE d.inn = q.inn
+        ) d ON TRUE
         ORDER BY priority ASC, q.queued_at ASC
         LIMIT 1
-        FOR UPDATE SKIP LOCKED
+        FOR UPDATE OF q SKIP LOCKED
       )
       DELETE FROM ai_analysis_queue q
       USING next_item
