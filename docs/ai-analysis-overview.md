@@ -119,6 +119,18 @@
 - `ai.prodclass` — `AiProdclass(id, name, label, score)`;
 - `ai.industry`, `ai.utp`, `ai.letter`, `note`.
 
+#### Детальный маппинг полей
+- `company.domain1 / company.domain2` — первые две непустые `pars_site.description` по `company_id`; если описаний меньше, добираются `site_1_description / site_2_description` из `clients_requests`.
+- `ai.sites` — из `clients_requests.domain_1/domain_2` + всех `pars_site.url/domain_1`, нормализуются в HTTPS и уникализируются.
+- `company.domain1_site / company.domain2_site` — первые два элемента списка сайтов (`ai.sites`), могут быть пустыми при отсутствии валидных доменов.
+- `ai.products` — строки `ai_site_goods_types`, связанные через `pars_site.company_id`, отсортированы по `goods_types_score`; дополняются `goods_lookup` при наличии.
+- `ai.prodclass` — строки `ai_site_prodclass` по тем же сайтам, сортировка по `prodclass_score`; при необходимости название подтягивается из `ib_prodclass`.
+- `ai.equipment` — строки `ai_site_equipment` по `company_id`, сортировка по `equipment_score`, нормализация и ограничение `_MAX_EQUIPMENT=100`.
+- `ai.industry` — сначала лучшая `prodclass` → индустрия; иначе `clients_requests.okved_main`; затем фоллбек `dadata_result.main_okved` (Bitrix → Postgres) и перевод через `_okved_to_industry`; при отсутствии данных поле пустое.
+- `ai.utp` — напрямую `clients_requests.utp`, при пустом значении — прочерк в ответе.
+- `ai.letter` — напрямую `clients_requests.pismo`, пустое значение не показывается.
+- `note` — текстовый список источников (`clients_requests`, `pars_site`, `ai_site_goods_types`, `ai_site_prodclass`, `ai_site_equipment`, `dadata_result`); если ничего не найдено — `no sources found`.
+
 ### Проверка содержимого вручную
 1. Найти `company_id` по ИНН: `SELECT id FROM public.clients_requests WHERE inn=:inn ORDER BY COALESCE(ended_at, created_at) DESC NULLS LAST LIMIT 1;`.
 2. Получить сайты/описания: `SELECT * FROM public.pars_site WHERE company_id=:company_id ORDER BY created_at DESC;`.

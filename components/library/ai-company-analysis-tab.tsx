@@ -253,6 +253,8 @@ type AiAnalyzerInfo = {
   company?: {
     domain1?: string | null;
     domain2?: string | null;
+    domain1_site?: string | null;
+    domain2_site?: string | null;
   } | null;
   ai?: {
     sites?: string[];
@@ -288,10 +290,12 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
     ? {
         domain1: company.domain1 ?? company.domain_1 ?? null,
         domain2: company.domain2 ?? company.domain_2 ?? null,
+        domain1_site: company.domain1_site ?? company.domain_1_site ?? null,
+        domain2_site: company.domain2_site ?? company.domain_2_site ?? null,
       }
     : null;
 
-  const aiSites = ai ? toStringArray(ai.sites ?? ai.domains ?? ai.site_list) : [];
+  const aiSites = ai ? toSiteArray(ai.sites ?? ai.domains ?? ai.site_list) : [];
 
   const mapProducts = (items: any[]): Array<{ name: string; goods_group?: string | null; url?: string | null; domain?: string | null }> =>
     items
@@ -302,7 +306,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
           const name = String(item.name ?? item.product ?? item.title ?? '').trim();
           const goods_group = item.goods_group ?? item.goods_type ?? null;
           const url = item.url ?? item.link ?? null;
-          const domain = item.domain ?? null;
+          const domain = item.domain ?? normalizeSite(url ?? null);
           if (!name && !goods_group && !url) return null;
           return { name: name || goods_group || url || '—', goods_group, url, domain };
         }
@@ -319,7 +323,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
           const name = String(item.name ?? item.equipment ?? item.title ?? '').trim();
           const equip_group = item.equip_group ?? item.group ?? null;
           const url = item.url ?? item.link ?? null;
-          const domain = item.domain ?? null;
+          const domain = item.domain ?? normalizeSite(url ?? null);
           if (!name && !equip_group && !url) return null;
           return { name: name || equip_group || url || '—', equip_group, url, domain };
         }
@@ -348,6 +352,11 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
         note: ai.note ?? null,
       }
     : null;
+
+  if (companyInfo && aiSites.length) {
+    if (!companyInfo.domain1_site && aiSites[0]) companyInfo.domain1_site = aiSites[0];
+    if (!companyInfo.domain2_site && aiSites[1]) companyInfo.domain2_site = aiSites[1];
+  }
 
   return { company: companyInfo, ai: aiInfo };
 }
@@ -2185,22 +2194,50 @@ export default function AiCompanyAnalysisTab() {
                   <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
                     <div className="text-xs uppercase text-muted-foreground">Данные карточки (AI-анализатор)</div>
 
-                    {analyzerInfo.company && (analyzerInfo.company.domain1 || analyzerInfo.company.domain2) && (
-                      <div className="grid gap-2 text-sm sm:grid-cols-2">
-                        {analyzerInfo.company.domain1 && (
-                          <div>
-                            <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 1</div>
-                            <div className="text-foreground">{analyzerInfo.company.domain1}</div>
-                          </div>
-                        )}
-                        {analyzerInfo.company.domain2 && (
-                          <div>
-                            <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 2</div>
-                            <div className="text-foreground">{analyzerInfo.company.domain2}</div>
-                          </div>
-                        )}
-                      </div>
-                    )}
+                    {analyzerInfo.company &&
+                      (analyzerInfo.company.domain1 ||
+                        analyzerInfo.company.domain2 ||
+                        analyzerInfo.company.domain1_site ||
+                        analyzerInfo.company.domain2_site) && (
+                        <div className="grid gap-2 text-sm sm:grid-cols-2">
+                          {(analyzerInfo.company.domain1 || analyzerInfo.company.domain1_site) && (
+                            <div className="space-y-1">
+                              <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 1</div>
+                              {analyzerInfo.company.domain1 && (
+                                <div className="text-foreground">{analyzerInfo.company.domain1}</div>
+                              )}
+                              {analyzerInfo.company.domain1_site && (
+                                <a
+                                  href={`https://${analyzerInfo.company.domain1_site}`}
+                                  className="inline-flex items-center gap-1 text-[13px] text-blue-600 hover:underline"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {analyzerInfo.company.domain1_site}
+                                </a>
+                              )}
+                            </div>
+                          )}
+                          {(analyzerInfo.company.domain2 || analyzerInfo.company.domain2_site) && (
+                            <div className="space-y-1">
+                              <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 2</div>
+                              {analyzerInfo.company.domain2 && (
+                                <div className="text-foreground">{analyzerInfo.company.domain2}</div>
+                              )}
+                              {analyzerInfo.company.domain2_site && (
+                                <a
+                                  href={`https://${analyzerInfo.company.domain2_site}`}
+                                  className="inline-flex items-center gap-1 text-[13px] text-blue-600 hover:underline"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {analyzerInfo.company.domain2_site}
+                                </a>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
 
                     {analyzerInfo.ai && (
                       <div className="space-y-3 text-sm">
