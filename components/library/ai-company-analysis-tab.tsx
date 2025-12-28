@@ -1430,16 +1430,15 @@ export default function AiCompanyAnalysisTab() {
     }
 
     if (!items.length && analyzer?.ai?.products?.length) {
-      items.push(
-        ...analyzer.ai.products
-          .map((item) => {
-            const name = item?.name ? String(item.name).trim() : '';
-            const code = item?.tnved_code ? String(item.tnved_code).trim() : undefined;
-            if (!name && !code) return null;
-            return { name: name || code || '—', code };
-          })
-          .filter((item): item is { name: string; code?: string } => !!item && !!item.name),
-      );
+      const analyzerProducts = analyzer.ai.products.reduce<Array<{ name: string; code?: string }>>((acc, item) => {
+        const name = item?.name ? String(item.name).trim() : '';
+        const code = item?.tnved_code ? String(item.tnved_code).trim() : undefined;
+        if (!name && !code) return acc;
+        acc.push({ name: name || code || '—', code });
+        return acc;
+      }, []);
+
+      items.push(...analyzerProducts);
     }
 
     return items;
