@@ -82,3 +82,72 @@
 1. `logAiDebugEvent` при первом вызове создаёт таблицу `ai_debug_events` и индексы. Попытки добавить флаги в `dadata_result` (колонки `server_error`, `analysis_ok`, `analysis_started_at`) оборачиваются в try/catch, чтобы отсутствие колонок не ломало логирование.
 2. События делятся на категории: трафик (`request`/`response`), ошибки (`error` с `errorKey`), уведомления (`notification` c `notificationKey`). Для уведомлений шаблоны формируют читаемые сообщения вроде «Начат анализ компании …».
 3. При записи уведомлений или ошибок система пытается обновить служебные флаги в `dadata_result`; если это не удалось, в stdout пишется предупреждение, но сама запись в лог остаётся доступной.
+
+## Схема данных и маппинг для карточки
+Ниже — краткая памятка, что хранится в основной базе (Postgres) и как складывается итоговый ответ для фронта.
+
+### Таблицы и связи
+- **clients_requests** — контейнер по заявке: `inn`, домены (`domain_1/2`), `okved_main`, описания сайтов, UTP/письмо и т.д.
+- **pars_site** — тексты и URL сайтов, связаны через `company_id` с `clients_requests`.
+- **ai_site_prodclass** — классификация продклассов (`prodclass`, `prodclass_score`), ссылка на `pars_site` по `text_pars_id`.
+- **ai_site_goods_types** — типы продукции (`goods_type`, `goods_type_ID`, `goods_types_score`, `text_vector`), ссылка на `pars_site.text_par_id`.
+- **ai_site_equipment** — подобранное оборудование (`equipment`, `equipment_ID`, `equipment_score`, `text_vector`), ссылка на `pars_site.text_pars_id`.
+
+### Как пополняются таблицы
+Эндпоинт `analyze-json` получает JSON c блоками `products`, `equipment`, `prodclass`, `sites` и т.п. Для `equipment` каждая позиция нормализуется в `(name, match_id/equipment_ID, score, vector)` и синхронизируется с `ai_site_equipment`:
+
+1. Сначала подтягиваются существующие строки по `text_pars_id`.
+2. Совпадения по `equipment_ID` или имени обновляются.
+3. Новые значения вставляются `INSERT INTO public.ai_site_equipment (text_pars_id, equipment, equipment_score, equipment_ID, text_vector) ...`.
+4. Лишние строки удаляются `DELETE FROM public.ai_site_equipment WHERE id = :row_id`.
+
+Для блоков `products` и `prodclass` применяется тот же паттерн синхронизации в `ai_site_goods_types` и `ai_site_prodclass`.
+
+### Как собирается ответ для UI
+Сервис `analyze_company_by_inn` объединяет данные из всех таблиц:
+- домены/описания из `clients_requests` и `pars_site`;
+- продукты из `ai_site_goods_types`/`ai_site_prodclass`;
+- оборудование из `ai_site_equipment`;
+- UTP/письмо из `clients_requests`;
+- индустрию — по лучшему `prodclass` или запасному варианту из `okved_main`.
+
+Эндпоинт `GET /lookup/{inn}/ai-analyzer` возвращает уже собранный объект `AiAnalyzerResponse` с полями, которые ожидает карточка:
+- `company.domain1/domain2` — описания сайтов;
+- `ai.sites` — список URL;
+- `ai.products[]` — `AiProduct(name, goods_group, domain, url)`;
+- `ai.equipment[]` — `AiEquipment(name, equip_group, domain, url)`;
+- `ai.prodclass` — `AiProdclass(id, name, label, score)`;
+- `ai.industry`, `ai.utp`, `ai.letter`, `note`.
+
+#### Детальный маппинг полей
+- `company.domain1 / company.domain2` — первые две непустые `pars_site.description` по `company_id`; если описаний меньше, добираются `site_1_description / site_2_description` из `clients_requests`.
+- `ai.sites` — из `clients_requests.domain_1/domain_2` + всех `pars_site.url/domain_1`, нормализуются в HTTPS и уникализируются.
+- `company.domain1_site / company.domain2_site` — первые два элемента списка сайтов (`ai.sites`), могут быть пустыми при отсутствии валидных доменов.
+- `ai.products` — строки `ai_site_goods_types`, связанные через `pars_site.company_id`, отсортированы по `goods_types_score`; дополняются `goods_lookup` при наличии. В ответ добавлен `tnved_code` (берётся из `goods_type_id`/`goods_type_ID` или справочника), чтобы карточка сразу показывала код ТНВЭД.
+- `ai.prodclass` — строки `ai_site_prodclass` по тем же сайтам, сортировка по `prodclass_score`; при необходимости название подтягивается из `ib_prodclass`. Возвращается `description_okved_score` — коэффициент похожести описания сайта и ОКВЭД (0–1 или проценты), вычисляемый при разборе `analyze-json` и сохраняемый в таблице, если колонка есть.
+- `ai.equipment` — строки `ai_site_equipment` по `company_id`, сортировка по `equipment_score`, нормализация и ограничение `_MAX_EQUIPMENT=100`.
+- `ai.industry` — сначала лучшая `prodclass` → индустрия; иначе `clients_requests.okved_main`; затем фоллбек `dadata_result.main_okved` (Bitrix → Postgres) и перевод через `_okved_to_industry`; при отсутствии данных поле пустое.
+- `ai.utp` — напрямую `clients_requests.utp`, при пустом значении — прочерк в ответе.
+- `ai.letter` — напрямую `clients_requests.pismo`, пустое значение не показывается.
+- `note` — текстовый список источников (`clients_requests`, `pars_site`, `ai_site_goods_types`, `ai_site_prodclass`, `ai_site_equipment`, `dadata_result`); если ничего не найдено — `no sources found`.
+
+### Поля карточки и ожидаемые источники
+Ниже — расшифровка блоков из карточки AI-анализатора и то, откуда берутся значения (все поля читает готовый payload, перерасчёта при открытии нет):
+
+1. **Уровень соответствия и найденный класс предприятия.** Лучший `ai.prodclass` по максимальному `prodclass_score` (`score` → уровень, `label/name` → название класса). Если таблица пуста, блок остаётся пустым.
+2. **Домен для парсинга.** Первый валидный домен из `ai.sites` (нормализованные `clients_requests.domain_1/2` + `pars_site.url/domain_1`). При отсутствии доменов значение `—`.
+3. **Соответствие ИИ-описания сайта и ОКВЭД.** `ai.prodclass.description_okved_score` — коэффициент сходства описания сайта и ОКВЭД (0–1, часто показывается в процентах). Если нет продкласса или колонки, выводится пусто.
+4. **ИИ-описание сайта.** `company.domain1/domain2` — два последних описания сайтов из `pars_site`, с фолбеком на `site_1/2_description` из `clients_requests`.
+5. **Топ-10 оборудования.** `ai.equipment[]`, отсортированный по `equipment_score` и ограниченный 100 строками. Если нужен именно топ-10, обрезается на фронте.
+6. **Виды найденной продукции на сайте и ТНВЭД.** `ai.products[]` с названием продукции/группы и `tnved_code` из `goods_type_id` или справочника; сортировка по `goods_types_score`, лимит 100 строк.
+
+### Что не пересчитывается
+- Эндпоинт `/v1/lookup/{inn}/ai-analyzer` не триггерит новый анализ и не обращается к внешним сервисам: он только читает сохранённые строки. Пустые таблицы = пустые поля.
+- UTP, письмо, домены и оборудование/продукты берутся только из перечисленных таблиц; отсутствие данных в `clients_requests` или `ai_site_*` не компенсируется внешними источниками.
+
+### Проверка содержимого вручную
+1. Найти `company_id` по ИНН: `SELECT id FROM public.clients_requests WHERE inn=:inn ORDER BY COALESCE(ended_at, created_at) DESC NULLS LAST LIMIT 1;`.
+2. Получить сайты/описания: `SELECT * FROM public.pars_site WHERE company_id=:company_id ORDER BY created_at DESC;`.
+3. Продукты: `SELECT * FROM public.ai_site_goods_types JOIN public.pars_site ON ... WHERE company_id=:company_id ORDER BY goods_types_score DESC;`.
+4. Продклассы: `SELECT * FROM public.ai_site_prodclass JOIN public.pars_site ON ... WHERE company_id=:company_id ORDER BY prodclass_score DESC;`.
+5. Оборудование: `SELECT * FROM public.ai_site_equipment JOIN public.pars_site ON ... WHERE company_id=:company_id ORDER BY equipment_score DESC;`.

@@ -249,6 +249,144 @@ function toStringArray(value: any): string[] {
   return [];
 }
 
+type AiAnalyzerInfo = {
+  company?: {
+    domain1?: string | null;
+    domain2?: string | null;
+    domain1_site?: string | null;
+    domain2_site?: string | null;
+  } | null;
+  ai?: {
+    sites?: string[];
+    products?: Array<{
+      name: string;
+      goods_group?: string | null;
+      url?: string | null;
+      domain?: string | null;
+      tnved_code?: string | null;
+    }>;
+    equipment?: Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }>;
+    prodclass?: {
+      id?: string | number | null;
+      name?: string | null;
+      label?: string | null;
+      score?: number | null;
+      description_okved_score?: number | null;
+    } | null;
+    industry?: string | null;
+    utp?: string | null;
+    letter?: string | null;
+    note?: string | null;
+  } | null;
+};
+
+function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
+  if (!raw) return null;
+  let data = raw;
+  if (typeof raw === 'string') {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+
+  const company = typeof data.company === 'object' && !Array.isArray(data.company) ? data.company : null;
+  const ai = typeof data.ai === 'object' && !Array.isArray(data.ai) ? data.ai : null;
+
+  if (!company && !ai) return null;
+
+  const companyInfo = company
+    ? {
+        domain1: company.domain1 ?? company.domain_1 ?? null,
+        domain2: company.domain2 ?? company.domain_2 ?? null,
+        domain1_site: company.domain1_site ?? company.domain_1_site ?? null,
+        domain2_site: company.domain2_site ?? company.domain_2_site ?? null,
+      }
+    : null;
+
+  const aiSites = ai ? toSiteArray(ai.sites ?? ai.domains ?? ai.site_list) : [];
+
+  const mapProducts = (
+    items: any[],
+  ): Array<{ name: string; goods_group?: string | null; url?: string | null; domain?: string | null; tnved_code?: string | null }> =>
+    items
+      .map((item) => {
+        if (!item) return null;
+        if (typeof item === 'string') return { name: item };
+        if (typeof item === 'object') {
+          const name = String(item.name ?? item.product ?? item.title ?? '').trim();
+          const goods_group = item.goods_group ?? item.goods_type ?? null;
+          const url = item.url ?? item.link ?? null;
+          const domain = item.domain ?? normalizeSite(url ?? null);
+          const tnved_code =
+            item.tnved_code ??
+            item.goods_type_id ??
+            item.goods_type_ID ??
+            item.tnved ??
+            item.tn_ved ??
+            item.code ??
+            null;
+          if (!name && !goods_group && !url) return null;
+          return { name: name || goods_group || url || '—', goods_group, url, domain, tnved_code };
+        }
+        return { name: String(item) };
+      })
+      .filter(
+        (p): p is { name: string; goods_group?: string | null; url?: string | null; domain?: string | null; tnved_code?: string | null } =>
+          !!p && !!p.name,
+      );
+
+  const mapEquipment = (items: any[]): Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }> =>
+    items
+      .map((item) => {
+        if (!item) return null;
+        if (typeof item === 'string') return { name: item };
+        if (typeof item === 'object') {
+          const name = String(item.name ?? item.equipment ?? item.title ?? '').trim();
+          const equip_group = item.equip_group ?? item.group ?? null;
+          const url = item.url ?? item.link ?? null;
+          const domain = item.domain ?? normalizeSite(url ?? null);
+          if (!name && !equip_group && !url) return null;
+          return { name: name || equip_group || url || '—', equip_group, url, domain };
+        }
+        return { name: String(item) };
+      })
+      .filter((p): p is { name: string; equip_group?: string | null; url?: string | null; domain?: string | null } => !!p && !!p.name);
+
+  const prodclass = ai?.prodclass && typeof ai.prodclass === 'object' ? ai.prodclass : null;
+
+  const aiInfo = ai
+    ? {
+        sites: aiSites,
+        products: Array.isArray(ai.products) ? mapProducts(ai.products) : [],
+        equipment: Array.isArray(ai.equipment) ? mapEquipment(ai.equipment) : [],
+        prodclass: prodclass
+          ? {
+              id: prodclass.id ?? prodclass.prodclass_id ?? null,
+              name: prodclass.name ?? prodclass.prodclass ?? null,
+              label: prodclass.label ?? prodclass.full_name ?? null,
+              score: prodclass.score ?? prodclass.prodclass_score ?? null,
+              description_okved_score: prodclass.description_okved_score ?? prodclass.okved_match_score ?? null,
+            }
+          : null,
+        industry: ai.industry ?? null,
+        utp: ai.utp ?? ai.usp ?? null,
+        letter: ai.letter ?? ai.email ?? null,
+        note: ai.note ?? null,
+      }
+    : null;
+
+  if (companyInfo && aiSites.length) {
+    if (!companyInfo.domain1_site && aiSites[0]) companyInfo.domain1_site = aiSites[0];
+    if (!companyInfo.domain2_site && aiSites[1]) companyInfo.domain2_site = aiSites[1];
+  }
+
+  return { company: companyInfo, ai: aiInfo };
+}
+
 function toSiteArray(value: any): string[] {
   const normalized = toStringArray(value)
     .map((site) => normalizeSite(site))
@@ -300,6 +438,15 @@ function toTimestamp(value: string | null | undefined): number | null {
   if (!value) return null;
   const ts = Date.parse(value);
   return Number.isNaN(ts) ? null : ts;
+}
+
+function formatMatchScore(score: number | string | null | undefined): string | null {
+  if (score == null) return null;
+  const value = Number(score);
+  if (!Number.isFinite(value)) return null;
+  if (value === 0) return '0%';
+  if (value > 0 && value <= 1) return `${(value * 100).toFixed(1)}%`;
+  return value.toFixed(2);
 }
 
 type CompanyState = { running: boolean; queued: boolean };
@@ -471,6 +618,9 @@ export default function AiCompanyAnalysisTab() {
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [stopSignalAt, setStopSignalAt] = useState<number | null>(null);
+  const analyzerInfo = useMemo(() => (infoCompany ? normalizeAnalyzerInfo(infoCompany.analysis_info) : null), [infoCompany]);
+  const analyzerSites = analyzerInfo?.ai?.sites ?? [];
+  const analyzerProdclass = analyzerInfo?.ai?.prodclass ?? null;
   const forcedLaunchMode = useMemo(() => getForcedLaunchMode(true), []);
   const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
   const forcedSteps = useMemo(() => getForcedSteps(true), []);
@@ -1214,43 +1364,92 @@ export default function AiCompanyAnalysisTab() {
     return 'indeterminate' as const;
   }, [companies, selected]);
 
-  const topEquipment = (company: AiCompany): string[] => {
+  const topEquipment = (company: AiCompany, analyzer?: AiAnalyzerInfo | null): string[] => {
     const raw = company.analysis_equipment;
-    if (!raw) return [];
+    const items: string[] = [];
+
     if (Array.isArray(raw)) {
-      return raw
-        .map((item) => {
-          if (!item) return null;
-          if (typeof item === 'string') return item.trim();
-          if (typeof item === 'object') {
-            const label = String(item?.name ?? item?.label ?? item?.equipment ?? item?.title ?? '').trim();
-            return label || null;
-          }
-          return String(item);
-        })
-        .filter((s): s is string => !!s);
+      items.push(
+        ...raw
+          .map((item) => {
+            if (!item) return null;
+            if (typeof item === 'string') return item.trim();
+            if (typeof item === 'object') {
+              const label = String(item?.name ?? item?.label ?? item?.equipment ?? item?.title ?? '').trim();
+              return label || null;
+            }
+            return String(item);
+          })
+          .filter((s): s is string => !!s),
+      );
     }
-    return [];
+
+    if (!items.length && analyzer?.ai?.equipment?.length) {
+      items.push(
+        ...analyzer.ai.equipment
+          .map((item) => (item?.name ? String(item.name).trim() : null))
+          .filter((name): name is string => !!name),
+      );
+    }
+
+    return items;
   };
 
-  const tnvedProducts = (company: AiCompany): Array<{ name: string; code?: string }> => {
+  const tnvedProducts = (company: AiCompany, analyzer?: AiAnalyzerInfo | null): Array<{ name: string; code?: string }> => {
     const raw = company.analysis_tnved;
-    if (!raw) return [];
-    const arr = Array.isArray(raw) ? raw : [raw];
-    return arr
-      .map((item: any) => {
-        if (!item) return null;
-        if (typeof item === 'string') return { name: item };
-        if (typeof item === 'object') {
-          const name = String(item?.name ?? item?.title ?? item?.product ?? '').trim();
-          const code = String(item?.tnved ?? item?.code ?? item?.tn_ved ?? '').trim();
-          if (!name && !code) return null;
-          return { name: name || code, code: code || undefined };
-        }
-        return { name: String(item) };
-      })
-      .filter((item): item is { name: string; code?: string } => !!item && !!item.name);
+    const items: Array<{ name: string; code?: string }> = [];
+    if (raw) {
+      const arr = Array.isArray(raw) ? raw : [raw];
+      items.push(
+        ...arr
+          .map((item: any) => {
+            if (!item) return null;
+            if (typeof item === 'string') return { name: item };
+            if (typeof item === 'object') {
+              const name = String(item?.name ?? item?.title ?? item?.product ?? '').trim();
+              const code = String(item?.tnved ?? item?.code ?? item?.tn_ved ?? '').trim();
+              if (!name && !code) return null;
+              return { name: name || code, code: code || undefined };
+            }
+            return { name: String(item) };
+          })
+          .filter((item): item is { name: string; code?: string } => !!item && !!item.name),
+      );
+    }
+
+    if (!items.length && analyzer?.ai?.products?.length) {
+      items.push(
+        ...analyzer.ai.products
+          .map((item) => {
+            const name = item?.name ? String(item.name).trim() : '';
+            const code = item?.tnved_code ? String(item.tnved_code).trim() : undefined;
+            if (!name && !code) return null;
+            return { name: name || code || '—', code };
+          })
+          .filter((item): item is { name: string; code?: string } => !!item && !!item.name),
+      );
+    }
+
+    return items;
   };
+
+  const prodclassLabel = analyzerProdclass?.label || analyzerProdclass?.name || infoCompany?.analysis_class || null;
+  const prodclassScoreText =
+    formatMatchScore(analyzerProdclass?.score ?? null) ||
+    (infoCompany?.analysis_match_level ? String(infoCompany.analysis_match_level) : null);
+  const okvedMatchText =
+    formatMatchScore(analyzerProdclass?.description_okved_score ?? null) ||
+    (infoCompany?.analysis_okved_match ? String(infoCompany.analysis_okved_match) : null);
+  const analysisDomainValue =
+    infoCompany?.analysis_domain ||
+    analyzerInfo?.company?.domain1_site ||
+    analyzerInfo?.company?.domain2_site ||
+    analyzerSites[0] ||
+    null;
+  const analyzerDescriptionText =
+    infoCompany?.analysis_description ||
+    [analyzerInfo?.company?.domain1, analyzerInfo?.company?.domain2].filter(Boolean).join('\n') ||
+    null;
 
   return (
     <TooltipProvider>
@@ -2077,6 +2276,197 @@ export default function AiCompanyAnalysisTab() {
                   );
                 })()}
 
+                {analyzerInfo ? (
+                  <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                    <div className="text-xs uppercase text-muted-foreground">Данные карточки (AI-анализатор)</div>
+
+                    {analyzerInfo.company &&
+                      (analyzerInfo.company.domain1 ||
+                        analyzerInfo.company.domain2 ||
+                        analyzerInfo.company.domain1_site ||
+                        analyzerInfo.company.domain2_site) && (
+                        <div className="grid gap-2 text-sm sm:grid-cols-2">
+                          {(analyzerInfo.company.domain1 || analyzerInfo.company.domain1_site) && (
+                            <div className="space-y-1">
+                              <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 1</div>
+                              {analyzerInfo.company.domain1 && (
+                                <div className="text-foreground">{analyzerInfo.company.domain1}</div>
+                              )}
+                              {analyzerInfo.company.domain1_site && (
+                                <a
+                                  href={`https://${analyzerInfo.company.domain1_site}`}
+                                  className="inline-flex items-center gap-1 text-[13px] text-blue-600 hover:underline"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {analyzerInfo.company.domain1_site}
+                                </a>
+                              )}
+                            </div>
+                          )}
+                          {(analyzerInfo.company.domain2 || analyzerInfo.company.domain2_site) && (
+                            <div className="space-y-1">
+                              <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 2</div>
+                              {analyzerInfo.company.domain2 && (
+                                <div className="text-foreground">{analyzerInfo.company.domain2}</div>
+                              )}
+                              {analyzerInfo.company.domain2_site && (
+                                <a
+                                  href={`https://${analyzerInfo.company.domain2_site}`}
+                                  className="inline-flex items-center gap-1 text-[13px] text-blue-600 hover:underline"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {analyzerInfo.company.domain2_site}
+                                </a>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                    {analyzerInfo.ai && (
+                      <div className="space-y-3 text-sm">
+                        {(analyzerInfo.ai.industry || analyzerInfo.ai.prodclass) && (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {analyzerInfo.ai.industry && (
+                              <div>
+                                <div className="text-[11px] uppercase text-muted-foreground">Индустрия</div>
+                                <div className="text-foreground">{analyzerInfo.ai.industry}</div>
+                              </div>
+                            )}
+                            {analyzerInfo.ai.prodclass && (
+                              <div className="space-y-1">
+                                <div className="text-[11px] uppercase text-muted-foreground">Продкласс</div>
+                                <div className="text-foreground">
+                                  {prodclassLabel || analyzerInfo.ai.prodclass.label || analyzerInfo.ai.prodclass.name || '—'}
+                                  {prodclassScoreText && ` · ${prodclassScoreText}`}
+                                </div>
+                                {okvedMatchText && (
+                                  <div className="text-[12px] text-muted-foreground">
+                                    Совпадение описания с ОКВЭД: {okvedMatchText}
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {(analyzerInfo.ai.utp || analyzerInfo.ai.letter) && (
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {analyzerInfo.ai.utp && (
+                              <div>
+                                <div className="text-[11px] uppercase text-muted-foreground">UTP</div>
+                                <div className="whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-foreground">
+                                  {analyzerInfo.ai.utp}
+                                </div>
+                              </div>
+                            )}
+                            {analyzerInfo.ai.letter && (
+                              <div>
+                                <div className="text-[11px] uppercase text-muted-foreground">Письмо</div>
+                                <div className="whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-foreground">
+                                  {analyzerInfo.ai.letter}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {analyzerInfo.ai.sites && analyzerInfo.ai.sites.length > 0 && (
+                          <div>
+                            <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              {analyzerInfo.ai.sites.map((site) => (
+                                <a
+                                  key={site}
+                                  href={site.startsWith('http') ? site : `https://${site}`}
+                                  className="truncate rounded-full bg-background px-3 py-1 text-[13px] text-blue-600 hover:underline"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {site}
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {analyzerInfo.ai.products && analyzerInfo.ai.products.length > 0 && (
+                          <div className="space-y-1">
+                            <div className="text-[11px] uppercase text-muted-foreground">Продукция</div>
+                            <ul className="space-y-2">
+                              {analyzerInfo.ai.products.map((product, idx) => {
+                                const site = product.domain || product.url;
+                                return (
+                                  <li key={`${product.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
+                                    <div className="font-medium text-foreground">{product.name}</div>
+                                    <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+                                      {product.goods_group && <span>{product.goods_group}</span>}
+                                      {product.tnved_code && (
+                                        <span className="rounded-full bg-background px-2 py-0.5 text-[11px] text-foreground/80">
+                                          ТНВЭД: {product.tnved_code}
+                                        </span>
+                                      )}
+                                      {site && (
+                                        <a
+                                          href={site.startsWith('http') ? site : `https://${site}`}
+                                          className="text-blue-600 hover:underline"
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          {site}
+                                        </a>
+                                      )}
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        )}
+
+                        {analyzerInfo.ai.equipment && analyzerInfo.ai.equipment.length > 0 && (
+                          <div className="space-y-1">
+                            <div className="text-[11px] uppercase text-muted-foreground">Оборудование</div>
+                            <ul className="space-y-2">
+                              {analyzerInfo.ai.equipment.map((item, idx) => {
+                                const site = item.domain || item.url;
+                                return (
+                                  <li key={`${item.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
+                                    <div className="font-medium text-foreground">{item.name}</div>
+                                    <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+                                      {item.equip_group && <span>{item.equip_group}</span>}
+                                      {site && (
+                                        <a
+                                          href={site.startsWith('http') ? site : `https://${site}`}
+                                          className="text-blue-600 hover:underline"
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          {site}
+                                        </a>
+                                      )}
+                                    </div>
+                                  </li>
+                                );
+                              })}
+                            </ul>
+                          </div>
+                        )}
+
+                        {analyzerInfo.ai.note && (
+                          <div className="text-[11px] text-muted-foreground">{analyzerInfo.ai.note}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed bg-muted/10 p-3 text-xs text-muted-foreground">
+                    Пайплайн ещё не сохранил payload AI-анализатора для этой компании.
+                  </div>
+                )}
+
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="uppercase">Логи задачи</span>
@@ -2161,8 +2551,8 @@ export default function AiCompanyAnalysisTab() {
                   <div>
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>
                     <div className="font-medium">
-                      {infoCompany.analysis_match_level || '—'}
-                      {infoCompany.analysis_class ? ` · ${infoCompany.analysis_class}` : ''}
+                      {prodclassScoreText || '—'}
+                      {prodclassLabel ? ` · ${prodclassLabel}` : ''}
                     </div>
                   </div>
                   <div>
@@ -2171,28 +2561,28 @@ export default function AiCompanyAnalysisTab() {
                   </div>
                   <div>
                     <div className="text-xs text-muted-foreground">Домен для парсинга</div>
-                    <div className="font-medium">{infoCompany.analysis_domain || '—'}</div>
+                    <div className="font-medium">{analysisDomainValue || '—'}</div>
                   </div>
                   <div>
                     <div className="text-xs text-muted-foreground">
                       Соответствие ИИ-описания сайта и ОКВЭД
                     </div>
-                    <div className="font-medium">{infoCompany.analysis_okved_match || '—'}</div>
+                    <div className="font-medium">{okvedMatchText || '—'}</div>
                   </div>
                 </div>
 
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">ИИ-описание сайта</div>
                   <div className="rounded-md border bg-muted/30 p-3 text-sm whitespace-pre-wrap">
-                    {infoCompany.analysis_description || '—'}
+                    {analyzerDescriptionText || '—'}
                   </div>
                 </div>
 
                 <div>
                   <div className="text-xs text-muted-foreground mb-2">Топ-10 оборудования</div>
-                  {topEquipment(infoCompany).length ? (
+                  {topEquipment(infoCompany, analyzerInfo).length ? (
                     <ol className="list-decimal space-y-1 pl-5">
-                      {topEquipment(infoCompany).slice(0, 10).map((item, index) => (
+                      {topEquipment(infoCompany, analyzerInfo).slice(0, 10).map((item, index) => (
                         <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ol>
@@ -2205,9 +2595,9 @@ export default function AiCompanyAnalysisTab() {
                   <div className="text-xs text-muted-foreground mb-1">
                     Виды найденной продукции на сайте и ТНВЭД
                   </div>
-                  {tnvedProducts(infoCompany).length ? (
+                  {tnvedProducts(infoCompany, analyzerInfo).length ? (
                     <ul className="space-y-1">
-                      {tnvedProducts(infoCompany).map((item, idx) => (
+                      {tnvedProducts(infoCompany, analyzerInfo).map((item, idx) => (
                         <li key={`${item.name}-${idx}`} className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
                           <span>{item.name}</span>
                           {item.code && (
