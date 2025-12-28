@@ -8,10 +8,12 @@ import {
   ChevronUp,
   CircleDashed,
   Clock3,
+  ClipboardList,
   FileText,
   Filter,
   Info,
   Loader2,
+  Plus,
   Play,
   RefreshCw,
   Square,
@@ -589,6 +591,27 @@ function getStatusBadge(company: AiCompany, outcome: OutcomeMeta): {
   return { label: outcome.label, variant: outcome.badgeVariant };
 }
 
+function formatStatusLabel(status?: string | null): string {
+  if (!status) return '—';
+  const normalized = status.toLowerCase();
+  if (['running', 'processing', 'in_progress', 'starting', 'active'].some((s) => normalized.includes(s))) {
+    return 'Выполняется';
+  }
+  if (['queued', 'queue', 'pending', 'waiting'].some((s) => normalized.includes(s))) {
+    return 'В очереди';
+  }
+  if (['stopped', 'stop', 'cancel'].some((s) => normalized.includes(s))) {
+    return 'Остановлено';
+  }
+  if (['fail', 'error'].some((s) => normalized.includes(s))) {
+    return 'Ошибка';
+  }
+  if (['done', 'finish', 'complete', 'success'].some((s) => normalized.includes(s))) {
+    return 'Завершено';
+  }
+  return status;
+}
+
 type AvailableMap = FetchResponse['available'];
 
 export default function AiCompanyAnalysisTab() {
@@ -619,8 +642,10 @@ export default function AiCompanyAnalysisTab() {
   });
   const [bulkLoading, setBulkLoading] = useState(false);
   const [runInn, setRunInn] = useState<string | null>(null);
+  const [queueInn, setQueueInn] = useState<string | null>(null);
   const [debugStepLoading, setDebugStepLoading] = useState<{ inn: string; step: StepKey } | null>(null);
   const [stopInn, setStopInn] = useState<string | null>(null);
+  const [removeInn, setRemoveInn] = useState<string | null>(null);
   const [stopLoading, setStopLoading] = useState(false);
   const [autoRefresh, setAutoRefresh] = useState(false);
   const [autoRefreshRemaining, setAutoRefreshRemaining] = useState<number | null>(null);
@@ -630,6 +655,20 @@ export default function AiCompanyAnalysisTab() {
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [stopSignalAt, setStopSignalAt] = useState<number | null>(null);
+  const [queueDialogOpen, setQueueDialogOpen] = useState(false);
+  const [queueLoading, setQueueLoading] = useState(false);
+  const [queueError, setQueueError] = useState<string | null>(null);
+  const [queueItems, setQueueItems] = useState<AiCompany[]>([]);
+  const [filterDialogOpen, setFilterDialogOpen] = useState(false);
+  const [filterPreview, setFilterPreview] = useState<{ total: number; inns: string[] } | null>(null);
+  const [filterLoading, setFilterLoading] = useState(false);
+  const [filterError, setFilterError] = useState<string | null>(null);
+  const [filterStatuses, setFilterStatuses] = useState<string[]>(['not_started', 'failed', 'partial']);
+  const [filterQuery, setFilterQuery] = useState('');
+  const [filterStartsWith, setFilterStartsWith] = useState('');
+  const [filterLimit, setFilterLimit] = useState(200);
+  const [filterIncludeQueued, setFilterIncludeQueued] = useState(false);
+  const [filterIncludeRunning, setFilterIncludeRunning] = useState(false);
   const analyzerInfo = useMemo(() => (infoCompany ? normalizeAnalyzerInfo(infoCompany.analysis_info) : null), [infoCompany]);
   const analyzerSites = analyzerInfo?.ai?.sites ?? [];
   const analyzerProdclass = analyzerInfo?.ai?.prodclass ?? null;
@@ -637,6 +676,8 @@ export default function AiCompanyAnalysisTab() {
   const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
   const forcedSteps = useMemo(() => getForcedSteps(true), []);
   const launchMode: 'full' | 'steps' = forcedLaunchMode;
+  const showDebugStepButtons = false;
+  const showRunModePanel = false;
   const [stepFlags, setStepFlags] = useState<Record<StepKey, boolean>>(() => {
     const defaults = launchModeLocked ? forcedSteps : getDefaultSteps();
     return stepOptions.reduce(
@@ -849,6 +890,32 @@ export default function AiCompanyAnalysisTab() {
     },
     [],
   );
+
+  const fetchQueue = useCallback(async () => {
+    setQueueLoading(true);
+    setQueueError(null);
+    try {
+      const res = await fetch('/api/ai-analysis/queue');
+      const data = (await res.json().catch(() => null)) as { ok?: boolean; items?: AiCompany[]; error?: string } | null;
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.error || `Request failed with status ${res.status}`);
+      }
+      setQueueItems(Array.isArray(data?.items) ? data.items : []);
+    } catch (error) {
+      console.error('Failed to fetch queue', error);
+      setQueueError(
+        error instanceof Error && error.message ? error.message : 'Не удалось загрузить очередь. Попробуйте позже.',
+      );
+    } finally {
+      setQueueLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (queueDialogOpen) {
+      fetchQueue();
+    }
+  }, [fetchQueue, queueDialogOpen]);
 
   const scheduleAutoRefresh = useCallback(() => {
     const deadline = Date.now() + 2 * 60 * 1000;
@@ -1227,7 +1294,7 @@ export default function AiCompanyAnalysisTab() {
     [fetchCompanies, integrationHealth, integrationOffline, integrationSummaryText, page, pageSize, stepLabelMap, toast],
   );
 
-  const handleRunSingle = useCallback(
+  const handleRunImmediate = useCallback(
     async (inn: string) => {
       if (integrationOffline) {
         toast({
@@ -1253,10 +1320,9 @@ export default function AiCompanyAnalysisTab() {
           const message = data?.error ? `Ошибка запуска: ${data.error}` : `Request failed with ${res.status}`;
           throw new Error(message);
         }
-        markQueued([inn]);
         const note = integrationSummaryText(data?.integration);
         toast({
-          title: 'Анализ поставлен в очередь',
+          title: 'Анализ запущен без очереди',
           description: note && note.length > 0 ? note : `Компания ${inn}`,
         });
         fetchCompanies(page, pageSize);
@@ -1268,11 +1334,73 @@ export default function AiCompanyAnalysisTab() {
           description:
             error instanceof Error && error.message
               ? error.message
-              : 'Не удалось поставить компанию в очередь. Попробуйте позже.',
+              : 'Не удалось запустить анализ. Попробуйте позже.',
           variant: 'destructive',
         });
       } finally {
         setRunInn(null);
+      }
+    },
+    [
+      toast,
+      fetchCompanies,
+      page,
+      pageSize,
+      scheduleAutoRefresh,
+      integrationSummaryText,
+      launchMode,
+      selectedSteps,
+      integrationOffline,
+      integrationHealth,
+    ],
+  );
+
+  const handleQueueSingle = useCallback(
+    async (inn: string) => {
+      if (integrationOffline) {
+        toast({
+          title: 'AI integration недоступна',
+          description: integrationHealth?.detail ?? 'Проверьте соединение с сервисом AI.',
+          variant: 'destructive',
+        });
+        return;
+      }
+      setQueueInn(inn);
+      try {
+        const res = await fetch('/api/ai-analysis/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            inns: [inn],
+            mode: launchMode,
+            steps: launchMode === 'steps' ? selectedSteps : undefined,
+          }),
+        });
+        const data = (await res.json().catch(() => null)) as { integration?: any; error?: string } | null;
+        if (!res.ok) {
+          const message = data?.error ? `Ошибка запуска: ${data.error}` : `Request failed with ${res.status}`;
+          throw new Error(message);
+        }
+        markQueued([inn]);
+        const note = integrationSummaryText(data?.integration);
+        toast({
+          title: 'Компания поставлена в очередь',
+          description: note && note.length > 0 ? note : `Компания ${inn}`,
+        });
+        fetchCompanies(page, pageSize);
+        scheduleAutoRefresh();
+      } catch (error) {
+        console.error('Failed to queue analysis', error);
+        toast({
+          title: 'Ошибка постановки в очередь',
+          description:
+            error instanceof Error && error.message
+              ? error.message
+              : 'Не удалось поставить компанию в очередь. Попробуйте позже.',
+          variant: 'destructive',
+        });
+      } finally {
+        setQueueInn(null);
       }
     },
     [
@@ -1366,6 +1494,110 @@ export default function AiCompanyAnalysisTab() {
       }
     },
     [toast, markStopped, fetchCompanies, page, pageSize],
+  );
+
+  const handleRemoveFromQueue = useCallback(
+    async (inn: string) => {
+      setRemoveInn(inn);
+      try {
+        const res = await fetch('/api/ai-analysis/queue', {
+          method: 'DELETE',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ inns: [inn] }),
+        });
+        if (!res.ok) throw new Error(`Request failed with ${res.status}`);
+        const data = (await res.json().catch(() => null)) as { removed?: number } | null;
+        const removed = typeof data?.removed === 'number' ? data.removed : null;
+        toast({
+          title: 'Компания убрана из очереди',
+          description: removed != null ? `Удалено из очереди: ${removed}` : undefined,
+        });
+        fetchCompanies(page, pageSize);
+      } catch (error) {
+        console.error('Failed to remove from queue', error);
+        toast({
+          title: 'Не удалось убрать из очереди',
+          description: 'Попробуйте повторить попытку позже.',
+          variant: 'destructive',
+        });
+      } finally {
+        setRemoveInn(null);
+      }
+    },
+    [fetchCompanies, page, pageSize, toast],
+  );
+
+  const handleFilterPreview = useCallback(
+    async (enqueue: boolean) => {
+      setFilterLoading(true);
+      setFilterError(null);
+      try {
+        const res = await fetch('/api/ai-analysis/queue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            query: filterQuery,
+            startsWith: filterStartsWith,
+            statuses: filterStatuses,
+            limit: filterLimit,
+            includeQueued: filterIncludeQueued,
+            includeRunning: filterIncludeRunning,
+            dryRun: !enqueue,
+          }),
+        });
+        const data = (await res.json().catch(() => null)) as
+          | { ok?: boolean; total?: number; inns?: string[]; queued?: number; error?: string }
+          | null;
+
+        if (!res.ok || data?.ok === false) {
+          throw new Error(data?.error || `Request failed with ${res.status}`);
+        }
+
+        if (!enqueue) {
+          setFilterPreview({ total: data?.total ?? 0, inns: data?.inns ?? [] });
+          toast({ title: 'Предпросмотр очереди', description: `Подобрано компаний: ${data?.total ?? 0}` });
+          return;
+        }
+
+        toast({
+          title: 'Компании поставлены в очередь',
+          description: `Добавлено: ${data?.queued ?? 0}${
+            data?.total && data.total > (data?.queued ?? 0) ? ` из ${data.total}` : ''
+          }`,
+        });
+        setFilterDialogOpen(false);
+        fetchCompanies(page, pageSize);
+        scheduleAutoRefresh();
+      } catch (error) {
+        console.error('Queue filter action failed', error);
+        setFilterError(
+          error instanceof Error && error.message ? error.message : 'Не удалось обработать запрос. Попробуйте позже.',
+        );
+        toast({
+          title: 'Ошибка очереди',
+          description:
+            error instanceof Error && error.message
+              ? error.message
+              : 'Не удалось обработать фильтр для очереди. Попробуйте позже.',
+          variant: 'destructive',
+        });
+      } finally {
+        setFilterLoading(false);
+      }
+    },
+    [
+      filterQuery,
+      filterStartsWith,
+      filterStatuses,
+      filterLimit,
+      filterIncludeQueued,
+      filterIncludeRunning,
+      toast,
+      fetchCompanies,
+      page,
+      pageSize,
+      scheduleAutoRefresh,
+    ],
   );
 
   const headerCheckedState = useMemo(() => {
@@ -1467,42 +1699,16 @@ export default function AiCompanyAnalysisTab() {
       <div className="space-y-4 py-4">
         <Card className="border border-border/60 shadow-sm">
           <CardHeader className="space-y-4 border-b bg-muted/30 p-4">
-            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <CardTitle className="text-base font-semibold tracking-tight">
-                AI-анализ компаний
-              </CardTitle>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-1">
+                <CardTitle className="text-lg font-semibold tracking-tight">
+                  AI-анализ компаний
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Контроль очереди, фильтры и быстрый запуск без лишнего шума
+                </p>
+              </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <Badge variant="outline" className="bg-background text-foreground">
-                  Всего: {total.toLocaleString('ru-RU')}
-                </Badge>
-                {activeTotal > 0 && (
-                  <Badge variant="secondary" className="gap-1">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Активных: {activeTotal}
-                    {activeOffPage > 0 ? (
-                      <span className="text-[11px] text-muted-foreground">вне страницы: {activeOffPage}</span>
-                    ) : null}
-                  </Badge>
-                )}
-                {autoRefresh && (
-                  <Badge variant="default" className="gap-1">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    {autoRefreshLabel}
-                  </Badge>
-                )}
-                {integrationHealth && (
-                  <Badge
-                    variant={integrationHealth.available ? 'outline' : 'destructive'}
-                    className="gap-1"
-                    title={integrationHealth.detail ?? undefined}
-                  >
-                    <span className="font-medium">AI integration</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      {integrationHealth.available ? 'online' : 'offline'}
-                      {integrationHost ? ` · ${integrationHost}` : ''}
-                    </span>
-                  </Badge>
-                )}
                 {stopSignalAt && (
                   <Badge
                     variant="outline"
@@ -1523,8 +1729,40 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Всего компаний</span>
+                <span className="font-semibold text-foreground">{total.toLocaleString('ru-RU')}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Активных сейчас</span>
+                <span className="flex items-center gap-1 font-semibold text-foreground">
+                  {activeTotal.toLocaleString('ru-RU')}
+                  {activeTotal > 0 && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+                </span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Автообновление</span>
+                <span className="font-medium text-foreground">
+                  {autoRefresh ? autoRefreshLabel : 'Выключено'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Интеграция</span>
+                <span
+                  className={cn(
+                    'flex items-center gap-1 font-semibold',
+                    integrationHealth?.available ? 'text-foreground' : 'text-destructive',
+                  )}
+                  title={integrationHealth?.detail ?? undefined}
+                >
+                  {integrationHealth?.available ? 'online' : 'offline'}
+                  {integrationHost ? ` · ${integrationHost}` : ''}
+                </span>
+              </div>
+            </div>
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <div className="flex flex-1 flex-wrap items-center gap-2">
+              <div className="flex flex-1 flex-wrap items-center gap-3">
                 <Input
                   className="h-9 min-w-[220px] flex-1 text-sm md:w-[260px] xl:w-[280px]"
                   placeholder="Поиск по названию или ИНН"
@@ -1558,7 +1796,7 @@ export default function AiCompanyAnalysisTab() {
                     value={okvedSelectValue}
                     onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
                   >
-                    <SelectTrigger className="h-9 min-w-[220px] max-w-[360px] text-left text-sm">
+                    <SelectTrigger className="h-9 min-w-[200px] max-w-[320px] text-left text-sm">
                       <SelectValue placeholder="Все коды" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1630,7 +1868,7 @@ export default function AiCompanyAnalysisTab() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
-            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
               <Tooltip>
                 <TooltipTrigger asChild>
                     <Button
@@ -1649,8 +1887,36 @@ export default function AiCompanyAnalysisTab() {
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
+                    type="button"
+                    variant="secondary"
+                    className="h-9"
+                    onClick={() => setFilterDialogOpen(true)}
+                  >
+                    <Plus className="mr-2 h-4 w-4" /> Добавить по фильтру
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom">
+                  Массово поставить в очередь по условиям
+                </TooltipContent>
+              </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
                       type="button"
-                      variant="destructive"
+                      variant="outline"
+                      className="h-9"
+                      onClick={() => setQueueDialogOpen(true)}
+                    >
+                      <ClipboardList className="mr-2 h-4 w-4" /> Очередь
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Посмотреть и управлять очередью</TooltipContent>
+                </Tooltip>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    type="button"
+                    variant="destructive"
                       className="h-9"
                       onClick={handleStop}
                       disabled={stopLoading || (!isAnyActive && !autoRefresh)}
@@ -1669,7 +1935,13 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
-            <div className="flex flex-col gap-2 rounded-lg border bg-background/60 p-3">
+            <div
+              className={cn(
+                'flex flex-col gap-2 rounded-lg border bg-background/60 p-3',
+                !showRunModePanel && 'hidden',
+              )}
+              aria-hidden={!showRunModePanel}
+            >
               <div className="flex flex-wrap items-center gap-3 text-sm">
                 <span className="font-medium">Режим запуска</span>
                 <Badge variant="secondary" className="font-normal">
@@ -1856,6 +2128,12 @@ export default function AiCompanyAnalysisTab() {
                           state.running ||
                           state.queued ||
                           integrationOffline;
+                        const queueDisabled =
+                          queueInn === company.inn ||
+                          bulkLoading ||
+                          state.running ||
+                          state.queued ||
+                          integrationOffline;
                         const runTooltip = integrationOffline
                           ? integrationHealth?.detail
                             ? `AI integration недоступна: ${integrationHealth.detail}`
@@ -1864,7 +2142,20 @@ export default function AiCompanyAnalysisTab() {
                           ? 'Анализ выполняется'
                           : state.queued
                           ? 'Компания уже в очереди'
-                          : 'Запустить анализ';
+                          : 'Запустить без очереди';
+                        const queueTooltip = integrationOffline
+                          ? integrationHealth?.detail
+                            ? `AI integration недоступна: ${integrationHealth.detail}`
+                            : 'AI integration недоступна'
+                          : state.running
+                          ? 'Анализ выполняется'
+                          : state.queued
+                          ? 'Компания уже в очереди'
+                          : 'Поставить в очередь';
+                        const stopIsRemove = state.queued && !state.running;
+                        const stopBusy = stopInn === company.inn || removeInn === company.inn;
+                        const stopAction = stopIsRemove ? handleRemoveFromQueue : handleStopSingle;
+                        const stopTooltip = stopIsRemove ? 'Убрать из очереди' : 'Отменить запуск';
 
                         return (
                           <tr
@@ -2061,7 +2352,7 @@ export default function AiCompanyAnalysisTab() {
                                         variant="outline"
                                         size="icon"
                                         className="h-8 w-8"
-                                        onClick={() => handleRunSingle(company.inn)}
+                                        onClick={() => handleRunImmediate(company.inn)}
                                         disabled={runDisabled}
                                       >
                                         {runInn === company.inn ? (
@@ -2073,6 +2364,25 @@ export default function AiCompanyAnalysisTab() {
                                     </TooltipTrigger>
                                     <TooltipContent side="bottom">{runTooltip}</TooltipContent>
                                   </Tooltip>
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Button
+                                        type="button"
+                                        variant="outline"
+                                        size="icon"
+                                        className="h-8 w-8"
+                                        onClick={() => handleQueueSingle(company.inn)}
+                                        disabled={queueDisabled}
+                                      >
+                                        {queueInn === company.inn ? (
+                                          <Loader2 className="h-4 w-4 animate-spin" />
+                                        ) : (
+                                          <Clock3 className="h-4 w-4" />
+                                        )}
+                                      </Button>
+                                    </TooltipTrigger>
+                                    <TooltipContent side="bottom">{queueTooltip}</TooltipContent>
+                                  </Tooltip>
                                   {(state.running || state.queued) && (
                                     <Tooltip>
                                       <TooltipTrigger asChild>
@@ -2081,18 +2391,18 @@ export default function AiCompanyAnalysisTab() {
                                           variant="destructive"
                                           size="icon"
                                           className="h-8 w-8"
-                                          onClick={() => handleStopSingle(company.inn)}
-                                          disabled={stopInn === company.inn}
+                                          onClick={() => stopAction(company.inn)}
+                                          disabled={stopBusy}
                                           aria-label={`Остановить компанию ${company.short_name}`}
                                         >
-                                          {stopInn === company.inn ? (
+                                          {stopBusy ? (
                                             <Loader2 className="h-4 w-4 animate-spin" />
                                           ) : (
                                             <Square className="h-4 w-4" />
                                           )}
                                         </Button>
                                       </TooltipTrigger>
-                                      <TooltipContent side="bottom">Отменить запуск</TooltipContent>
+                                      <TooltipContent side="bottom">{stopTooltip}</TooltipContent>
                                     </Tooltip>
                                   )}
                                   <Tooltip>
@@ -2111,31 +2421,36 @@ export default function AiCompanyAnalysisTab() {
                                     <TooltipContent side="bottom">Подробнее</TooltipContent>
                                   </Tooltip>
                                 </div>
-                                <div className="flex flex-wrap items-center justify-end gap-1 rounded-md border border-dashed border-muted-foreground/40 bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground">
-                                  <span className="font-medium text-foreground">Шаги:</span>
-                                  {stepOptions.map((opt) => {
-                                    const loading = debugStepLoading?.inn === company.inn && debugStepLoading.step === opt.key;
-                                    return (
-                                      <Tooltip key={`${company.inn}-debug-${opt.key}`}>
-                                        <TooltipTrigger asChild>
-                                          <Button
-                                            type="button"
-                                            variant="outline"
-                                            size="sm"
-                                            className="h-7"
-                                            onClick={() => handleRunDebugStep(company.inn, opt.key)}
-                                            disabled={integrationOffline || !!debugStepLoading || state.running || state.queued}
-                                          >
-                                            {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : opt.label}
-                                          </Button>
-                                        </TooltipTrigger>
-                                        <TooltipContent side="bottom">
-                                          Запустить только шаг «{opt.label}» для компании {company.short_name}
-                                        </TooltipContent>
-                                      </Tooltip>
-                                    );
-                                  })}
-                                </div>
+                                {showDebugStepButtons && (
+                                  <div className="flex flex-wrap items-center justify-end gap-1 rounded-md border border-dashed border-muted-foreground/40 bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground">
+                                    <span className="font-medium text-foreground">Шаги:</span>
+                                    {stepOptions.map((opt) => {
+                                      const loading =
+                                        debugStepLoading?.inn === company.inn && debugStepLoading.step === opt.key;
+                                      return (
+                                        <Tooltip key={`${company.inn}-debug-${opt.key}`}>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="sm"
+                                              className="h-7"
+                                              onClick={() => handleRunDebugStep(company.inn, opt.key)}
+                                              disabled={
+                                                integrationOffline || !!debugStepLoading || state.running || state.queued
+                                              }
+                                            >
+                                              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : opt.label}
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="bottom">
+                                            Запустить только шаг «{opt.label}» для компании {company.short_name}
+                                          </TooltipContent>
+                                        </Tooltip>
+                                      );
+                                    })}
+                                  </div>
+                                )}
                               </div>
                             </td>
                           </tr>
@@ -2156,6 +2471,215 @@ export default function AiCompanyAnalysisTab() {
             </div>
           </CardContent>
         </Card>
+
+        <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>Очередь анализа</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-3 text-sm">
+              <div className="flex items-center justify-between">
+                <div className="text-muted-foreground">
+                  {queueLoading
+                    ? 'Загружаем очередь…'
+                    : `В очереди: ${queueItems.length.toLocaleString('ru-RU')}`}
+                </div>
+                <div className="flex items-center gap-2">
+                  {queueError && <span className="text-xs text-destructive">{queueError}</span>}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={fetchQueue}
+                    disabled={queueLoading}
+                    className="gap-2"
+                  >
+                    <RefreshCw className={cn('h-4 w-4', queueLoading && 'animate-spin')} />
+                    Обновить
+                  </Button>
+                </div>
+              </div>
+              <div className="max-h-[420px] space-y-2 overflow-y-auto rounded-md border bg-muted/20 p-3">
+                {queueLoading ? (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" /> Обновляем очередь…
+                  </div>
+                ) : queueItems.length === 0 ? (
+                  <div className="text-sm text-muted-foreground">Очередь пуста.</div>
+                ) : (
+                  queueItems.map((item) => {
+                    const state = computeCompanyState(item);
+                    const outcome = resolveOutcome(item, state);
+                    const badge = getStatusBadge(item, outcome);
+                    const queuedTime = formatTime(item.queued_at ?? null);
+                    const statusLabel = formatStatusLabel(item.analysis_status ?? 'queued');
+                    const attempts =
+                      item.analysis_attempts != null && Number.isFinite(item.analysis_attempts)
+                        ? item.analysis_attempts
+                        : '—';
+                    const score =
+                      item.analysis_score != null && Number.isFinite(item.analysis_score)
+                        ? item.analysis_score.toFixed(2)
+                        : '—';
+
+                    return (
+                      <div
+                        key={`queue-${item.inn}`}
+                        className="flex flex-col gap-2 rounded-md border bg-background/70 p-3 md:flex-row md:items-center md:justify-between"
+                      >
+                        <div className="space-y-1">
+                          <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
+                            <span>{item.short_name ?? 'Компания'}</span>
+                            <Badge variant={badge.variant}>{badge.label}</Badge>
+                          </div>
+                          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                            <span>ИНН {item.inn}</span>
+                            {queuedTime && <span>в очереди с {queuedTime}</span>}
+                            <span>Попыток: {attempts}</span>
+                            <span>Оценка: {score}</span>
+                            <Badge variant="outline" className="whitespace-nowrap text-foreground">
+                              {statusLabel}
+                            </Badge>
+                          </div>
+                        </div>
+                        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="gap-2"
+                            disabled={removeInn === item.inn}
+                            onClick={async () => {
+                              await handleRemoveFromQueue(item.inn);
+                              fetchQueue();
+                            }}
+                          >
+                            {removeInn === item.inn ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              <Square className="h-4 w-4" />
+                            )}
+                            Удалить
+                          </Button>
+                        </div>
+                      </div>
+                    );
+                  })
+                )}
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        <Dialog
+          open={filterDialogOpen}
+          onOpenChange={(open) => {
+            setFilterDialogOpen(open);
+            setFilterError(null);
+            if (!open) setFilterPreview(null);
+          }}
+        >
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Добавить организации в очередь по фильтру</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4 text-sm">
+              <div className="grid gap-3 md:grid-cols-2">
+                <label className="space-y-1">
+                  <span className="text-[11px] uppercase text-muted-foreground">Поиск</span>
+                  <Input
+                    value={filterQuery}
+                    onChange={(e) => setFilterQuery(e.target.value)}
+                    placeholder="Название или ИНН"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] uppercase text-muted-foreground">Начинается с</span>
+                  <Input
+                    value={filterStartsWith}
+                    onChange={(e) => setFilterStartsWith(e.target.value)}
+                    placeholder="Например, М"
+                  />
+                </label>
+                <label className="space-y-1">
+                  <span className="text-[11px] uppercase text-muted-foreground">Лимит</span>
+                  <Input
+                    type="number"
+                    min={1}
+                    max={1000}
+                    value={filterLimit}
+                    onChange={(e) => setFilterLimit(Math.max(1, Math.min(1000, Number(e.target.value) || 1)))}
+                  />
+                </label>
+                <div className="space-y-2">
+                  <div className="text-[11px] uppercase text-muted-foreground">Статусы</div>
+                  <div className="flex flex-wrap gap-2">
+                    {[
+                      { key: 'not_started', label: 'Ещё не запускались' },
+                      { key: 'failed', label: 'С ошибками' },
+                      { key: 'partial', label: 'Частично' },
+                      { key: 'completed', label: 'Успешные' },
+                    ].map((item) => (
+                      <label key={item.key} className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1">
+                        <Checkbox
+                          checked={filterStatuses.includes(item.key)}
+                          onCheckedChange={(checked) => {
+                            setFilterStatuses((prev) =>
+                              checked ? Array.from(new Set([...prev, item.key])) : prev.filter((key) => key !== item.key),
+                            );
+                          }}
+                        />
+                        <span>{item.label}</span>
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              <div className="flex flex-wrap gap-4 text-xs text-muted-foreground">
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={filterIncludeQueued}
+                    onCheckedChange={(checked) => setFilterIncludeQueued(Boolean(checked))}
+                  />
+                  Включать уже в очереди
+                </label>
+                <label className="flex items-center gap-2">
+                  <Checkbox
+                    checked={filterIncludeRunning}
+                    onCheckedChange={(checked) => setFilterIncludeRunning(Boolean(checked))}
+                  />
+                  Включать выполняющиеся
+                </label>
+              </div>
+
+              {filterError && <div className="text-sm text-destructive">{filterError}</div>}
+              {filterPreview && !filterError && (
+                <div className="rounded-md border bg-muted/30 p-3 text-sm text-muted-foreground">
+                  Подборка: {filterPreview.total.toLocaleString('ru-RU')} компаний
+                  {filterPreview.inns.length > 0 && (
+                    <span className="block text-xs text-muted-foreground">Пример: {filterPreview.inns.slice(0, 5).join(', ')}</span>
+                  )}
+                </div>
+              )}
+
+              <div className="flex flex-wrap items-center gap-3">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => handleFilterPreview(false)}
+                  disabled={filterLoading}
+                >
+                  {filterLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Предпросмотр
+                </Button>
+                <Button type="button" onClick={() => handleFilterPreview(true)} disabled={filterLoading}>
+                  {filterLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                  Поставить в очередь
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={!!infoCompany} onOpenChange={(open) => !open && setInfoCompany(null)}>
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
