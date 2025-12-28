@@ -735,14 +735,6 @@ export default function AiCompanyAnalysisTab() {
 
   const isRefreshing = loading || isPending;
   const okvedSelectValue = okvedCode ?? '__all__';
-  const autoRefreshLabel = useMemo(() => {
-    if (autoRefreshRemaining == null) return 'Автообновление';
-    const totalSeconds = Math.max(0, Math.ceil(autoRefreshRemaining / 1000));
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `Автообновление · ${minutes}:${seconds.toString().padStart(2, '0')}`;
-  }, [autoRefreshRemaining]);
-
   const selectedSteps = useMemo(
     () => (launchModeLocked ? forcedSteps : stepOptions.filter((opt) => stepFlags[opt.key]).map((opt) => opt.key)),
     [forcedSteps, launchModeLocked, stepFlags],
@@ -1704,11 +1696,8 @@ export default function AiCompanyAnalysisTab() {
                 <CardTitle className="text-lg font-semibold tracking-tight">
                   AI-анализ компаний
                 </CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Контроль очереди, фильтры и быстрый запуск без лишнего шума
-                </p>
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground lg:justify-end">
                 {stopSignalAt && (
                   <Badge
                     variant="outline"
@@ -1717,59 +1706,53 @@ export default function AiCompanyAnalysisTab() {
                     Остановка запрошена
                   </Badge>
                 )}
+                <div className="flex flex-wrap items-center gap-2 text-sm text-foreground">
+                  <div className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
+                    <span className="text-muted-foreground">Всего компаний</span>
+                    <span className="font-semibold">{total.toLocaleString('ru-RU')}</span>
+                  </div>
+                  <div className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
+                    <span className="text-muted-foreground">Активных сейчас</span>
+                    <span className="flex items-center gap-1 font-semibold">
+                      {activeTotal.toLocaleString('ru-RU')}
+                      {activeTotal > 0 && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+                    </span>
+                  </div>
+                </div>
                 {lastLoadedAt && (
-                  <span>
-                    Обновлено:{' '}
-                    {new Date(lastLoadedAt).toLocaleTimeString('ru-RU', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                    })}
-                  </span>
+                  <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm text-foreground">
+                    <span className="text-muted-foreground">Обновлено:</span>
+                    <span className="font-semibold">
+                      {new Date(lastLoadedAt).toLocaleTimeString('ru-RU', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                        second: '2-digit',
+                      })}
+                    </span>
+                    {integrationHost && (
+                      <span
+                        className={cn(
+                          'rounded-md px-2 py-1 text-xs font-semibold text-background',
+                          integrationHealth?.available ? 'bg-emerald-500' : 'bg-destructive',
+                        )}
+                        title={integrationHealth?.detail ?? undefined}
+                      >
+                        {integrationHost}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
-                <span className="text-muted-foreground">Всего компаний</span>
-                <span className="font-semibold text-foreground">{total.toLocaleString('ru-RU')}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
-                <span className="text-muted-foreground">Активных сейчас</span>
-                <span className="flex items-center gap-1 font-semibold text-foreground">
-                  {activeTotal.toLocaleString('ru-RU')}
-                  {activeTotal > 0 && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-                </span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
-                <span className="text-muted-foreground">Автообновление</span>
-                <span className="font-medium text-foreground">
-                  {autoRefresh ? autoRefreshLabel : 'Выключено'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
-                <span className="text-muted-foreground">Интеграция</span>
-                <span
-                  className={cn(
-                    'flex items-center gap-1 font-semibold',
-                    integrationHealth?.available ? 'text-foreground' : 'text-destructive',
-                  )}
-                  title={integrationHealth?.detail ?? undefined}
-                >
-                  {integrationHealth?.available ? 'online' : 'offline'}
-                  {integrationHost ? ` · ${integrationHost}` : ''}
-                </span>
-              </div>
-            </div>
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <div className="flex flex-1 flex-wrap items-center gap-3">
+              <div className="flex flex-1 items-center gap-3 overflow-x-auto whitespace-nowrap">
                 <Input
-                  className="h-9 min-w-[220px] flex-1 text-sm md:w-[260px] xl:w-[280px]"
+                  className="h-9 min-w-[220px] flex-1 shrink-0 text-sm md:w-[260px] xl:w-[280px]"
                   placeholder="Поиск по названию или ИНН"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <span className="text-xs text-muted-foreground">Отрасль</span>
                   <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
                     <SelectTrigger
@@ -1790,7 +1773,7 @@ export default function AiCompanyAnalysisTab() {
                     <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                   )}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex shrink-0 items-center gap-2">
                   <span className="text-xs text-muted-foreground">ОКВЭД</span>
                   <Select
                     value={okvedSelectValue}
@@ -1820,7 +1803,7 @@ export default function AiCompanyAnalysisTab() {
                       type="button"
                       variant={statusFilters.length ? 'secondary' : 'outline'}
                       size="sm"
-                      className="h-9 gap-2"
+                      className="h-9 gap-2 shrink-0"
                     >
                       <Filter className="h-4 w-4" />
                       Статусы
