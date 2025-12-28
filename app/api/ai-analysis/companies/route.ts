@@ -588,11 +588,16 @@ export async function GET(request: NextRequest) {
 
       const score =
         parseNumber(row.analysis_score) ??
-        parseNumber((analysisInfo as any)?.score);
+        parseNumber((analysisInfo as any)?.score) ??
+        parseNumber((analysisInfo as any)?.ai?.score) ??
+        parseNumber((analysisInfo as any)?.company?.score);
 
       const progress = parseProgress(row.analysis_progress);
 
-      const attempts = parseNumber(row.analysis_attempts);
+      const attempts =
+        parseNumber(row.analysis_attempts) ??
+        parseNumber((analysisInfo as any)?.attempts) ??
+        parseNumber((analysisInfo as any)?.retry_count);
 
       const mainOkved =
         parseString(row.main_okved) ||
