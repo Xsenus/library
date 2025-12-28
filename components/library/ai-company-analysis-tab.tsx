@@ -249,6 +249,109 @@ function toStringArray(value: any): string[] {
   return [];
 }
 
+type AiAnalyzerInfo = {
+  company?: {
+    domain1?: string | null;
+    domain2?: string | null;
+  } | null;
+  ai?: {
+    sites?: string[];
+    products?: Array<{ name: string; goods_group?: string | null; url?: string | null; domain?: string | null }>;
+    equipment?: Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }>;
+    prodclass?: { id?: string | number | null; name?: string | null; label?: string | null; score?: number | null } | null;
+    industry?: string | null;
+    utp?: string | null;
+    letter?: string | null;
+    note?: string | null;
+  } | null;
+};
+
+function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
+  if (!raw) return null;
+  let data = raw;
+  if (typeof raw === 'string') {
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  }
+
+  if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+
+  const company = typeof data.company === 'object' && !Array.isArray(data.company) ? data.company : null;
+  const ai = typeof data.ai === 'object' && !Array.isArray(data.ai) ? data.ai : null;
+
+  if (!company && !ai) return null;
+
+  const companyInfo = company
+    ? {
+        domain1: company.domain1 ?? company.domain_1 ?? null,
+        domain2: company.domain2 ?? company.domain_2 ?? null,
+      }
+    : null;
+
+  const aiSites = ai ? toStringArray(ai.sites ?? ai.domains ?? ai.site_list) : [];
+
+  const mapProducts = (items: any[]): Array<{ name: string; goods_group?: string | null; url?: string | null; domain?: string | null }> =>
+    items
+      .map((item) => {
+        if (!item) return null;
+        if (typeof item === 'string') return { name: item };
+        if (typeof item === 'object') {
+          const name = String(item.name ?? item.product ?? item.title ?? '').trim();
+          const goods_group = item.goods_group ?? item.goods_type ?? null;
+          const url = item.url ?? item.link ?? null;
+          const domain = item.domain ?? null;
+          if (!name && !goods_group && !url) return null;
+          return { name: name || goods_group || url || '—', goods_group, url, domain };
+        }
+        return { name: String(item) };
+      })
+      .filter((p): p is { name: string; goods_group?: string | null; url?: string | null; domain?: string | null } => !!p && !!p.name);
+
+  const mapEquipment = (items: any[]): Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }> =>
+    items
+      .map((item) => {
+        if (!item) return null;
+        if (typeof item === 'string') return { name: item };
+        if (typeof item === 'object') {
+          const name = String(item.name ?? item.equipment ?? item.title ?? '').trim();
+          const equip_group = item.equip_group ?? item.group ?? null;
+          const url = item.url ?? item.link ?? null;
+          const domain = item.domain ?? null;
+          if (!name && !equip_group && !url) return null;
+          return { name: name || equip_group || url || '—', equip_group, url, domain };
+        }
+        return { name: String(item) };
+      })
+      .filter((p): p is { name: string; equip_group?: string | null; url?: string | null; domain?: string | null } => !!p && !!p.name);
+
+  const prodclass = ai?.prodclass && typeof ai.prodclass === 'object' ? ai.prodclass : null;
+
+  const aiInfo = ai
+    ? {
+        sites: aiSites,
+        products: Array.isArray(ai.products) ? mapProducts(ai.products) : [],
+        equipment: Array.isArray(ai.equipment) ? mapEquipment(ai.equipment) : [],
+        prodclass: prodclass
+          ? {
+              id: prodclass.id ?? prodclass.prodclass_id ?? null,
+              name: prodclass.name ?? prodclass.prodclass ?? null,
+              label: prodclass.label ?? prodclass.full_name ?? null,
+              score: prodclass.score ?? prodclass.prodclass_score ?? null,
+            }
+          : null,
+        industry: ai.industry ?? null,
+        utp: ai.utp ?? ai.usp ?? null,
+        letter: ai.letter ?? ai.email ?? null,
+        note: ai.note ?? null,
+      }
+    : null;
+
+  return { company: companyInfo, ai: aiInfo };
+}
+
 function toSiteArray(value: any): string[] {
   const normalized = toStringArray(value)
     .map((site) => normalizeSite(site))
@@ -471,6 +574,7 @@ export default function AiCompanyAnalysisTab() {
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
   const [isPending, startTransition] = useTransition();
   const [stopSignalAt, setStopSignalAt] = useState<number | null>(null);
+  const analyzerInfo = useMemo(() => (infoCompany ? normalizeAnalyzerInfo(infoCompany.analysis_info) : null), [infoCompany]);
   const forcedLaunchMode = useMemo(() => getForcedLaunchMode(true), []);
   const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
   const forcedSteps = useMemo(() => getForcedSteps(true), []);
@@ -2076,6 +2180,135 @@ export default function AiCompanyAnalysisTab() {
                     </div>
                   );
                 })()}
+
+                {analyzerInfo ? (
+                  <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                    <div className="text-xs uppercase text-muted-foreground">Данные карточки (AI-анализатор)</div>
+
+                    {analyzerInfo.company && (analyzerInfo.company.domain1 || analyzerInfo.company.domain2) && (
+                      <div className="grid gap-2 text-sm sm:grid-cols-2">
+                        {analyzerInfo.company.domain1 && (
+                          <div>
+                            <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 1</div>
+                            <div className="text-foreground">{analyzerInfo.company.domain1}</div>
+                          </div>
+                        )}
+                        {analyzerInfo.company.domain2 && (
+                          <div>
+                            <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 2</div>
+                            <div className="text-foreground">{analyzerInfo.company.domain2}</div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+
+                    {analyzerInfo.ai && (
+                      <div className="space-y-3 text-sm">
+                        {(analyzerInfo.ai.industry || analyzerInfo.ai.prodclass) && (
+                          <div className="grid gap-2 sm:grid-cols-2">
+                            {analyzerInfo.ai.industry && (
+                              <div>
+                                <div className="text-[11px] uppercase text-muted-foreground">Индустрия</div>
+                                <div className="text-foreground">{analyzerInfo.ai.industry}</div>
+                              </div>
+                            )}
+                            {analyzerInfo.ai.prodclass && (
+                              <div>
+                                <div className="text-[11px] uppercase text-muted-foreground">Продкласс</div>
+                                <div className="text-foreground">
+                                  {analyzerInfo.ai.prodclass.name || analyzerInfo.ai.prodclass.label || '—'}
+                                  {analyzerInfo.ai.prodclass.score != null &&
+                                    Number.isFinite(analyzerInfo.ai.prodclass.score) &&
+                                    ` · ${Number(analyzerInfo.ai.prodclass.score).toFixed(2)}`}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {(analyzerInfo.ai.utp || analyzerInfo.ai.letter) && (
+                          <div className="grid gap-3 sm:grid-cols-2">
+                            {analyzerInfo.ai.utp && (
+                              <div>
+                                <div className="text-[11px] uppercase text-muted-foreground">UTP</div>
+                                <div className="whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-foreground">
+                                  {analyzerInfo.ai.utp}
+                                </div>
+                              </div>
+                            )}
+                            {analyzerInfo.ai.letter && (
+                              <div>
+                                <div className="text-[11px] uppercase text-muted-foreground">Письмо</div>
+                                <div className="whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-foreground">
+                                  {analyzerInfo.ai.letter}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        )}
+
+                        {analyzerInfo.ai.sites && analyzerInfo.ai.sites.length > 0 && (
+                          <div>
+                            <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              {analyzerInfo.ai.sites.map((site) => (
+                                <a
+                                  key={site}
+                                  href={site.startsWith('http') ? site : `https://${site}`}
+                                  className="truncate rounded-full bg-background px-3 py-1 text-[13px] text-blue-600 hover:underline"
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  {site}
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {analyzerInfo.ai.products && analyzerInfo.ai.products.length > 0 && (
+                          <div className="space-y-1">
+                            <div className="text-[11px] uppercase text-muted-foreground">Продукция</div>
+                            <ul className="space-y-1">
+                              {analyzerInfo.ai.products.map((product, idx) => (
+                                <li key={`${product.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
+                                  <div className="font-medium text-foreground">{product.name}</div>
+                                  <div className="text-[12px] text-muted-foreground">
+                                    {product.goods_group || product.domain || product.url || '—'}
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {analyzerInfo.ai.equipment && analyzerInfo.ai.equipment.length > 0 && (
+                          <div className="space-y-1">
+                            <div className="text-[11px] uppercase text-muted-foreground">Оборудование</div>
+                            <ul className="space-y-1">
+                              {analyzerInfo.ai.equipment.map((item, idx) => (
+                                <li key={`${item.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
+                                  <div className="font-medium text-foreground">{item.name}</div>
+                                  <div className="text-[12px] text-muted-foreground">
+                                    {item.equip_group || item.domain || item.url || '—'}
+                                  </div>
+                                </li>
+                              ))}
+                            </ul>
+                          </div>
+                        )}
+
+                        {analyzerInfo.ai.note && (
+                          <div className="text-[11px] text-muted-foreground">{analyzerInfo.ai.note}</div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                ) : (
+                  <div className="rounded-lg border border-dashed bg-muted/10 p-3 text-xs text-muted-foreground">
+                    Пайплайн ещё не сохранил payload AI-анализатора для этой компании.
+                  </div>
+                )}
 
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

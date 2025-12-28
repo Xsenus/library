@@ -82,3 +82,46 @@
 1. `logAiDebugEvent` при первом вызове создаёт таблицу `ai_debug_events` и индексы. Попытки добавить флаги в `dadata_result` (колонки `server_error`, `analysis_ok`, `analysis_started_at`) оборачиваются в try/catch, чтобы отсутствие колонок не ломало логирование.
 2. События делятся на категории: трафик (`request`/`response`), ошибки (`error` с `errorKey`), уведомления (`notification` c `notificationKey`). Для уведомлений шаблоны формируют читаемые сообщения вроде «Начат анализ компании …».
 3. При записи уведомлений или ошибок система пытается обновить служебные флаги в `dadata_result`; если это не удалось, в stdout пишется предупреждение, но сама запись в лог остаётся доступной.
+
+## Схема данных и маппинг для карточки
+Ниже — краткая памятка, что хранится в основной базе (Postgres) и как складывается итоговый ответ для фронта.
+
+### Таблицы и связи
+- **clients_requests** — контейнер по заявке: `inn`, домены (`domain_1/2`), `okved_main`, описания сайтов, UTP/письмо и т.д.
+- **pars_site** — тексты и URL сайтов, связаны через `company_id` с `clients_requests`.
+- **ai_site_prodclass** — классификация продклассов (`prodclass`, `prodclass_score`), ссылка на `pars_site` по `text_pars_id`.
+- **ai_site_goods_types** — типы продукции (`goods_type`, `goods_type_ID`, `goods_types_score`, `text_vector`), ссылка на `pars_site.text_par_id`.
+- **ai_site_equipment** — подобранное оборудование (`equipment`, `equipment_ID`, `equipment_score`, `text_vector`), ссылка на `pars_site.text_pars_id`.
+
+### Как пополняются таблицы
+Эндпоинт `analyze-json` получает JSON c блоками `products`, `equipment`, `prodclass`, `sites` и т.п. Для `equipment` каждая позиция нормализуется в `(name, match_id/equipment_ID, score, vector)` и синхронизируется с `ai_site_equipment`:
+
+1. Сначала подтягиваются существующие строки по `text_pars_id`.
+2. Совпадения по `equipment_ID` или имени обновляются.
+3. Новые значения вставляются `INSERT INTO public.ai_site_equipment (text_pars_id, equipment, equipment_score, equipment_ID, text_vector) ...`.
+4. Лишние строки удаляются `DELETE FROM public.ai_site_equipment WHERE id = :row_id`.
+
+Для блоков `products` и `prodclass` применяется тот же паттерн синхронизации в `ai_site_goods_types` и `ai_site_prodclass`.
+
+### Как собирается ответ для UI
+Сервис `analyze_company_by_inn` объединяет данные из всех таблиц:
+- домены/описания из `clients_requests` и `pars_site`;
+- продукты из `ai_site_goods_types`/`ai_site_prodclass`;
+- оборудование из `ai_site_equipment`;
+- UTP/письмо из `clients_requests`;
+- индустрию — по лучшему `prodclass` или запасному варианту из `okved_main`.
+
+Эндпоинт `GET /lookup/{inn}/ai-analyzer` возвращает уже собранный объект `AiAnalyzerResponse` с полями, которые ожидает карточка:
+- `company.domain1/domain2` — описания сайтов;
+- `ai.sites` — список URL;
+- `ai.products[]` — `AiProduct(name, goods_group, domain, url)`;
+- `ai.equipment[]` — `AiEquipment(name, equip_group, domain, url)`;
+- `ai.prodclass` — `AiProdclass(id, name, label, score)`;
+- `ai.industry`, `ai.utp`, `ai.letter`, `note`.
+
+### Проверка содержимого вручную
+1. Найти `company_id` по ИНН: `SELECT id FROM public.clients_requests WHERE inn=:inn ORDER BY COALESCE(ended_at, created_at) DESC NULLS LAST LIMIT 1;`.
+2. Получить сайты/описания: `SELECT * FROM public.pars_site WHERE company_id=:company_id ORDER BY created_at DESC;`.
+3. Продукты: `SELECT * FROM public.ai_site_goods_types JOIN public.pars_site ON ... WHERE company_id=:company_id ORDER BY goods_types_score DESC;`.
+4. Продклассы: `SELECT * FROM public.ai_site_prodclass JOIN public.pars_site ON ... WHERE company_id=:company_id ORDER BY prodclass_score DESC;`.
+5. Оборудование: `SELECT * FROM public.ai_site_equipment JOIN public.pars_site ON ... WHERE company_id=:company_id ORDER BY equipment_score DESC;`.
