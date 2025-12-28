@@ -70,14 +70,14 @@ async function getExistingColumns(): Promise<Set<string>> {
   return new Set(rows.map((row) => row.column_name));
 }
 
-function buildOptionalSelect(columns: Set<string>): string[] {
+function buildOptionalSelect(columns: Set<string>, tableAlias: string): string[] {
   return OPTIONAL_COLUMNS.map((spec) => {
     const match = spec.candidates.find((candidate) => columns.has(candidate));
     if (!match) {
       return `${spec.fallback} AS ${spec.alias}`;
     }
     const safe = match.replace(/"/g, '""');
-    return `d."${safe}" AS ${spec.alias}`;
+    return `${tableAlias}."${safe}" AS ${spec.alias}`;
   });
 }
 
@@ -190,29 +190,36 @@ export async function GET(request: NextRequest) {
     await ensureQueueTable();
     const limit = normalizeLimit(request.nextUrl.searchParams.get('limit'));
     const columns = await getExistingColumns();
-    const optionalSelect = buildOptionalSelect(columns);
+    const optionalSelect = buildOptionalSelect(columns, 'd');
     const runningCondition = normalizeRunningCondition(columns);
-
-    const selectList = [`q.source`, `q.inn`, `q.queued_at`, `q.queued_by`, ...optionalSelect].join(',\n          ');
-    const selectListRunning = [`r.source`, `r.inn`, `r.queued_at`, `r.queued_by`, ...optionalSelect].join(',\n          ');
 
     const { rows } = await dbBitrix.query(
       `
         WITH queue_items AS (
-          SELECT 'queue'::text AS source, q.inn, q.queued_at, q.queued_by, d.*
+          SELECT
+            'queue'::text AS source,
+            q.inn,
+            q.queued_at,
+            q.queued_by,
+            ${optionalSelect.join(',\n            ')}
           FROM ai_analysis_queue q
           LEFT JOIN dadata_result d ON d.inn = q.inn
         ),
         running_items AS (
-          SELECT 'running'::text AS source, d.inn, COALESCE(d.analysis_started_at, now()) AS queued_at, NULL::text AS queued_by, d.*
+          SELECT
+            'running'::text AS source,
+            d.inn,
+            COALESCE(d.analysis_started_at, now()) AS queued_at,
+            NULL::text AS queued_by,
+            ${optionalSelect.join(',\n            ')}
           FROM dadata_result d
           LEFT JOIN ai_analysis_queue q ON q.inn = d.inn
           WHERE q.inn IS NULL AND ${runningCondition}
         ),
         combined AS (
-          SELECT ${selectList} FROM queue_items q
+          SELECT * FROM queue_items
           UNION ALL
-          SELECT ${selectListRunning} FROM running_items r
+          SELECT * FROM running_items
         )
         SELECT *
         FROM combined
