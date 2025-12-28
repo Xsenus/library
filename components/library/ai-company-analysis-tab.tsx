@@ -258,9 +258,21 @@ type AiAnalyzerInfo = {
   } | null;
   ai?: {
     sites?: string[];
-    products?: Array<{ name: string; goods_group?: string | null; url?: string | null; domain?: string | null }>;
+    products?: Array<{
+      name: string;
+      goods_group?: string | null;
+      url?: string | null;
+      domain?: string | null;
+      tnved_code?: string | null;
+    }>;
     equipment?: Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }>;
-    prodclass?: { id?: string | number | null; name?: string | null; label?: string | null; score?: number | null } | null;
+    prodclass?: {
+      id?: string | number | null;
+      name?: string | null;
+      label?: string | null;
+      score?: number | null;
+      description_okved_score?: number | null;
+    } | null;
     industry?: string | null;
     utp?: string | null;
     letter?: string | null;
@@ -297,7 +309,9 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
 
   const aiSites = ai ? toSiteArray(ai.sites ?? ai.domains ?? ai.site_list) : [];
 
-  const mapProducts = (items: any[]): Array<{ name: string; goods_group?: string | null; url?: string | null; domain?: string | null }> =>
+  const mapProducts = (
+    items: any[],
+  ): Array<{ name: string; goods_group?: string | null; url?: string | null; domain?: string | null; tnved_code?: string | null }> =>
     items
       .map((item) => {
         if (!item) return null;
@@ -307,12 +321,23 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
           const goods_group = item.goods_group ?? item.goods_type ?? null;
           const url = item.url ?? item.link ?? null;
           const domain = item.domain ?? normalizeSite(url ?? null);
+          const tnved_code =
+            item.tnved_code ??
+            item.goods_type_id ??
+            item.goods_type_ID ??
+            item.tnved ??
+            item.tn_ved ??
+            item.code ??
+            null;
           if (!name && !goods_group && !url) return null;
-          return { name: name || goods_group || url || '—', goods_group, url, domain };
+          return { name: name || goods_group || url || '—', goods_group, url, domain, tnved_code };
         }
         return { name: String(item) };
       })
-      .filter((p): p is { name: string; goods_group?: string | null; url?: string | null; domain?: string | null } => !!p && !!p.name);
+      .filter(
+        (p): p is { name: string; goods_group?: string | null; url?: string | null; domain?: string | null; tnved_code?: string | null } =>
+          !!p && !!p.name,
+      );
 
   const mapEquipment = (items: any[]): Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }> =>
     items
@@ -344,6 +369,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
               name: prodclass.name ?? prodclass.prodclass ?? null,
               label: prodclass.label ?? prodclass.full_name ?? null,
               score: prodclass.score ?? prodclass.prodclass_score ?? null,
+              description_okved_score: prodclass.description_okved_score ?? prodclass.okved_match_score ?? null,
             }
           : null,
         industry: ai.industry ?? null,
@@ -412,6 +438,15 @@ function toTimestamp(value: string | null | undefined): number | null {
   if (!value) return null;
   const ts = Date.parse(value);
   return Number.isNaN(ts) ? null : ts;
+}
+
+function formatMatchScore(score: number | string | null | undefined): string | null {
+  if (score == null) return null;
+  const value = Number(score);
+  if (!Number.isFinite(value)) return null;
+  if (value === 0) return '0%';
+  if (value > 0 && value <= 1) return `${(value * 100).toFixed(1)}%`;
+  return value.toFixed(2);
 }
 
 type CompanyState = { running: boolean; queued: boolean };
@@ -584,6 +619,8 @@ export default function AiCompanyAnalysisTab() {
   const [isPending, startTransition] = useTransition();
   const [stopSignalAt, setStopSignalAt] = useState<number | null>(null);
   const analyzerInfo = useMemo(() => (infoCompany ? normalizeAnalyzerInfo(infoCompany.analysis_info) : null), [infoCompany]);
+  const analyzerSites = analyzerInfo?.ai?.sites ?? [];
+  const analyzerProdclass = analyzerInfo?.ai?.prodclass ?? null;
   const forcedLaunchMode = useMemo(() => getForcedLaunchMode(true), []);
   const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
   const forcedSteps = useMemo(() => getForcedSteps(true), []);
@@ -1327,43 +1364,92 @@ export default function AiCompanyAnalysisTab() {
     return 'indeterminate' as const;
   }, [companies, selected]);
 
-  const topEquipment = (company: AiCompany): string[] => {
+  const topEquipment = (company: AiCompany, analyzer?: AiAnalyzerInfo | null): string[] => {
     const raw = company.analysis_equipment;
-    if (!raw) return [];
+    const items: string[] = [];
+
     if (Array.isArray(raw)) {
-      return raw
-        .map((item) => {
-          if (!item) return null;
-          if (typeof item === 'string') return item.trim();
-          if (typeof item === 'object') {
-            const label = String(item?.name ?? item?.label ?? item?.equipment ?? item?.title ?? '').trim();
-            return label || null;
-          }
-          return String(item);
-        })
-        .filter((s): s is string => !!s);
+      items.push(
+        ...raw
+          .map((item) => {
+            if (!item) return null;
+            if (typeof item === 'string') return item.trim();
+            if (typeof item === 'object') {
+              const label = String(item?.name ?? item?.label ?? item?.equipment ?? item?.title ?? '').trim();
+              return label || null;
+            }
+            return String(item);
+          })
+          .filter((s): s is string => !!s),
+      );
     }
-    return [];
+
+    if (!items.length && analyzer?.ai?.equipment?.length) {
+      items.push(
+        ...analyzer.ai.equipment
+          .map((item) => (item?.name ? String(item.name).trim() : null))
+          .filter((name): name is string => !!name),
+      );
+    }
+
+    return items;
   };
 
-  const tnvedProducts = (company: AiCompany): Array<{ name: string; code?: string }> => {
+  const tnvedProducts = (company: AiCompany, analyzer?: AiAnalyzerInfo | null): Array<{ name: string; code?: string }> => {
     const raw = company.analysis_tnved;
-    if (!raw) return [];
-    const arr = Array.isArray(raw) ? raw : [raw];
-    return arr
-      .map((item: any) => {
-        if (!item) return null;
-        if (typeof item === 'string') return { name: item };
-        if (typeof item === 'object') {
-          const name = String(item?.name ?? item?.title ?? item?.product ?? '').trim();
-          const code = String(item?.tnved ?? item?.code ?? item?.tn_ved ?? '').trim();
-          if (!name && !code) return null;
-          return { name: name || code, code: code || undefined };
-        }
-        return { name: String(item) };
-      })
-      .filter((item): item is { name: string; code?: string } => !!item && !!item.name);
+    const items: Array<{ name: string; code?: string }> = [];
+    if (raw) {
+      const arr = Array.isArray(raw) ? raw : [raw];
+      items.push(
+        ...arr
+          .map((item: any) => {
+            if (!item) return null;
+            if (typeof item === 'string') return { name: item };
+            if (typeof item === 'object') {
+              const name = String(item?.name ?? item?.title ?? item?.product ?? '').trim();
+              const code = String(item?.tnved ?? item?.code ?? item?.tn_ved ?? '').trim();
+              if (!name && !code) return null;
+              return { name: name || code, code: code || undefined };
+            }
+            return { name: String(item) };
+          })
+          .filter((item): item is { name: string; code?: string } => !!item && !!item.name),
+      );
+    }
+
+    if (!items.length && analyzer?.ai?.products?.length) {
+      items.push(
+        ...analyzer.ai.products
+          .map((item) => {
+            const name = item?.name ? String(item.name).trim() : '';
+            const code = item?.tnved_code ? String(item.tnved_code).trim() : undefined;
+            if (!name && !code) return null;
+            return { name: name || code || '—', code };
+          })
+          .filter((item): item is { name: string; code?: string } => !!item && !!item.name),
+      );
+    }
+
+    return items;
   };
+
+  const prodclassLabel = analyzerProdclass?.label || analyzerProdclass?.name || infoCompany?.analysis_class || null;
+  const prodclassScoreText =
+    formatMatchScore(analyzerProdclass?.score ?? null) ||
+    (infoCompany?.analysis_match_level ? String(infoCompany.analysis_match_level) : null);
+  const okvedMatchText =
+    formatMatchScore(analyzerProdclass?.description_okved_score ?? null) ||
+    (infoCompany?.analysis_okved_match ? String(infoCompany.analysis_okved_match) : null);
+  const analysisDomainValue =
+    infoCompany?.analysis_domain ||
+    analyzerInfo?.company?.domain1_site ||
+    analyzerInfo?.company?.domain2_site ||
+    analyzerSites[0] ||
+    null;
+  const analyzerDescriptionText =
+    infoCompany?.analysis_description ||
+    [analyzerInfo?.company?.domain1, analyzerInfo?.company?.domain2].filter(Boolean).join('\n') ||
+    null;
 
   return (
     <TooltipProvider>
@@ -2250,14 +2336,17 @@ export default function AiCompanyAnalysisTab() {
                               </div>
                             )}
                             {analyzerInfo.ai.prodclass && (
-                              <div>
+                              <div className="space-y-1">
                                 <div className="text-[11px] uppercase text-muted-foreground">Продкласс</div>
                                 <div className="text-foreground">
-                                  {analyzerInfo.ai.prodclass.name || analyzerInfo.ai.prodclass.label || '—'}
-                                  {analyzerInfo.ai.prodclass.score != null &&
-                                    Number.isFinite(analyzerInfo.ai.prodclass.score) &&
-                                    ` · ${Number(analyzerInfo.ai.prodclass.score).toFixed(2)}`}
+                                  {prodclassLabel || analyzerInfo.ai.prodclass.label || analyzerInfo.ai.prodclass.name || '—'}
+                                  {prodclassScoreText && ` · ${prodclassScoreText}`}
                                 </div>
+                                {okvedMatchText && (
+                                  <div className="text-[12px] text-muted-foreground">
+                                    Совпадение описания с ОКВЭД: {okvedMatchText}
+                                  </div>
+                                )}
                               </div>
                             )}
                           </div>
@@ -2306,15 +2395,33 @@ export default function AiCompanyAnalysisTab() {
                         {analyzerInfo.ai.products && analyzerInfo.ai.products.length > 0 && (
                           <div className="space-y-1">
                             <div className="text-[11px] uppercase text-muted-foreground">Продукция</div>
-                            <ul className="space-y-1">
-                              {analyzerInfo.ai.products.map((product, idx) => (
-                                <li key={`${product.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
-                                  <div className="font-medium text-foreground">{product.name}</div>
-                                  <div className="text-[12px] text-muted-foreground">
-                                    {product.goods_group || product.domain || product.url || '—'}
-                                  </div>
-                                </li>
-                              ))}
+                            <ul className="space-y-2">
+                              {analyzerInfo.ai.products.map((product, idx) => {
+                                const site = product.domain || product.url;
+                                return (
+                                  <li key={`${product.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
+                                    <div className="font-medium text-foreground">{product.name}</div>
+                                    <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+                                      {product.goods_group && <span>{product.goods_group}</span>}
+                                      {product.tnved_code && (
+                                        <span className="rounded-full bg-background px-2 py-0.5 text-[11px] text-foreground/80">
+                                          ТНВЭД: {product.tnved_code}
+                                        </span>
+                                      )}
+                                      {site && (
+                                        <a
+                                          href={site.startsWith('http') ? site : `https://${site}`}
+                                          className="text-blue-600 hover:underline"
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          {site}
+                                        </a>
+                                      )}
+                                    </div>
+                                  </li>
+                                );
+                              })}
                             </ul>
                           </div>
                         )}
@@ -2322,15 +2429,28 @@ export default function AiCompanyAnalysisTab() {
                         {analyzerInfo.ai.equipment && analyzerInfo.ai.equipment.length > 0 && (
                           <div className="space-y-1">
                             <div className="text-[11px] uppercase text-muted-foreground">Оборудование</div>
-                            <ul className="space-y-1">
-                              {analyzerInfo.ai.equipment.map((item, idx) => (
-                                <li key={`${item.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
-                                  <div className="font-medium text-foreground">{item.name}</div>
-                                  <div className="text-[12px] text-muted-foreground">
-                                    {item.equip_group || item.domain || item.url || '—'}
-                                  </div>
-                                </li>
-                              ))}
+                            <ul className="space-y-2">
+                              {analyzerInfo.ai.equipment.map((item, idx) => {
+                                const site = item.domain || item.url;
+                                return (
+                                  <li key={`${item.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
+                                    <div className="font-medium text-foreground">{item.name}</div>
+                                    <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
+                                      {item.equip_group && <span>{item.equip_group}</span>}
+                                      {site && (
+                                        <a
+                                          href={site.startsWith('http') ? site : `https://${site}`}
+                                          className="text-blue-600 hover:underline"
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                        >
+                                          {site}
+                                        </a>
+                                      )}
+                                    </div>
+                                  </li>
+                                );
+                              })}
                             </ul>
                           </div>
                         )}
@@ -2431,8 +2551,8 @@ export default function AiCompanyAnalysisTab() {
                   <div>
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>
                     <div className="font-medium">
-                      {infoCompany.analysis_match_level || '—'}
-                      {infoCompany.analysis_class ? ` · ${infoCompany.analysis_class}` : ''}
+                      {prodclassScoreText || '—'}
+                      {prodclassLabel ? ` · ${prodclassLabel}` : ''}
                     </div>
                   </div>
                   <div>
@@ -2441,28 +2561,28 @@ export default function AiCompanyAnalysisTab() {
                   </div>
                   <div>
                     <div className="text-xs text-muted-foreground">Домен для парсинга</div>
-                    <div className="font-medium">{infoCompany.analysis_domain || '—'}</div>
+                    <div className="font-medium">{analysisDomainValue || '—'}</div>
                   </div>
                   <div>
                     <div className="text-xs text-muted-foreground">
                       Соответствие ИИ-описания сайта и ОКВЭД
                     </div>
-                    <div className="font-medium">{infoCompany.analysis_okved_match || '—'}</div>
+                    <div className="font-medium">{okvedMatchText || '—'}</div>
                   </div>
                 </div>
 
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">ИИ-описание сайта</div>
                   <div className="rounded-md border bg-muted/30 p-3 text-sm whitespace-pre-wrap">
-                    {infoCompany.analysis_description || '—'}
+                    {analyzerDescriptionText || '—'}
                   </div>
                 </div>
 
                 <div>
                   <div className="text-xs text-muted-foreground mb-2">Топ-10 оборудования</div>
-                  {topEquipment(infoCompany).length ? (
+                  {topEquipment(infoCompany, analyzerInfo).length ? (
                     <ol className="list-decimal space-y-1 pl-5">
-                      {topEquipment(infoCompany).slice(0, 10).map((item, index) => (
+                      {topEquipment(infoCompany, analyzerInfo).slice(0, 10).map((item, index) => (
                         <li key={`${item}-${index}`}>{item}</li>
                       ))}
                     </ol>
@@ -2475,9 +2595,9 @@ export default function AiCompanyAnalysisTab() {
                   <div className="text-xs text-muted-foreground mb-1">
                     Виды найденной продукции на сайте и ТНВЭД
                   </div>
-                  {tnvedProducts(infoCompany).length ? (
+                  {tnvedProducts(infoCompany, analyzerInfo).length ? (
                     <ul className="space-y-1">
-                      {tnvedProducts(infoCompany).map((item, idx) => (
+                      {tnvedProducts(infoCompany, analyzerInfo).map((item, idx) => (
                         <li key={`${item.name}-${idx}`} className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
                           <span>{item.name}</span>
                           {item.code && (

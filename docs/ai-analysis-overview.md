@@ -123,13 +123,27 @@
 - `company.domain1 / company.domain2` — первые две непустые `pars_site.description` по `company_id`; если описаний меньше, добираются `site_1_description / site_2_description` из `clients_requests`.
 - `ai.sites` — из `clients_requests.domain_1/domain_2` + всех `pars_site.url/domain_1`, нормализуются в HTTPS и уникализируются.
 - `company.domain1_site / company.domain2_site` — первые два элемента списка сайтов (`ai.sites`), могут быть пустыми при отсутствии валидных доменов.
-- `ai.products` — строки `ai_site_goods_types`, связанные через `pars_site.company_id`, отсортированы по `goods_types_score`; дополняются `goods_lookup` при наличии.
-- `ai.prodclass` — строки `ai_site_prodclass` по тем же сайтам, сортировка по `prodclass_score`; при необходимости название подтягивается из `ib_prodclass`.
+- `ai.products` — строки `ai_site_goods_types`, связанные через `pars_site.company_id`, отсортированы по `goods_types_score`; дополняются `goods_lookup` при наличии. В ответ добавлен `tnved_code` (берётся из `goods_type_id`/`goods_type_ID` или справочника), чтобы карточка сразу показывала код ТНВЭД.
+- `ai.prodclass` — строки `ai_site_prodclass` по тем же сайтам, сортировка по `prodclass_score`; при необходимости название подтягивается из `ib_prodclass`. Возвращается `description_okved_score` — коэффициент похожести описания сайта и ОКВЭД (0–1 или проценты), вычисляемый при разборе `analyze-json` и сохраняемый в таблице, если колонка есть.
 - `ai.equipment` — строки `ai_site_equipment` по `company_id`, сортировка по `equipment_score`, нормализация и ограничение `_MAX_EQUIPMENT=100`.
 - `ai.industry` — сначала лучшая `prodclass` → индустрия; иначе `clients_requests.okved_main`; затем фоллбек `dadata_result.main_okved` (Bitrix → Postgres) и перевод через `_okved_to_industry`; при отсутствии данных поле пустое.
 - `ai.utp` — напрямую `clients_requests.utp`, при пустом значении — прочерк в ответе.
 - `ai.letter` — напрямую `clients_requests.pismo`, пустое значение не показывается.
 - `note` — текстовый список источников (`clients_requests`, `pars_site`, `ai_site_goods_types`, `ai_site_prodclass`, `ai_site_equipment`, `dadata_result`); если ничего не найдено — `no sources found`.
+
+### Поля карточки и ожидаемые источники
+Ниже — расшифровка блоков из карточки AI-анализатора и то, откуда берутся значения (все поля читает готовый payload, перерасчёта при открытии нет):
+
+1. **Уровень соответствия и найденный класс предприятия.** Лучший `ai.prodclass` по максимальному `prodclass_score` (`score` → уровень, `label/name` → название класса). Если таблица пуста, блок остаётся пустым.
+2. **Домен для парсинга.** Первый валидный домен из `ai.sites` (нормализованные `clients_requests.domain_1/2` + `pars_site.url/domain_1`). При отсутствии доменов значение `—`.
+3. **Соответствие ИИ-описания сайта и ОКВЭД.** `ai.prodclass.description_okved_score` — коэффициент сходства описания сайта и ОКВЭД (0–1, часто показывается в процентах). Если нет продкласса или колонки, выводится пусто.
+4. **ИИ-описание сайта.** `company.domain1/domain2` — два последних описания сайтов из `pars_site`, с фолбеком на `site_1/2_description` из `clients_requests`.
+5. **Топ-10 оборудования.** `ai.equipment[]`, отсортированный по `equipment_score` и ограниченный 100 строками. Если нужен именно топ-10, обрезается на фронте.
+6. **Виды найденной продукции на сайте и ТНВЭД.** `ai.products[]` с названием продукции/группы и `tnved_code` из `goods_type_id` или справочника; сортировка по `goods_types_score`, лимит 100 строк.
+
+### Что не пересчитывается
+- Эндпоинт `/v1/lookup/{inn}/ai-analyzer` не триггерит новый анализ и не обращается к внешним сервисам: он только читает сохранённые строки. Пустые таблицы = пустые поля.
+- UTP, письмо, домены и оборудование/продукты берутся только из перечисленных таблиц; отсутствие данных в `clients_requests` или `ai_site_*` не компенсируется внешними источниками.
 
 ### Проверка содержимого вручную
 1. Найти `company_id` по ИНН: `SELECT id FROM public.clients_requests WHERE inn=:inn ORDER BY COALESCE(ended_at, created_at) DESC NULLS LAST LIMIT 1;`.
