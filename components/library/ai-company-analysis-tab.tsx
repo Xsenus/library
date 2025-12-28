@@ -722,9 +722,10 @@ export default function AiCompanyAnalysisTab() {
   const integrationHost = useMemo(() => {
     if (!integrationHealth?.base) return null;
     try {
-      return new URL(integrationHealth.base).host;
+      const url = new URL(integrationHealth.base);
+      return url.hostname || url.host;
     } catch {
-      return integrationHealth.base;
+      return integrationHealth.base.split(':')[0] || integrationHealth.base;
     }
   }, [integrationHealth]);
 
@@ -892,7 +893,8 @@ export default function AiCompanyAnalysisTab() {
       if (!res.ok || data?.ok === false) {
         throw new Error(data?.error || `Request failed with status ${res.status}`);
       }
-      setQueueItems(Array.isArray(data?.items) ? data.items : []);
+      const queueItems = Array.isArray(data?.items) ? data.items : [];
+      setQueueItems(queueItems);
     } catch (error) {
       console.error('Failed to fetch queue', error);
       setQueueError(
@@ -1719,15 +1721,17 @@ export default function AiCompanyAnalysisTab() {
                     </span>
                   </div>
                 </div>
-                {lastLoadedAt && (
+                {(lastLoadedAt || integrationHost) && (
                   <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm text-foreground">
                     <span className="text-muted-foreground">Обновлено:</span>
                     <span className="font-semibold">
-                      {new Date(lastLoadedAt).toLocaleTimeString('ru-RU', {
-                        hour: '2-digit',
-                        minute: '2-digit',
-                        second: '2-digit',
-                      })}
+                      {lastLoadedAt
+                        ? new Date(lastLoadedAt).toLocaleTimeString('ru-RU', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          })
+                        : '—'}
                     </span>
                     {integrationHost && (
                       <span
@@ -1737,7 +1741,7 @@ export default function AiCompanyAnalysisTab() {
                         )}
                         title={integrationHealth?.detail ?? undefined}
                       >
-                        {integrationHost}
+                        IP {integrationHost}
                       </span>
                     )}
                   </div>
@@ -1779,7 +1783,7 @@ export default function AiCompanyAnalysisTab() {
                     value={okvedSelectValue}
                     onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
                   >
-                    <SelectTrigger className="h-9 min-w-[200px] max-w-[320px] text-left text-sm">
+                    <SelectTrigger className="h-9 w-[260px] shrink-0 text-left text-sm">
                       <SelectValue placeholder="Все коды" />
                     </SelectTrigger>
                     <SelectContent>
