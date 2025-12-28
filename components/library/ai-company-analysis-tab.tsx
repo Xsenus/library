@@ -312,10 +312,13 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
   const mapProducts = (
     items: any[],
   ): Array<{ name: string; goods_group?: string | null; url?: string | null; domain?: string | null; tnved_code?: string | null }> =>
-    items
-      .map((item) => {
-        if (!item) return null;
-        if (typeof item === 'string') return { name: item };
+    items.reduce<Array<{ name: string; goods_group?: string | null; url?: string | null; domain?: string | null; tnved_code?: string | null }>>(
+      (acc, item) => {
+        if (!item) return acc;
+        if (typeof item === 'string') {
+          acc.push({ name: item });
+          return acc;
+        }
         if (typeof item === 'object') {
           const name = String(item.name ?? item.product ?? item.title ?? '').trim();
           const goods_group = item.goods_group ?? item.goods_type ?? null;
@@ -329,15 +332,16 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
             item.tn_ved ??
             item.code ??
             null;
-          if (!name && !goods_group && !url) return null;
-          return { name: name || goods_group || url || '—', goods_group, url, domain, tnved_code };
+          if (!name && !goods_group && !url) return acc;
+          acc.push({ name: name || goods_group || url || '—', goods_group, url, domain, tnved_code });
+          return acc;
         }
-        return { name: String(item) };
-      })
-      .filter(
-        (p): p is { name: string; goods_group?: string | null; url?: string | null; domain?: string | null; tnved_code?: string | null } =>
-          !!p && !!p.name,
-      );
+
+        acc.push({ name: String(item) });
+        return acc;
+      },
+      [],
+    );
 
   const mapEquipment = (items: any[]): Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }> =>
     items
