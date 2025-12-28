@@ -1749,41 +1749,46 @@ export default function AiCompanyAnalysisTab() {
               </div>
             </div>
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <div className="flex flex-1 items-center gap-3 overflow-x-auto whitespace-nowrap">
-                <Input
-                  className="h-9 min-w-[220px] flex-1 shrink-0 text-sm md:w-[260px] xl:w-[280px]"
-                  placeholder="Поиск по названию или ИНН"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className="text-xs text-muted-foreground">Отрасль</span>
-                  <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
-                    <SelectTrigger
-                      className="h-9 min-w-[180px] text-sm"
-                      disabled={industriesLoading && industries.length === 0}>
-                      <SelectValue placeholder="Все отрасли" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Все отрасли</SelectItem>
-                      {industries.map((item) => (
-                        <SelectItem key={item.id} value={String(item.id)}>
-                          {item.industry}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {industriesLoading && (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                  )}
+              <div className="flex flex-1 flex-wrap items-end gap-3">
+                <div className="flex min-w-[230px] flex-1 flex-col gap-1 md:min-w-[260px]">
+                  <span className="text-xs font-medium text-muted-foreground">Поиск</span>
+                  <Input
+                    className="h-9 flex-1 text-sm"
+                    placeholder="Поиск по названию или ИНН"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
                 </div>
-                <div className="flex shrink-0 items-center gap-2">
-                  <span className="text-xs text-muted-foreground">ОКВЭД</span>
+                <div className="flex min-w-[200px] flex-1 flex-col gap-1 sm:flex-[0_0_220px]">
+                  <span className="text-xs font-medium text-muted-foreground">Отрасль</span>
+                  <div className="flex items-center gap-2">
+                    <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
+                      <SelectTrigger
+                        className="h-9 w-full text-sm"
+                        disabled={industriesLoading && industries.length === 0}>
+                        <SelectValue placeholder="Все отрасли" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Все отрасли</SelectItem>
+                        {industries.map((item) => (
+                          <SelectItem key={item.id} value={String(item.id)}>
+                            {item.industry}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {industriesLoading && (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                </div>
+                <div className="flex min-w-[240px] flex-1 flex-col gap-1 sm:flex-[0_0_260px]">
+                  <span className="text-xs font-medium text-muted-foreground">ОКВЭД</span>
                   <Select
                     value={okvedSelectValue}
                     onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
                   >
-                    <SelectTrigger className="h-9 w-[260px] shrink-0 text-left text-sm">
+                    <SelectTrigger className="h-9 w-full text-left text-sm">
                       <SelectValue placeholder="Все коды" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1801,59 +1806,62 @@ export default function AiCompanyAnalysisTab() {
                     </SelectContent>
                   </Select>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant={statusFilters.length ? 'secondary' : 'outline'}
-                      size="sm"
-                      className="h-9 gap-2 shrink-0"
-                    >
-                      <Filter className="h-4 w-4" />
-                      Статусы
-                      {statusFilters.length > 0 && (
-                        <span className="rounded-full bg-background/80 px-2 py-0.5 text-xs text-foreground">
-                          {statusFilters.length}
-                        </span>
-                      )}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-60">
-                    <DropdownMenuLabel>Фильтр статусов</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {statusOptions.map((option) => (
-                      <DropdownMenuCheckboxItem
-                        key={option.key}
-                        checked={statusFilters.includes(option.key)}
-                        disabled={available?.[option.field] === false}
-                        onCheckedChange={(checked) => {
-                          setStatusFilters((prev) => {
-                            if (checked) {
-                              if (prev.includes(option.key)) return prev;
-                              return [...prev, option.key];
-                            }
-                            return prev.filter((value) => value !== option.key);
-                          });
-                        }}
+                <div className="flex flex-col gap-1 sm:w-auto">
+                  <span className="text-xs font-medium text-muted-foreground">Статусы</span>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant={statusFilters.length ? 'secondary' : 'outline'}
+                        size="sm"
+                        className="h-9 gap-2"
                       >
-                        {option.label}
-                      </DropdownMenuCheckboxItem>
-                    ))}
-                    {statusFilters.length > 0 && (
-                      <>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onSelect={(event) => {
-                            event.preventDefault();
-                            setStatusFilters([]);
+                        <Filter className="h-4 w-4" />
+                        Статусы
+                        {statusFilters.length > 0 && (
+                          <span className="rounded-full bg-background/80 px-2 py-0.5 text-xs text-foreground">
+                            {statusFilters.length}
+                          </span>
+                        )}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-60">
+                      <DropdownMenuLabel>Фильтр статусов</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      {statusOptions.map((option) => (
+                        <DropdownMenuCheckboxItem
+                          key={option.key}
+                          checked={statusFilters.includes(option.key)}
+                          disabled={available?.[option.field] === false}
+                          onCheckedChange={(checked) => {
+                            setStatusFilters((prev) => {
+                              if (checked) {
+                                if (prev.includes(option.key)) return prev;
+                                return [...prev, option.key];
+                              }
+                              return prev.filter((value) => value !== option.key);
+                            });
                           }}
                         >
-                          Сбросить фильтры
-                        </DropdownMenuItem>
-                      </>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                          {option.label}
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                      {statusFilters.length > 0 && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onSelect={(event) => {
+                              event.preventDefault();
+                              setStatusFilters([]);
+                            }}
+                          >
+                            Сбросить фильтры
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
               <Tooltip>
