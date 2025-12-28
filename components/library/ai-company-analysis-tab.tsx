@@ -591,6 +591,27 @@ function getStatusBadge(company: AiCompany, outcome: OutcomeMeta): {
   return { label: outcome.label, variant: outcome.badgeVariant };
 }
 
+function formatStatusLabel(status?: string | null): string {
+  if (!status) return '—';
+  const normalized = status.toLowerCase();
+  if (['running', 'processing', 'in_progress', 'starting', 'active'].some((s) => normalized.includes(s))) {
+    return 'Выполняется';
+  }
+  if (['queued', 'queue', 'pending', 'waiting'].some((s) => normalized.includes(s))) {
+    return 'В очереди';
+  }
+  if (['stopped', 'stop', 'cancel'].some((s) => normalized.includes(s))) {
+    return 'Остановлено';
+  }
+  if (['fail', 'error'].some((s) => normalized.includes(s))) {
+    return 'Ошибка';
+  }
+  if (['done', 'finish', 'complete', 'success'].some((s) => normalized.includes(s))) {
+    return 'Завершено';
+  }
+  return status;
+}
+
 type AvailableMap = FetchResponse['available'];
 
 export default function AiCompanyAnalysisTab() {
@@ -1741,7 +1762,7 @@ export default function AiCompanyAnalysisTab() {
               </div>
             </div>
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <div className="flex flex-1 flex-wrap items-center gap-2">
+              <div className="flex flex-1 flex-wrap items-center gap-3">
                 <Input
                   className="h-9 min-w-[220px] flex-1 text-sm md:w-[260px] xl:w-[280px]"
                   placeholder="Поиск по названию или ИНН"
@@ -1775,7 +1796,7 @@ export default function AiCompanyAnalysisTab() {
                     value={okvedSelectValue}
                     onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
                   >
-                    <SelectTrigger className="h-9 min-w-[220px] max-w-[360px] text-left text-sm">
+                    <SelectTrigger className="h-9 min-w-[200px] max-w-[320px] text-left text-sm">
                       <SelectValue placeholder="Все коды" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1847,7 +1868,7 @@ export default function AiCompanyAnalysisTab() {
                   </DropdownMenuContent>
                 </DropdownMenu>
               </div>
-            <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2">
               <Tooltip>
                 <TooltipTrigger asChild>
                     <Button
@@ -1878,24 +1899,24 @@ export default function AiCompanyAnalysisTab() {
                   Массово поставить в очередь по условиям
                 </TooltipContent>
               </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9"
+                      onClick={() => setQueueDialogOpen(true)}
+                    >
+                      <ClipboardList className="mr-2 h-4 w-4" /> Очередь
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">Посмотреть и управлять очередью</TooltipContent>
+                </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
                     type="button"
-                    variant="outline"
-                    className="h-9"
-                    onClick={() => setQueueDialogOpen(true)}
-                  >
-                    <ClipboardList className="mr-2 h-4 w-4" /> Очередь
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="bottom">Посмотреть и управлять очередью</TooltipContent>
-              </Tooltip>
-              <Tooltip>
-                <TooltipTrigger asChild>
-                  <Button
-                      type="button"
-                      variant="destructive"
+                    variant="destructive"
                       className="h-9"
                       onClick={handleStop}
                       disabled={stopLoading || (!isAnyActive && !autoRefresh)}
@@ -2491,6 +2512,7 @@ export default function AiCompanyAnalysisTab() {
                     const outcome = resolveOutcome(item, state);
                     const badge = getStatusBadge(item, outcome);
                     const queuedTime = formatTime(item.queued_at ?? null);
+                    const statusLabel = formatStatusLabel(item.analysis_status ?? 'queued');
                     const attempts =
                       item.analysis_attempts != null && Number.isFinite(item.analysis_attempts)
                         ? item.analysis_attempts
@@ -2515,10 +2537,12 @@ export default function AiCompanyAnalysisTab() {
                             {queuedTime && <span>в очереди с {queuedTime}</span>}
                             <span>Попыток: {attempts}</span>
                             <span>Оценка: {score}</span>
+                            <Badge variant="outline" className="whitespace-nowrap text-foreground">
+                              {statusLabel}
+                            </Badge>
                           </div>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline">{item.analysis_status ?? 'queued'}</Badge>
+                        <div className="flex flex-wrap items-center gap-2 md:justify-end">
                           <Button
                             type="button"
                             variant="ghost"
