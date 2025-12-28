@@ -11,6 +11,31 @@ export const revalidate = 0;
 
 const QUEUE_STALE_INTERVAL = `120 minutes`;
 
+type OptionalColumnSpec = {
+  alias: string;
+  candidates: string[];
+  fallback: string;
+};
+
+const OPTIONAL_COLUMNS: OptionalColumnSpec[] = [
+  { alias: 'short_name', candidates: ['short_name', 'name'], fallback: 'NULL::text' },
+  { alias: 'analysis_status', candidates: ['analysis_status', 'analysis_state', 'analysis_stage'], fallback: 'NULL::text' },
+  { alias: 'analysis_outcome', candidates: ['analysis_outcome', 'analysis_result', 'analysis_summary'], fallback: 'NULL::text' },
+  { alias: 'analysis_progress', candidates: ['analysis_progress', 'analysis_percent', 'analysis_ratio'], fallback: 'NULL::numeric' },
+  {
+    alias: 'analysis_started_at',
+    candidates: ['analysis_started_at', 'analysis_last_start', 'analysis_last_started_at'],
+    fallback: 'NULL::timestamptz',
+  },
+  {
+    alias: 'analysis_finished_at',
+    candidates: ['analysis_finished_at', 'analysis_last_finish', 'analysis_last_finished_at'],
+    fallback: 'NULL::timestamptz',
+  },
+  { alias: 'analysis_attempts', candidates: ['analysis_attempts', 'analysis_retry_count'], fallback: 'NULL::int' },
+  { alias: 'analysis_score', candidates: ['analysis_score', 'company_score'], fallback: 'NULL::numeric' },
+];
+
 async function ensureQueueTable() {
   await dbBitrix.query(`
     CREATE TABLE IF NOT EXISTS ai_analysis_queue (
@@ -32,6 +57,28 @@ async function ensureQueueTable() {
     ALTER TABLE ai_analysis_queue
       ADD COLUMN IF NOT EXISTS payload jsonb
   `);
+}
+
+async function getExistingColumns(): Promise<Set<string>> {
+  const { rows } = await dbBitrix.query<{ column_name: string }>(
+    `
+      SELECT column_name
+      FROM information_schema.columns
+      WHERE table_schema = 'public' AND table_name = 'dadata_result'
+    `,
+  );
+  return new Set(rows.map((row) => row.column_name));
+}
+
+function buildOptionalSelect(columns: Set<string>): string[] {
+  return OPTIONAL_COLUMNS.map((spec) => {
+    const match = spec.candidates.find((candidate) => columns.has(candidate));
+    if (!match) {
+      return `${spec.fallback} AS ${spec.alias}`;
+    }
+    const safe = match.replace(/"/g, '""');
+    return `d."${safe}" AS ${spec.alias}`;
+  });
 }
 
 function normalizeStatuses(raw: unknown): string[] {
@@ -129,6 +176,8 @@ export async function GET(request: NextRequest) {
   try {
     await ensureQueueTable();
     const limit = normalizeLimit(request.nextUrl.searchParams.get('limit'));
+    const columns = await getExistingColumns();
+    const optionalSelect = buildOptionalSelect(columns);
 
     const { rows } = await dbBitrix.query(
       `
@@ -136,14 +185,7 @@ export async function GET(request: NextRequest) {
           q.inn,
           q.queued_at,
           q.queued_by,
-          d.short_name,
-          d.analysis_status,
-          d.analysis_outcome,
-          d.analysis_progress,
-          d.analysis_started_at,
-          d.analysis_finished_at,
-          d.analysis_attempts,
-          d.analysis_score
+          ${optionalSelect.join(',\n          ')}
         FROM ai_analysis_queue q
         LEFT JOIN dadata_result d ON d.inn = q.inn
         ORDER BY q.queued_at ASC
