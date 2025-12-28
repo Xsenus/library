@@ -722,9 +722,10 @@ export default function AiCompanyAnalysisTab() {
   const integrationHost = useMemo(() => {
     if (!integrationHealth?.base) return null;
     try {
-      return new URL(integrationHealth.base).host;
+      const url = new URL(integrationHealth.base);
+      return url.hostname || url.host;
     } catch {
-      return integrationHealth.base;
+      return integrationHealth.base.split(':')[0] || integrationHealth.base;
     }
   }, [integrationHealth]);
 
@@ -735,14 +736,6 @@ export default function AiCompanyAnalysisTab() {
 
   const isRefreshing = loading || isPending;
   const okvedSelectValue = okvedCode ?? '__all__';
-  const autoRefreshLabel = useMemo(() => {
-    if (autoRefreshRemaining == null) return 'Автообновление';
-    const totalSeconds = Math.max(0, Math.ceil(autoRefreshRemaining / 1000));
-    const minutes = Math.floor(totalSeconds / 60);
-    const seconds = totalSeconds % 60;
-    return `Автообновление · ${minutes}:${seconds.toString().padStart(2, '0')}`;
-  }, [autoRefreshRemaining]);
-
   const selectedSteps = useMemo(
     () => (launchModeLocked ? forcedSteps : stepOptions.filter((opt) => stepFlags[opt.key]).map((opt) => opt.key)),
     [forcedSteps, launchModeLocked, stepFlags],
@@ -900,7 +893,8 @@ export default function AiCompanyAnalysisTab() {
       if (!res.ok || data?.ok === false) {
         throw new Error(data?.error || `Request failed with status ${res.status}`);
       }
-      setQueueItems(Array.isArray(data?.items) ? data.items : []);
+      const queueItems = Array.isArray(data?.items) ? data.items : [];
+      setQueueItems(queueItems);
     } catch (error) {
       console.error('Failed to fetch queue', error);
       setQueueError(
@@ -1704,11 +1698,8 @@ export default function AiCompanyAnalysisTab() {
                 <CardTitle className="text-lg font-semibold tracking-tight">
                   AI-анализ компаний
                 </CardTitle>
-                <p className="text-sm text-muted-foreground">
-                  Контроль очереди, фильтры и быстрый запуск без лишнего шума
-                </p>
               </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+              <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground lg:justify-end">
                 {stopSignalAt && (
                   <Badge
                     variant="outline"
@@ -1717,86 +1708,87 @@ export default function AiCompanyAnalysisTab() {
                     Остановка запрошена
                   </Badge>
                 )}
-                {lastLoadedAt && (
-                  <span>
-                    Обновлено:{' '}
-                    {new Date(lastLoadedAt).toLocaleTimeString('ru-RU', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                    })}
-                  </span>
+                <div className="flex flex-wrap items-center gap-2 text-sm text-foreground">
+                  <div className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
+                    <span className="text-muted-foreground">Всего компаний</span>
+                    <span className="font-semibold">{total.toLocaleString('ru-RU')}</span>
+                  </div>
+                  <div className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
+                    <span className="text-muted-foreground">Активных сейчас</span>
+                    <span className="flex items-center gap-1 font-semibold">
+                      {activeTotal.toLocaleString('ru-RU')}
+                      {activeTotal > 0 && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+                    </span>
+                  </div>
+                </div>
+                {(lastLoadedAt || integrationHost) && (
+                  <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm text-foreground">
+                    <span className="text-muted-foreground">Обновлено:</span>
+                    <span className="font-semibold">
+                      {lastLoadedAt
+                        ? new Date(lastLoadedAt).toLocaleTimeString('ru-RU', {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                            second: '2-digit',
+                          })
+                        : '—'}
+                    </span>
+                    {integrationHost && (
+                      <span
+                        className={cn(
+                          'rounded-md px-2 py-1 text-xs font-semibold text-background',
+                          integrationHealth?.available ? 'bg-emerald-500' : 'bg-destructive',
+                        )}
+                        title={integrationHealth?.detail ?? undefined}
+                      >
+                        IP {integrationHost}
+                      </span>
+                    )}
+                  </div>
                 )}
               </div>
             </div>
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
-                <span className="text-muted-foreground">Всего компаний</span>
-                <span className="font-semibold text-foreground">{total.toLocaleString('ru-RU')}</span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
-                <span className="text-muted-foreground">Активных сейчас</span>
-                <span className="flex items-center gap-1 font-semibold text-foreground">
-                  {activeTotal.toLocaleString('ru-RU')}
-                  {activeTotal > 0 && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-                </span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
-                <span className="text-muted-foreground">Автообновление</span>
-                <span className="font-medium text-foreground">
-                  {autoRefresh ? autoRefreshLabel : 'Выключено'}
-                </span>
-              </div>
-              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
-                <span className="text-muted-foreground">Интеграция</span>
-                <span
-                  className={cn(
-                    'flex items-center gap-1 font-semibold',
-                    integrationHealth?.available ? 'text-foreground' : 'text-destructive',
-                  )}
-                  title={integrationHealth?.detail ?? undefined}
-                >
-                  {integrationHealth?.available ? 'online' : 'offline'}
-                  {integrationHost ? ` · ${integrationHost}` : ''}
-                </span>
-              </div>
-            </div>
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <div className="flex flex-1 flex-wrap items-center gap-3">
-                <Input
-                  className="h-9 min-w-[220px] flex-1 text-sm md:w-[260px] xl:w-[280px]"
-                  placeholder="Поиск по названию или ИНН"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                />
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">Отрасль</span>
-                  <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
-                    <SelectTrigger
-                      className="h-9 min-w-[180px] text-sm"
-                      disabled={industriesLoading && industries.length === 0}>
-                      <SelectValue placeholder="Все отрасли" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">Все отрасли</SelectItem>
-                      {industries.map((item) => (
-                        <SelectItem key={item.id} value={String(item.id)}>
-                          {item.industry}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                  {industriesLoading && (
-                    <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
-                  )}
+              <div className="flex flex-wrap items-end gap-3 xl:gap-4">
+                <div className="flex min-w-[240px] flex-1 flex-col gap-1 xl:min-w-[280px]">
+                  <span className="text-[11px] font-medium uppercase text-muted-foreground">Поиск</span>
+                  <Input
+                    className="h-9 text-sm"
+                    placeholder="Поиск по названию или ИНН"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
                 </div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs text-muted-foreground">ОКВЭД</span>
+                <div className="flex min-w-[200px] flex-col gap-1">
+                  <span className="text-[11px] font-medium uppercase text-muted-foreground">Отрасль</span>
+                  <div className="flex items-center gap-2">
+                    <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
+                      <SelectTrigger
+                        className="h-9 w-full text-sm"
+                        disabled={industriesLoading && industries.length === 0}>
+                        <SelectValue placeholder="Все отрасли" />
+                      </SelectTrigger>
+                      <SelectContent>
+                        <SelectItem value="all">Все отрасли</SelectItem>
+                        {industries.map((item) => (
+                          <SelectItem key={item.id} value={String(item.id)}>
+                            {item.industry}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {industriesLoading && (
+                      <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                </div>
+                <div className="flex min-w-[240px] max-w-[340px] flex-col gap-1 xl:min-w-[260px]">
+                  <span className="text-[11px] font-medium uppercase text-muted-foreground">ОКВЭД</span>
                   <Select
                     value={okvedSelectValue}
                     onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
                   >
-                    <SelectTrigger className="h-9 min-w-[200px] max-w-[320px] text-left text-sm">
+                    <SelectTrigger className="h-9 w-full text-left text-sm">
                       <SelectValue placeholder="Все коды" />
                     </SelectTrigger>
                     <SelectContent>
@@ -1814,59 +1806,62 @@ export default function AiCompanyAnalysisTab() {
                     </SelectContent>
                   </Select>
                 </div>
-                <DropdownMenu>
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      type="button"
-                      variant={statusFilters.length ? 'secondary' : 'outline'}
-                      size="sm"
-                      className="h-9 gap-2"
-                    >
-                      <Filter className="h-4 w-4" />
-                      Статусы
-                      {statusFilters.length > 0 && (
-                        <span className="rounded-full bg-background/80 px-2 py-0.5 text-xs text-foreground">
-                          {statusFilters.length}
-                        </span>
-                      )}
-                    </Button>
-                  </DropdownMenuTrigger>
-                  <DropdownMenuContent align="start" className="w-60">
-                    <DropdownMenuLabel>Фильтр статусов</DropdownMenuLabel>
-                    <DropdownMenuSeparator />
-                    {statusOptions.map((option) => (
-                      <DropdownMenuCheckboxItem
-                        key={option.key}
-                        checked={statusFilters.includes(option.key)}
-                        disabled={available?.[option.field] === false}
-                        onCheckedChange={(checked) => {
-                          setStatusFilters((prev) => {
-                            if (checked) {
-                              if (prev.includes(option.key)) return prev;
-                              return [...prev, option.key];
-                            }
-                            return prev.filter((value) => value !== option.key);
-                          });
-                        }}
+                <div className="flex flex-col gap-1">
+                  <span className="text-[11px] font-medium uppercase text-muted-foreground">Статусы</span>
+                  <DropdownMenu>
+                    <DropdownMenuTrigger asChild>
+                      <Button
+                        type="button"
+                        variant={statusFilters.length ? 'secondary' : 'outline'}
+                        size="sm"
+                        className="h-9 gap-2"
                       >
-                        {option.label}
-                      </DropdownMenuCheckboxItem>
-                    ))}
-                    {statusFilters.length > 0 && (
-                      <>
-                        <DropdownMenuSeparator />
-                        <DropdownMenuItem
-                          onSelect={(event) => {
-                            event.preventDefault();
-                            setStatusFilters([]);
+                        <Filter className="h-4 w-4" />
+                        Статусы
+                        {statusFilters.length > 0 && (
+                          <span className="rounded-full bg-background/80 px-2 py-0.5 text-xs text-foreground">
+                            {statusFilters.length}
+                          </span>
+                        )}
+                      </Button>
+                    </DropdownMenuTrigger>
+                    <DropdownMenuContent align="start" className="w-60">
+                      <DropdownMenuLabel>Фильтр статусов</DropdownMenuLabel>
+                      <DropdownMenuSeparator />
+                      {statusOptions.map((option) => (
+                        <DropdownMenuCheckboxItem
+                          key={option.key}
+                          checked={statusFilters.includes(option.key)}
+                          disabled={available?.[option.field] === false}
+                          onCheckedChange={(checked) => {
+                            setStatusFilters((prev) => {
+                              if (checked) {
+                                if (prev.includes(option.key)) return prev;
+                                return [...prev, option.key];
+                              }
+                              return prev.filter((value) => value !== option.key);
+                            });
                           }}
                         >
-                          Сбросить фильтры
-                        </DropdownMenuItem>
-                      </>
-                    )}
-                  </DropdownMenuContent>
-                </DropdownMenu>
+                          {option.label}
+                        </DropdownMenuCheckboxItem>
+                      ))}
+                      {statusFilters.length > 0 && (
+                        <>
+                          <DropdownMenuSeparator />
+                          <DropdownMenuItem
+                            onSelect={(event) => {
+                              event.preventDefault();
+                              setStatusFilters([]);
+                            }}
+                          >
+                            Сбросить фильтры
+                          </DropdownMenuItem>
+                        </>
+                      )}
+                    </DropdownMenuContent>
+                  </DropdownMenu>
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
               <Tooltip>
