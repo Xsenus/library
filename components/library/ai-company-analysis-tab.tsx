@@ -893,7 +893,8 @@ export default function AiCompanyAnalysisTab() {
       if (!res.ok || data?.ok === false) {
         throw new Error(data?.error || `Request failed with status ${res.status}`);
       }
-      const queueItems = Array.isArray(data?.items) ? data.items : [];
+      const queueDataItems = data?.items;
+      const queueItems = Array.isArray(queueDataItems) ? queueDataItems : [];
       setQueueItems(queueItems);
     } catch (error) {
       console.error('Failed to fetch queue', error);
