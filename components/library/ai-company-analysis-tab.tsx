@@ -656,6 +656,7 @@ export default function AiCompanyAnalysisTab() {
   const forcedSteps = useMemo(() => getForcedSteps(true), []);
   const launchMode: 'full' | 'steps' = forcedLaunchMode;
   const showDebugStepButtons = false;
+  const showRunModePanel = false;
   const [stepFlags, setStepFlags] = useState<Record<StepKey, boolean>>(() => {
     const defaults = launchModeLocked ? forcedSteps : getDefaultSteps();
     return stepOptions.reduce(
@@ -1677,42 +1678,16 @@ export default function AiCompanyAnalysisTab() {
       <div className="space-y-4 py-4">
         <Card className="border border-border/60 shadow-sm">
           <CardHeader className="space-y-4 border-b bg-muted/30 p-4">
-            <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
-              <CardTitle className="text-base font-semibold tracking-tight">
-                AI-анализ компаний
-              </CardTitle>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div className="space-y-1">
+                <CardTitle className="text-lg font-semibold tracking-tight">
+                  AI-анализ компаний
+                </CardTitle>
+                <p className="text-sm text-muted-foreground">
+                  Контроль очереди, фильтры и быстрый запуск без лишнего шума
+                </p>
+              </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                <Badge variant="outline" className="bg-background text-foreground">
-                  Всего: {total.toLocaleString('ru-RU')}
-                </Badge>
-                {activeTotal > 0 && (
-                  <Badge variant="secondary" className="gap-1">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    Активных: {activeTotal}
-                    {activeOffPage > 0 ? (
-                      <span className="text-[11px] text-muted-foreground">вне страницы: {activeOffPage}</span>
-                    ) : null}
-                  </Badge>
-                )}
-                {autoRefresh && (
-                  <Badge variant="default" className="gap-1">
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                    {autoRefreshLabel}
-                  </Badge>
-                )}
-                {integrationHealth && (
-                  <Badge
-                    variant={integrationHealth.available ? 'outline' : 'destructive'}
-                    className="gap-1"
-                    title={integrationHealth.detail ?? undefined}
-                  >
-                    <span className="font-medium">AI integration</span>
-                    <span className="text-[11px] text-muted-foreground">
-                      {integrationHealth.available ? 'online' : 'offline'}
-                      {integrationHost ? ` · ${integrationHost}` : ''}
-                    </span>
-                  </Badge>
-                )}
                 {stopSignalAt && (
                   <Badge
                     variant="outline"
@@ -1731,6 +1706,38 @@ export default function AiCompanyAnalysisTab() {
                     })}
                   </span>
                 )}
+              </div>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Всего компаний</span>
+                <span className="font-semibold text-foreground">{total.toLocaleString('ru-RU')}</span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Активных сейчас</span>
+                <span className="flex items-center gap-1 font-semibold text-foreground">
+                  {activeTotal.toLocaleString('ru-RU')}
+                  {activeTotal > 0 && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+                </span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Автообновление</span>
+                <span className="font-medium text-foreground">
+                  {autoRefresh ? autoRefreshLabel : 'Выключено'}
+                </span>
+              </div>
+              <div className="flex items-center justify-between rounded-lg border bg-background px-3 py-2 text-sm">
+                <span className="text-muted-foreground">Интеграция</span>
+                <span
+                  className={cn(
+                    'flex items-center gap-1 font-semibold',
+                    integrationHealth?.available ? 'text-foreground' : 'text-destructive',
+                  )}
+                  title={integrationHealth?.detail ?? undefined}
+                >
+                  {integrationHealth?.available ? 'online' : 'offline'}
+                  {integrationHost ? ` · ${integrationHost}` : ''}
+                </span>
               </div>
             </div>
             <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
@@ -1907,7 +1914,13 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
-            <div className="flex flex-col gap-2 rounded-lg border bg-background/60 p-3">
+            <div
+              className={cn(
+                'flex flex-col gap-2 rounded-lg border bg-background/60 p-3',
+                !showRunModePanel && 'hidden',
+              )}
+              aria-hidden={!showRunModePanel}
+            >
               <div className="flex flex-wrap items-center gap-3 text-sm">
                 <span className="font-medium">Режим запуска</span>
                 <Badge variant="secondary" className="font-normal">

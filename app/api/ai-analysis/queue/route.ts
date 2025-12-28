@@ -81,6 +81,19 @@ function buildOptionalSelect(columns: Set<string>): string[] {
   });
 }
 
+function normalizeRunningCondition(columns: Set<string>): string {
+  const status = columns.has('analysis_status') ? 'd.analysis_status' : "COALESCE(d.status, '')";
+  const progress = columns.has('analysis_progress') ? 'COALESCE(d.analysis_progress, 0)' : '0';
+  const startedAt = columns.has('analysis_started_at') ? 'd.analysis_started_at' : 'NULL';
+  const finishedAt = columns.has('analysis_finished_at') ? 'd.analysis_finished_at' : 'NULL';
+
+  return `(
+    LOWER(COALESCE(${status}, '')) SIMILAR TO '%(running|processing|in_progress|starting|queued)%'
+    OR (${progress} > 0 AND ${progress} < 0.999)
+    OR (${startedAt} IS NOT NULL AND ${finishedAt} IS NULL AND ${startedAt} > now() - interval '${QUEUE_STALE_INTERVAL}')
+  )`;
+}
+
 function normalizeStatuses(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
   return Array.from(new Set(raw.map((item) => String(item ?? '').trim()).filter(Boolean)));
@@ -178,23 +191,44 @@ export async function GET(request: NextRequest) {
     const limit = normalizeLimit(request.nextUrl.searchParams.get('limit'));
     const columns = await getExistingColumns();
     const optionalSelect = buildOptionalSelect(columns);
+    const runningCondition = normalizeRunningCondition(columns);
+
+    const selectList = [`q.source`, `q.inn`, `q.queued_at`, `q.queued_by`, ...optionalSelect].join(',\n          ');
+    const selectListRunning = [`r.source`, `r.inn`, `r.queued_at`, `r.queued_by`, ...optionalSelect].join(',\n          ');
 
     const { rows } = await dbBitrix.query(
       `
-        SELECT
-          q.inn,
-          q.queued_at,
-          q.queued_by,
-          ${optionalSelect.join(',\n          ')}
-        FROM ai_analysis_queue q
-        LEFT JOIN dadata_result d ON d.inn = q.inn
-        ORDER BY q.queued_at ASC
+        WITH queue_items AS (
+          SELECT 'queue'::text AS source, q.inn, q.queued_at, q.queued_by, d.*
+          FROM ai_analysis_queue q
+          LEFT JOIN dadata_result d ON d.inn = q.inn
+        ),
+        running_items AS (
+          SELECT 'running'::text AS source, d.inn, COALESCE(d.analysis_started_at, now()) AS queued_at, NULL::text AS queued_by, d.*
+          FROM dadata_result d
+          LEFT JOIN ai_analysis_queue q ON q.inn = d.inn
+          WHERE q.inn IS NULL AND ${runningCondition}
+        ),
+        combined AS (
+          SELECT ${selectList} FROM queue_items q
+          UNION ALL
+          SELECT ${selectListRunning} FROM running_items r
+        )
+        SELECT *
+        FROM combined
+        ORDER BY queued_at ASC
         LIMIT $1
       `,
       [limit],
     );
 
-    return NextResponse.json({ ok: true, items: rows });
+    const items = rows.map((row) => ({
+      ...row,
+      analysis_status: row.analysis_status ?? (row.source === 'queue' ? 'queued' : row.analysis_status),
+      analysis_outcome: row.analysis_outcome ?? (row.source === 'queue' ? 'pending' : row.analysis_outcome),
+    }));
+
+    return NextResponse.json({ ok: true, items });
   } catch (error) {
     console.error('GET /api/ai-analysis/queue error', error);
     return NextResponse.json({ ok: false, items: [] }, { status: 500 });
