@@ -343,22 +343,30 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
       [],
     );
 
-  const mapEquipment = (items: any[]): Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }> =>
-    items
-      .map((item) => {
-        if (!item) return null;
-        if (typeof item === 'string') return { name: item };
-        if (typeof item === 'object') {
-          const name = String(item.name ?? item.equipment ?? item.title ?? '').trim();
-          const equip_group = item.equip_group ?? item.group ?? null;
-          const url = item.url ?? item.link ?? null;
-          const domain = item.domain ?? normalizeSite(url ?? null);
-          if (!name && !equip_group && !url) return null;
-          return { name: name || equip_group || url || '—', equip_group, url, domain };
-        }
-        return { name: String(item) };
-      })
-      .filter((p): p is { name: string; equip_group?: string | null; url?: string | null; domain?: string | null } => !!p && !!p.name);
+  const mapEquipment = (
+    items: any[],
+  ): Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }> =>
+    items.reduce<Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }>>((acc, item) => {
+      if (!item) return acc;
+      if (typeof item === 'string') {
+        acc.push({ name: item });
+        return acc;
+      }
+      if (typeof item === 'object') {
+        const name = String(item.name ?? item.equipment ?? item.title ?? '').trim();
+        const equip_group = item.equip_group ?? item.group ?? null;
+        const url = item.url ?? item.link ?? null;
+        const domain = item.domain ?? normalizeSite(url ?? null);
+
+        if (!name && !equip_group && !url) return acc;
+
+        acc.push({ name: name || equip_group || url || '—', equip_group, url, domain });
+        return acc;
+      }
+
+      acc.push({ name: String(item) });
+      return acc;
+    }, []);
 
   const prodclass = ai?.prodclass && typeof ai.prodclass === 'object' ? ai.prodclass : null;
 
