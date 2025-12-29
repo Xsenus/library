@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -29,15 +30,6 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
@@ -60,6 +52,31 @@ const stepOptions: { key: StepKey; label: string }[] = [
   { key: 'ib_match', label: 'Продклассы' },
   { key: 'equipment_selection', label: 'Оборудование' },
 ];
+
+const PAGE_SIZE_STORAGE_KEY = 'ai-analysis-page-size';
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 75, 100];
+
+type ColumnWidthKey = 'company' | 'contacts' | 'status' | 'pipeline' | 'actions';
+
+const DEFAULT_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
+  company: 250,
+  contacts: 190,
+  status: 300,
+  pipeline: 220,
+  actions: 150,
+};
+
+const MIN_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
+  company: 250,
+  contacts: 190,
+  status: 240,
+  pipeline: 220,
+  actions: 150,
+};
+
+const COLUMN_ORDER: ColumnWidthKey[] = ['company', 'contacts', 'status', 'pipeline', 'actions'];
+
+const COLUMN_WIDTHS_KEY = 'ai-analysis-column-widths';
 
 type PipelineStep = { label: string; status?: string | null };
 
@@ -622,7 +639,12 @@ export default function AiCompanyAnalysisTab() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState<number>(() => {
+    if (typeof window === 'undefined') return 20;
+    const stored = Number(localStorage.getItem(PAGE_SIZE_STORAGE_KEY));
+    if (Number.isFinite(stored) && PAGE_SIZE_OPTIONS.includes(stored)) return stored;
+    return 20;
+  });
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
@@ -669,9 +691,35 @@ export default function AiCompanyAnalysisTab() {
   const [filterLimit, setFilterLimit] = useState(200);
   const [filterIncludeQueued, setFilterIncludeQueued] = useState(false);
   const [filterIncludeRunning, setFilterIncludeRunning] = useState(false);
+  const [columnWidths, setColumnWidths] = useState<Record<ColumnWidthKey, number>>(() => {
+    if (typeof window === 'undefined') return DEFAULT_COLUMN_WIDTHS;
+
+    try {
+      const raw = localStorage.getItem(COLUMN_WIDTHS_KEY);
+      if (!raw) return DEFAULT_COLUMN_WIDTHS;
+      const parsed = JSON.parse(raw) as Partial<Record<ColumnWidthKey, number>>;
+
+      const sanitized = Object.entries(parsed ?? {}).reduce(
+        (acc, [key, value]) => {
+          const colKey = key as ColumnWidthKey;
+          if (typeof value === 'number' && Number.isFinite(value)) {
+            acc[colKey] = Math.max(MIN_COLUMN_WIDTHS[colKey], value);
+          }
+          return acc;
+        },
+        {} as Partial<Record<ColumnWidthKey, number>>,
+      );
+
+      return { ...DEFAULT_COLUMN_WIDTHS, ...sanitized } as Record<ColumnWidthKey, number>;
+    } catch (err) {
+      console.error('Failed to parse AI analysis column widths from storage', err);
+      return DEFAULT_COLUMN_WIDTHS;
+    }
+  });
   const analyzerInfo = useMemo(() => (infoCompany ? normalizeAnalyzerInfo(infoCompany.analysis_info) : null), [infoCompany]);
   const analyzerSites = analyzerInfo?.ai?.sites ?? [];
   const analyzerProdclass = analyzerInfo?.ai?.prodclass ?? null;
+  const [filtersDialogOpen, setFiltersDialogOpen] = useState(false);
   const forcedLaunchMode = useMemo(() => getForcedLaunchMode(true), []);
   const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
   const forcedSteps = useMemo(() => getForcedSteps(true), []);
@@ -686,10 +734,39 @@ export default function AiCompanyAnalysisTab() {
     );
   });
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(pageSize));
+  }, [pageSize]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths));
+  }, [columnWidths]);
+
   const debouncedSearch = useDebounce(search, 400);
   const { toast } = useToast();
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (search.trim()) count += 1;
+    if (industryId !== 'all') count += 1;
+    if (okvedCode) count += 1;
+    count += statusFilters.length;
+    return count;
+  }, [industryId, okvedCode, search, statusFilters]);
+
+  const hasFilters = activeFilterCount > 0;
+
+  const resetFilters = useCallback(() => {
+    setSearch('');
+    setIndustryId('all');
+    setOkvedCode(undefined);
+    setStatusFilters([]);
+    setPage(1);
+  }, []);
 
   const activeTotal = useMemo(() => {
     if (!activeSummary) return 0;
@@ -707,6 +784,83 @@ export default function AiCompanyAnalysisTab() {
   );
 
   const activeOffPage = Math.max(0, activeTotal - activeCount);
+
+  const resizeStateRef = useRef<{ key: ColumnWidthKey; startX: number; baseWidth: number } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const handleMove = (event: PointerEvent) => {
+      const state = resizeStateRef.current;
+      if (!state) return;
+
+      event.preventDefault();
+
+      const delta = event.clientX - state.startX;
+      setColumnWidths((prev) => ({
+        ...prev,
+        [state.key]: Math.max(MIN_COLUMN_WIDTHS[state.key], state.baseWidth + delta),
+      }));
+    };
+
+    const handleUp = () => {
+      if (!resizeStateRef.current) return;
+      resizeStateRef.current = null;
+      document.body.style.cursor = '';
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+  }, []);
+
+  const startColumnResize = useCallback(
+    (key: ColumnWidthKey, e: ReactPointerEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      resizeStateRef.current = {
+        key,
+        startX: e.clientX,
+        baseWidth: columnWidths[key] ?? DEFAULT_COLUMN_WIDTHS[key],
+      };
+
+      (e.target as HTMLElement | null)?.setPointerCapture?.(e.pointerId);
+      document.body.style.cursor = 'col-resize';
+    },
+    [columnWidths],
+  );
+
+  const renderResizeHandle = (key: ColumnWidthKey) => (
+    <span className="group relative block h-full w-4 cursor-col-resize select-none">
+      <span
+        className="absolute right-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-full bg-border transition-colors group-hover:bg-primary"
+        aria-hidden
+      />
+      <span
+        className="absolute inset-y-0 right-[-6px] block w-4"
+        onPointerDown={(e) => startColumnResize(key, e)}
+        onDoubleClick={() =>
+          setColumnWidths((prev) => ({ ...prev, [key]: DEFAULT_COLUMN_WIDTHS[key] }))
+        }
+        role="presentation"
+      />
+    </span>
+  );
+
+  const columnStyle = useCallback(
+    (key: ColumnWidthKey) => ({ width: columnWidths[key], minWidth: MIN_COLUMN_WIDTHS[key] }),
+    [columnWidths],
+  );
+
+  const tableMinWidth = useMemo(
+    () => COLUMN_ORDER.reduce((acc, key) => acc + (columnWidths[key] ?? DEFAULT_COLUMN_WIDTHS[key]), 80),
+    [columnWidths],
+  );
 
   const isAnyActive = useMemo(
     () => {
@@ -736,6 +890,10 @@ export default function AiCompanyAnalysisTab() {
 
   const isRefreshing = loading || isPending;
   const okvedSelectValue = okvedCode ?? '__all__';
+  const selectedOkved = useMemo(
+    () => okvedOptions.find((item) => item.okved_code === okvedCode) ?? null,
+    [okvedCode, okvedOptions],
+  );
   const selectedSteps = useMemo(
     () => (launchModeLocked ? forcedSteps : stepOptions.filter((opt) => stepFlags[opt.key]).map((opt) => opt.key)),
     [forcedSteps, launchModeLocked, stepFlags],
@@ -972,7 +1130,37 @@ export default function AiCompanyAnalysisTab() {
         }
         const data = await res.json();
         const items = Array.isArray(data.items) ? data.items : [];
-        setOkvedOptions(items);
+
+        const deduped = items
+          .map((item) => {
+            const code = typeof item.okved_code === 'string' ? item.okved_code.trim() : String(item.okved_code ?? '');
+            const main = typeof item.okved_main === 'string' ? item.okved_main.trim() : '';
+            if (!code) return null;
+            return { ...item, okved_code: code, okved_main: main } as {
+              id: number;
+              okved_code: string;
+              okved_main: string;
+            };
+          })
+          .filter(Boolean) as Array<{ id: number; okved_code: string; okved_main: string }>;
+
+        const uniqueByCode = Array.from(
+          deduped.reduce((acc, item) => {
+            const existing = acc.get(item.okved_code);
+            if (!existing) {
+              acc.set(item.okved_code, item);
+              return acc;
+            }
+
+            if (item.okved_main && item.okved_main.length > existing.okved_main.length) {
+              acc.set(item.okved_code, item);
+            }
+
+            return acc;
+          }, new Map<string, { id: number; okved_code: string; okved_main: string }>()),
+        ).map(([, value]) => value);
+
+        setOkvedOptions(uniqueByCode);
       } catch (error) {
         console.error('Failed to load OKВЭД list:', error);
         setOkvedOptions([]);
@@ -1749,120 +1937,27 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <div className="flex flex-1 flex-wrap items-end gap-3">
-                <div className="flex min-w-[230px] flex-1 flex-col gap-1 md:min-w-[260px]">
-                  <span className="text-xs font-medium text-muted-foreground">Поиск</span>
-                  <Input
-                    className="h-9 flex-1 text-sm"
-                    placeholder="Поиск по названию или ИНН"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                </div>
-                <div className="flex min-w-[200px] flex-1 flex-col gap-1 sm:flex-[0_0_220px]">
-                  <span className="text-xs font-medium text-muted-foreground">Отрасль</span>
-                  <div className="flex items-center gap-2">
-                    <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
-                      <SelectTrigger
-                        className="h-9 w-full text-sm"
-                        disabled={industriesLoading && industries.length === 0}>
-                        <SelectValue placeholder="Все отрасли" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Все отрасли</SelectItem>
-                        {industries.map((item) => (
-                          <SelectItem key={item.id} value={String(item.id)}>
-                            {item.industry}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {industriesLoading && (
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    )}
-                  </div>
-                </div>
-                <div className="flex min-w-[240px] flex-1 flex-col gap-1 sm:flex-[0_0_260px]">
-                  <span className="text-xs font-medium text-muted-foreground">ОКВЭД</span>
-                  <Select
-                    value={okvedSelectValue}
-                    onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
-                  >
-                    <SelectTrigger className="h-9 w-full text-left text-sm">
-                      <SelectValue placeholder="Все коды" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all__">Все коды</SelectItem>
-                      {okvedOptions.map((item) => (
-                        <SelectItem key={item.id} value={item.okved_code} title={item.okved_main}>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-medium text-foreground">{item.okved_code}</span>
-                            <span className="text-xs text-muted-foreground whitespace-normal break-words">
-                              {truncateText(item.okved_main, 140)}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex flex-col gap-1 sm:w-auto">
-                  <span className="text-xs font-medium text-muted-foreground">Статусы</span>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant={statusFilters.length ? 'secondary' : 'outline'}
-                        size="sm"
-                        className="h-9 gap-2"
-                      >
-                        <Filter className="h-4 w-4" />
-                        Статусы
-                        {statusFilters.length > 0 && (
-                          <span className="rounded-full bg-background/80 px-2 py-0.5 text-xs text-foreground">
-                            {statusFilters.length}
-                          </span>
-                        )}
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-60">
-                      <DropdownMenuLabel>Фильтр статусов</DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      {statusOptions.map((option) => (
-                        <DropdownMenuCheckboxItem
-                          key={option.key}
-                          checked={statusFilters.includes(option.key)}
-                          disabled={available?.[option.field] === false}
-                          onCheckedChange={(checked) => {
-                            setStatusFilters((prev) => {
-                              if (checked) {
-                                if (prev.includes(option.key)) return prev;
-                                return [...prev, option.key];
-                              }
-                              return prev.filter((value) => value !== option.key);
-                            });
-                          }}
-                        >
-                          {option.label}
-                        </DropdownMenuCheckboxItem>
-                      ))}
-                      {statusFilters.length > 0 && (
-                        <>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onSelect={(event) => {
-                              event.preventDefault();
-                              setStatusFilters([]);
-                            }}
-                          >
-                            Сбросить фильтры
-                          </DropdownMenuItem>
-                        </>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant={hasFilters ? 'secondary' : 'outline'}
+                  className="h-9 gap-2"
+                  onClick={() => setFiltersDialogOpen(true)}
+                >
+                  <Filter className="h-4 w-4" />
+                  Фильтры
+                  {hasFilters && (
+                    <Badge variant="outline" className="px-1 text-[11px]">
+                      {activeFilterCount}
+                    </Badge>
+                  )}
+                </Button>
+                {hasFilters && (
+                  <Button type="button" variant="ghost" size="sm" className="h-9" onClick={resetFilters}>
+                    Сбросить
+                  </Button>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
               <Tooltip>
@@ -1931,6 +2026,25 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
+            {(search.trim() || industryId !== 'all' || okvedCode) && (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {search.trim() && (
+                  <Badge variant="secondary" className="max-w-full whitespace-normal">
+                    Поиск: {search.trim()}
+                  </Badge>
+                )}
+                {industryId !== 'all' && (
+                  <Badge variant="secondary" className="max-w-full whitespace-normal">
+                    Отрасль: {industries.find((item) => String(item.id) === industryId)?.industry ?? industryId}
+                  </Badge>
+                )}
+                {okvedCode && (
+                  <Badge variant="secondary" className="max-w-full whitespace-normal">
+                    ОКВЭД: {okvedCode}
+                  </Badge>
+                )}
+              </div>
+            )}
             <div
               className={cn(
                 'flex flex-col gap-2 rounded-lg border bg-background/60 p-3',
@@ -2004,7 +2118,8 @@ export default function AiCompanyAnalysisTab() {
                     value={String(pageSize)}
                     onValueChange={(value) => {
                       const num = Number(value) || 20;
-                      setPageSize(num);
+                      const nextSize = PAGE_SIZE_OPTIONS.includes(num) ? num : 20;
+                      setPageSize(nextSize);
                       setPage(1);
                     }}
                   >
@@ -2012,7 +2127,7 @@ export default function AiCompanyAnalysisTab() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {[10, 20, 30, 50, 75, 100].map((size) => (
+                      {PAGE_SIZE_OPTIONS.map((size) => (
                         <SelectItem key={size} value={String(size)}>
                           {size}
                         </SelectItem>
@@ -2042,16 +2157,18 @@ export default function AiCompanyAnalysisTab() {
                 </div>
               </div>
               <Separator />
-              <div className="relative rounded-lg border border-border/60 bg-background">
+              <div className="relative overflow-x-auto rounded-lg border border-border/60 bg-background">
                 {isRefreshing && (
                   <div className="pointer-events-none absolute right-4 top-3 z-10 flex items-center gap-2 rounded-full bg-background/90 px-3 py-1 text-xs text-muted-foreground shadow-sm">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     Обновляем данные…
                   </div>
                 )}
-                <div className="overflow-hidden">
-                  <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
-                    <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                <table
+                  className="w-full table-fixed border-separate border-spacing-0 text-sm"
+                  style={{ minWidth: tableMinWidth }}
+                >
+                  <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
                       <tr>
                         <th className="w-12 px-4 py-3 align-middle">
                           <Checkbox
@@ -2060,11 +2177,36 @@ export default function AiCompanyAnalysisTab() {
                             aria-label="Выбрать все"
                           />
                         </th>
-                        <th className="w-[25%] px-4 py-3 text-left">Компания</th>
-                        <th className="w-[23%] px-4 py-3 text-left">Контакты</th>
-                        <th className="w-[24%] px-4 py-3 text-left">Запуски и статус</th>
-                        <th className="w-[20%] px-4 py-3 text-left">Пайплайн</th>
-                        <th className="w-[8%] px-4 py-3 text-right">Действия</th>
+                        <th className="relative px-4 py-3 text-left" style={columnStyle('company')}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span>Компания</span>
+                            {renderResizeHandle('company')}
+                          </div>
+                        </th>
+                        <th className="relative px-4 py-3 text-left" style={columnStyle('contacts')}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span>Контакты</span>
+                            {renderResizeHandle('contacts')}
+                          </div>
+                        </th>
+                        <th className="relative px-4 py-3 text-left" style={columnStyle('status')}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span>Запуски и статус</span>
+                            {renderResizeHandle('status')}
+                          </div>
+                        </th>
+                        <th className="relative px-4 py-3 text-left" style={columnStyle('pipeline')}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span>Пайплайн</span>
+                            {renderResizeHandle('pipeline')}
+                          </div>
+                        </th>
+                        <th className="relative px-4 py-3 text-right" style={columnStyle('actions')}>
+                          <div className="flex items-center justify-end gap-2">
+                            <span>Действия</span>
+                            {renderResizeHandle('actions')}
+                          </div>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2169,7 +2311,7 @@ export default function AiCompanyAnalysisTab() {
                                 aria-label={`Выбрать компанию ${company.short_name}`}
                               />
                             </td>
-                            <td className="px-4 py-4 align-top">
+                            <td className="px-4 py-4 align-top" style={columnStyle('company')}>
                               <div className="space-y-2">
                                 <div className="flex items-center gap-2">
                                   <outcome.icon className={cn('h-4 w-4', outcome.iconClass)} />
@@ -2201,7 +2343,7 @@ export default function AiCompanyAnalysisTab() {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-4 py-4 align-top text-xs">
+                            <td className="px-4 py-4 align-top text-xs" style={columnStyle('contacts')}>
                               <div className="space-y-4">
                                 <div>
                                   <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
@@ -2263,7 +2405,7 @@ export default function AiCompanyAnalysisTab() {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-4 py-4 align-top text-xs">
+                            <td className="px-4 py-4 align-top text-xs" style={columnStyle('status')}>
                               <div className="space-y-3">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
@@ -2299,7 +2441,7 @@ export default function AiCompanyAnalysisTab() {
                                 )}
                               </div>
                             </td>
-                            <td className="px-4 py-4 align-top text-xs">
+                            <td className="px-4 py-4 align-top text-xs" style={columnStyle('pipeline')}>
                               {state.running ? (
                                 <div className="space-y-2">
                                   <Progress value={progressPercent} className="h-2" />
@@ -2309,7 +2451,7 @@ export default function AiCompanyAnalysisTab() {
                                   </div>
                                 </div>
                               ) : steps.length ? (
-                                <div className="max-w-[260px] space-y-2">
+                                <div className="space-y-2">
                                   <ul className="space-y-1 text-xs text-muted-foreground">
                                     {steps.slice(0, 4).map((step, index) => (
                                       <li key={`${company.inn}-step-${index}`} className="flex items-start gap-2">
@@ -2338,7 +2480,7 @@ export default function AiCompanyAnalysisTab() {
                                 <span className="text-muted-foreground">—</span>
                               )}
                             </td>
-                            <td className="px-4 py-4 align-top text-right">
+                            <td className="px-4 py-4 align-top text-right" style={columnStyle('actions')}>
                               <div className="flex flex-col items-end gap-2">
                                 <div className="flex items-center justify-end gap-2">
                                   <Tooltip>
@@ -2461,12 +2603,133 @@ export default function AiCompanyAnalysisTab() {
                       )}
                     </tbody>
                   </table>
-                </div>
 
               </div>
             </div>
           </CardContent>
         </Card>
+
+        <Dialog open={filtersDialogOpen} onOpenChange={setFiltersDialogOpen}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>Фильтры AI-анализа</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <span className="text-[11px] uppercase text-muted-foreground">Поиск</span>
+                <Input
+                  className="h-9 text-sm"
+                  placeholder="Поиск по названию или ИНН"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1">
+                  <span className="text-[11px] uppercase text-muted-foreground">Отрасль</span>
+                  <div className="flex items-center gap-2">
+                    <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
+                      <SelectTrigger
+                        className="h-9 w-full text-left text-sm"
+                        disabled={industriesLoading && industries.length === 0}
+                      >
+                        <SelectValue placeholder="Все отрасли" />
+                      </SelectTrigger>
+                      <SelectContent className="min-w-full sm:min-w-[420px]">
+                        <SelectItem value="all">Все отрасли</SelectItem>
+                        {industries.map((item) => (
+                          <SelectItem key={item.id} value={String(item.id)}>
+                            {item.industry}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {industriesLoading && (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[11px] uppercase text-muted-foreground">ОКВЭД</span>
+                  <Select
+                    value={okvedSelectValue}
+                    onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
+                  >
+                    <SelectTrigger className="h-9 w-full text-left text-sm">
+                      <SelectValue placeholder="Все коды">
+                        {selectedOkved ? (
+                          <div className="flex flex-col gap-0.5 text-left">
+                            <span className="font-medium text-foreground">{selectedOkved.okved_code}</span>
+                            {selectedOkved.okved_main && (
+                              <span className="text-xs text-muted-foreground whitespace-normal break-words">
+                                {truncateText(selectedOkved.okved_main, 120)}
+                              </span>
+                            )}
+                          </div>
+                        ) : null}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent className="min-w-full sm:min-w-[480px] lg:min-w-[620px]">
+                      <SelectItem value="__all__">Все коды</SelectItem>
+                      {okvedOptions.map((item) => (
+                        <SelectItem key={item.id} value={item.okved_code} title={item.okved_main}>
+                          <div className="flex flex-col gap-0.5 text-left">
+                            <span className="font-medium text-foreground">{item.okved_code}</span>
+                            <span className="text-xs text-muted-foreground whitespace-normal break-words">
+                              {truncateText(item.okved_main, 160)}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <span className="text-[11px] uppercase text-muted-foreground">Статусы</span>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {statusOptions.map((option) => (
+                    <label
+                      key={option.key}
+                      className={cn(
+                        'flex items-center gap-3 rounded-md border bg-muted/50 px-3 py-2 text-sm',
+                        available?.[option.field] === false && 'opacity-60',
+                      )}
+                    >
+                      <Checkbox
+                        checked={statusFilters.includes(option.key)}
+                        disabled={available?.[option.field] === false}
+                        onCheckedChange={(checked) => {
+                          setStatusFilters((prev) => {
+                            if (checked) {
+                              if (prev.includes(option.key)) return prev;
+                              return [...prev, option.key];
+                            }
+                            return prev.filter((value) => value !== option.key);
+                          });
+                        }}
+                      />
+                      <span className="text-foreground">{option.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">
+                  {hasFilters ? 'Применены пользовательские фильтры.' : 'Фильтры не выбраны.'}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="ghost" size="sm" onClick={resetFilters}>
+                    Сбросить фильтры
+                  </Button>
+                  <Button type="button" onClick={() => setFiltersDialogOpen(false)}>
+                    Готово
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>
           <DialogContent className="max-w-4xl">
