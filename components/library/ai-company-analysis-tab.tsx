@@ -73,6 +73,8 @@ const MIN_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
   actions: 150,
 };
 
+const COLUMN_ORDER: ColumnWidthKey[] = ['company', 'contacts', 'status', 'pipeline', 'actions'];
+
 const COLUMN_WIDTHS_KEY = 'ai-analysis-column-widths';
 
 type PipelineStep = { label: string; status?: string | null };
@@ -835,6 +837,11 @@ export default function AiCompanyAnalysisTab() {
 
   const columnStyle = useCallback(
     (key: ColumnWidthKey) => ({ width: columnWidths[key], minWidth: MIN_COLUMN_WIDTHS[key] }),
+    [columnWidths],
+  );
+
+  const tableMinWidth = useMemo(
+    () => COLUMN_ORDER.reduce((acc, key) => acc + (columnWidths[key] ?? DEFAULT_COLUMN_WIDTHS[key]), 80),
     [columnWidths],
   );
 
@@ -2140,9 +2147,11 @@ export default function AiCompanyAnalysisTab() {
                     Обновляем данные…
                   </div>
                 )}
-                <div className="overflow-hidden">
-                  <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
-                    <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                <table
+                  className="w-full table-fixed border-separate border-spacing-0 text-sm"
+                  style={{ minWidth: tableMinWidth }}
+                >
+                  <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
                       <tr>
                         <th className="w-12 px-4 py-3 align-middle">
                           <Checkbox
@@ -2577,7 +2586,6 @@ export default function AiCompanyAnalysisTab() {
                       )}
                     </tbody>
                   </table>
-                </div>
 
               </div>
             </div>
