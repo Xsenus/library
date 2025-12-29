@@ -301,6 +301,50 @@ function parseProgress(val: any): number | null {
   return null;
 }
 
+function mergeAnalyzerInfo(
+  base: any,
+  extra: {
+    sites: string[] | null;
+    description: string | null;
+    domain: string | null;
+    matchLevel: string | null;
+    analysisClass: string | null;
+    okvedMatch: string | null;
+    equipment: any[];
+    tnved: any[];
+  },
+) {
+  const company = base?.company && typeof base.company === 'object' ? { ...base.company } : {};
+  const ai = base?.ai && typeof base.ai === 'object' ? { ...base.ai } : {};
+
+  if (!ai.sites && extra.sites?.length) ai.sites = extra.sites;
+  if (!ai.products && extra.tnved?.length) ai.products = extra.tnved;
+  if (!ai.equipment && extra.equipment?.length) ai.equipment = extra.equipment;
+
+  if (!ai.prodclass && (extra.analysisClass || extra.matchLevel || extra.okvedMatch)) {
+    ai.prodclass = {
+      name: extra.analysisClass ?? null,
+      label: extra.analysisClass ?? null,
+      score: extra.matchLevel ? parseNumber(extra.matchLevel) : null,
+      description_okved_score: extra.okvedMatch ? parseNumber(extra.okvedMatch) : null,
+    };
+  }
+
+  if (!company.domain1 && extra.description) company.domain1 = extra.description;
+  if (!company.domain1_site && extra.domain) company.domain1_site = extra.domain;
+
+  const hasCompany = Object.keys(company).length > 0;
+  const hasAi = Object.keys(ai).length > 0;
+
+  if (!hasCompany && !hasAi) return base ?? null;
+
+  return {
+    ...base,
+    ...(hasCompany ? { company } : {}),
+    ...(hasAi ? { ai } : {}),
+  };
+}
+
 function normalizeEquipment(raw: any): any[] {
   const parsed = parseJson(raw);
   if (!parsed) return [];
@@ -530,11 +574,11 @@ export async function GET(request: NextRequest) {
 
     const total = countRes.rows?.[0]?.cnt ?? 0;
 
-    const items = dataRes.rows.map((row: any) => {
-      const core = okvedCompanySchema.parse(row);
-      const contacts = contactsByInn.get(core.inn);
+      const items = dataRes.rows.map((row: any) => {
+        const core = okvedCompanySchema.parse(row);
+        const contacts = contactsByInn.get(core.inn);
 
-      const analysisInfo = parseJson(row.analysis_info);
+        const analysisInfo = parseJson(row.analysis_info);
 
       const startedAt = parseIso(row.analysis_started_at);
       const finishedAt = parseIso(row.analysis_finished_at);
@@ -564,12 +608,22 @@ export async function GET(request: NextRequest) {
       const okvedMatch =
         parseString(row.analysis_okved_match) ||
         (analysisInfo && parseString((analysisInfo as any)?.okved_match));
-      const domain =
-        parseString(row.analysis_domain) ||
-        (analysisInfo && parseString((analysisInfo as any)?.domain));
+        const domain =
+          parseString(row.analysis_domain) ||
+          (analysisInfo && parseString((analysisInfo as any)?.domain));
 
-      const equipment = normalizeEquipment(row.analysis_equipment);
-      const tnved = normalizeTnved(row.analysis_tnved);
+        const equipment = normalizeEquipment(row.analysis_equipment);
+        const tnved = normalizeTnved(row.analysis_tnved);
+        const mergedAnalyzer = mergeAnalyzerInfo(analysisInfo, {
+          sites,
+          description,
+          domain,
+          matchLevel,
+          analysisClass,
+          okvedMatch,
+          equipment,
+          tnved,
+        });
       const pipeline = parsePipeline(row.analysis_pipeline || (analysisInfo as any)?.pipeline);
 
       const metaSites = parseStringArray(contacts?.webSites);
@@ -625,8 +679,8 @@ export async function GET(request: NextRequest) {
         main_okved: mainOkved,
         analysis_okved_match: okvedMatch,
         analysis_description: description,
-        analysis_tnved: tnved,
-        analysis_info: analysisInfo,
+          analysis_tnved: tnved,
+          analysis_info: mergedAnalyzer,
         analysis_pipeline: pipeline,
         queued_at: queuedAt,
         queued_by: queuedBy,
