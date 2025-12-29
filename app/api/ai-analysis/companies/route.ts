@@ -614,18 +614,6 @@ export async function GET(request: NextRequest) {
 
         const equipment = normalizeEquipment(row.analysis_equipment);
         const tnved = normalizeTnved(row.analysis_tnved);
-        const mergedAnalyzer = mergeAnalyzerInfo(analysisInfo, {
-          sites,
-          description,
-          domain,
-          matchLevel,
-          analysisClass,
-          okvedMatch,
-          equipment,
-          tnved,
-        });
-      const pipeline = parsePipeline(row.analysis_pipeline || (analysisInfo as any)?.pipeline);
-
       const metaSites = parseStringArray(contacts?.webSites);
       const metaEmails = parseStringArray(contacts?.emails);
 
@@ -639,6 +627,18 @@ export async function GET(request: NextRequest) {
         metaEmails ||
         parseStringArray(row.emails) ||
         parseStringArray((analysisInfo as any)?.emails);
+
+      const mergedAnalyzer = mergeAnalyzerInfo(analysisInfo, {
+        sites,
+        description,
+        domain,
+        matchLevel,
+        analysisClass,
+        okvedMatch,
+        equipment,
+        tnved,
+      });
+      const pipeline = parsePipeline(row.analysis_pipeline || (analysisInfo as any)?.pipeline);
 
       const score =
         parseNumber(row.analysis_score) ??
