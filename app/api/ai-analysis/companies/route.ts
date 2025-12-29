@@ -384,6 +384,7 @@ async function getEquipmentByInn(inns: string[]): Promise<Map<string, any[]>> {
 
 type SiteAnalyzerFallback = {
   parsId: number | null;
+  companyId: number | null;
   description: string | null;
   domains: string[];
   prodclass: number | string | null;
@@ -426,6 +427,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
 
   let parsRows: {
     inn: string;
+    company_id: number | null;
     pars_id: number | null;
     description: any;
     domain_1: any;
@@ -450,6 +452,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         )
         SELECT DISTINCT ON (im.inn)
           im.inn,
+          im.company_id,
           ps.id AS pars_id,
           ${descriptionExpr} AS description,
           COALESCE(${domain1Expr}, im.domain_1) AS domain_1,
@@ -472,6 +475,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   if (!parsRows.length) return result;
 
   const parsIds = parsRows.map((row) => row.pars_id).filter((id) => typeof id === 'number');
+  const companyIds = parsRows.map((row) => row.company_id).filter((id) => typeof id === 'number');
 
   const parseArray = (val: any): any[] => {
     const parsed = parseJson(val);
@@ -544,11 +548,12 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       return acc;
     }, []);
 
-  const openAiMap = new Map<number, any>();
-  if (openAiMeta.available && openAiMeta.names.has('text_pars_id')) {
+  const openAiMap = new Map<string, any>();
+  if (openAiMeta.available && (openAiMeta.names.has('text_pars_id') || openAiMeta.names.has('company_id'))) {
     try {
       const openAiCols = [
-        'text_pars_id',
+        openAiMeta.names.has('text_pars_id') ? 'text_pars_id' : null,
+        openAiMeta.names.has('company_id') ? 'company_id' : null,
         openAiMeta.names.has('description') ? 'description' : null,
         openAiMeta.names.has('description_score') ? 'description_score' : null,
         openAiMeta.names.has('description_okved_score') ? 'description_okved_score' : null,
@@ -562,26 +567,50 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         openAiMeta.names.has('goods_type') ? 'goods_type' : null,
       ].filter(Boolean) as string[];
 
-      if (openAiCols.length > 1) {
+      if (openAiCols.filter(Boolean).length > 0) {
         const orderExpr = openAiMeta.names.has('created_at')
           ? 'created_at DESC NULLS LAST'
           : openAiMeta.names.has('id')
             ? 'id DESC'
-            : 'text_pars_id';
+            : openAiMeta.names.has('text_pars_id')
+              ? 'text_pars_id'
+              : 'company_id';
 
-        const { rows } = await db.query(
-          `
-            SELECT DISTINCT ON (text_pars_id)
-              ${openAiCols.join(',\n              ')}
-            FROM ai_site_openai_responses
-            WHERE text_pars_id = ANY($1::int[])
-            ORDER BY text_pars_id, ${orderExpr}
-          `,
-          [parsIds],
-        );
+        const predicates: string[] = [];
+        const params: any[] = [];
 
-        for (const row of rows as any[]) {
-          openAiMap.set(row.text_pars_id, row);
+        if (openAiMeta.names.has('text_pars_id') && parsIds.length) {
+          params.push(parsIds);
+          predicates.push(`text_pars_id = ANY($${params.length}::int[])`);
+        }
+
+        if (openAiMeta.names.has('company_id') && companyIds.length) {
+          params.push(companyIds);
+          predicates.push(`company_id = ANY($${params.length}::int[])`);
+        }
+
+        if (predicates.length) {
+          const { rows } = await db.query(
+            `
+              SELECT DISTINCT ON (${openAiMeta.names.has('text_pars_id') ? 'text_pars_id' : 'company_id'})
+                ${openAiCols.filter(Boolean).join(',\n              ')}
+              FROM ai_site_openai_responses
+              WHERE ${predicates.join(' OR ')}
+              ORDER BY ${openAiMeta.names.has('text_pars_id') ? 'text_pars_id' : 'company_id'}, ${orderExpr}
+            `,
+            params,
+          );
+
+          for (const row of rows as any[]) {
+            const key =
+              row.text_pars_id != null
+                ? `p:${row.text_pars_id}`
+                : row.company_id != null
+                  ? `c:${row.company_id}`
+                  : null;
+            if (!key) continue;
+            openAiMap.set(key, row);
+          }
         }
       }
     } catch (error) {
@@ -589,10 +618,12 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
     }
   }
 
-  const prodclassMap = new Map<number, any>();
-  if (prodclassMeta.available && prodclassMeta.names.has('text_pars_id')) {
+  const prodclassMap = new Map<string, any>();
+  if (prodclassMeta.available && (prodclassMeta.names.has('text_pars_id') || prodclassMeta.names.has('company_id'))) {
     try {
       const prodclassCols = [
+        prodclassMeta.names.has('text_pars_id') ? 'text_pars_id' : null,
+        prodclassMeta.names.has('company_id') ? 'company_id' : null,
         prodclassMeta.names.has('prodclass') ? 'prodclass' : null,
         prodclassMeta.names.has('prodclass_score') ? 'prodclass_score' : null,
         prodclassMeta.names.has('description_score') ? 'description_score' : null,
@@ -602,19 +633,40 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       ].filter(Boolean) as string[];
 
       if (prodclassCols.length) {
-        const { rows } = await db.query(
-          `
-            SELECT DISTINCT ON (text_pars_id)
-              text_pars_id,
-              ${prodclassCols.join(',\n              ')}
-            FROM ai_site_prodclass
-            WHERE text_pars_id = ANY($1::int[])
-            ORDER BY text_pars_id, id DESC
-          `,
-          [parsIds],
-        );
-        for (const row of rows as any[]) {
-          prodclassMap.set(row.text_pars_id, row);
+        const predicates: string[] = [];
+        const params: any[] = [];
+
+        if (prodclassMeta.names.has('text_pars_id') && parsIds.length) {
+          params.push(parsIds);
+          predicates.push(`text_pars_id = ANY($${params.length}::int[])`);
+        }
+
+        if (prodclassMeta.names.has('company_id') && companyIds.length) {
+          params.push(companyIds);
+          predicates.push(`company_id = ANY($${params.length}::int[])`);
+        }
+
+        if (predicates.length) {
+          const { rows } = await db.query(
+            `
+              SELECT DISTINCT ON (${prodclassMeta.names.has('text_pars_id') ? 'text_pars_id' : 'company_id'})
+                ${prodclassCols.join(',\n                ')}
+              FROM ai_site_prodclass
+              WHERE ${predicates.join(' OR ')}
+              ORDER BY ${prodclassMeta.names.has('text_pars_id') ? 'text_pars_id' : 'company_id'}, id DESC
+            `,
+            params,
+          );
+          for (const row of rows as any[]) {
+            const key =
+              row.text_pars_id != null
+                ? `p:${row.text_pars_id}`
+                : row.company_id != null
+                  ? `c:${row.company_id}`
+                  : null;
+            if (!key) continue;
+            prodclassMap.set(key, row);
+          }
         }
       }
     } catch (error) {
@@ -622,8 +674,12 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
     }
   }
 
-  const goodsMap = new Map<number, any[]>();
-  if (goodsMeta.available && goodsMeta.tableName && goodsMeta.names.has('text_par_id')) {
+  const goodsMap = new Map<string, any[]>();
+  if (
+    goodsMeta.available &&
+    goodsMeta.tableName &&
+    (goodsMeta.names.has('text_par_id') || goodsMeta.names.has('company_id'))
+  ) {
     try {
       const goodsCols = [
         goodsMeta.names.has('goods_type') ? 'goods_type' : null,
@@ -631,30 +687,57 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         goodsMeta.names.has('match_id') ? 'match_id' : null,
         goodsMeta.names.has('goods_types_score') ? 'goods_types_score' : null,
         goodsMeta.names.has('text_vector') ? 'text_vector' : null,
-        'text_par_id',
+        goodsMeta.names.has('text_par_id') ? 'text_par_id' : null,
+        goodsMeta.names.has('company_id') ? 'company_id' : null,
       ].filter(Boolean) as string[];
 
-      const { rows } = await db.query(
-        `
-          SELECT ${goodsCols.join(',\n                 ')}
-          FROM ${quoteIdent(goodsMeta.tableName)}
-          WHERE text_par_id = ANY($1::int[])
-        `,
-        [parsIds],
-      );
+      const predicates: string[] = [];
+      const params: any[] = [];
 
-      for (const row of rows as any[]) {
-        const current = goodsMap.get(row.text_par_id) ?? [];
-        current.push(row);
-        goodsMap.set(row.text_par_id, current);
+      if (goodsMeta.names.has('text_par_id') && parsIds.length) {
+        params.push(parsIds);
+        predicates.push(`text_par_id = ANY($${params.length}::int[])`);
+      }
+
+      if (goodsMeta.names.has('company_id') && companyIds.length) {
+        params.push(companyIds);
+        predicates.push(`company_id = ANY($${params.length}::int[])`);
+      }
+
+      if (predicates.length) {
+        const { rows } = await db.query(
+          `
+            SELECT ${goodsCols.join(',\n                   ')}
+            FROM ${quoteIdent(goodsMeta.tableName)}
+            WHERE ${predicates.join(' OR ')}
+          `,
+          params,
+        );
+
+        for (const row of rows as any[]) {
+          const key =
+            row.text_par_id != null
+              ? `p:${row.text_par_id}`
+              : row.company_id != null
+                ? `c:${row.company_id}`
+                : null;
+          if (!key) continue;
+          const current = goodsMap.get(key) ?? [];
+          current.push(row);
+          goodsMap.set(key, current);
+        }
       }
     } catch (error) {
       console.warn('Failed to load ai_site_goods_types data', error);
     }
   }
 
-  const equipmentMap = new Map<number, any[]>();
-  if (equipmentMeta.available && equipmentMeta.tableName && equipmentMeta.names.has('text_par_id')) {
+  const equipmentMap = new Map<string, any[]>();
+  if (
+    equipmentMeta.available &&
+    equipmentMeta.tableName &&
+    (equipmentMeta.names.has('text_par_id') || equipmentMeta.names.has('company_id'))
+  ) {
     try {
       const equipmentCols = [
         equipmentMeta.names.has('equipment') ? 'equipment' : null,
@@ -662,22 +745,45 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         equipmentMeta.names.has('match_id') ? 'match_id' : null,
         equipmentMeta.names.has('equipment_score') ? 'equipment_score' : null,
         equipmentMeta.names.has('text_vector') ? 'text_vector' : null,
-        'text_par_id',
+        equipmentMeta.names.has('text_par_id') ? 'text_par_id' : null,
+        equipmentMeta.names.has('company_id') ? 'company_id' : null,
       ].filter(Boolean) as string[];
 
-      const { rows } = await db.query(
-        `
-          SELECT ${equipmentCols.join(',\n                 ')}
-          FROM ${quoteIdent(equipmentMeta.tableName)}
-          WHERE text_par_id = ANY($1::int[])
-        `,
-        [parsIds],
-      );
+      const predicates: string[] = [];
+      const params: any[] = [];
 
-      for (const row of rows as any[]) {
-        const current = equipmentMap.get(row.text_par_id) ?? [];
-        current.push(row);
-        equipmentMap.set(row.text_par_id, current);
+      if (equipmentMeta.names.has('text_par_id') && parsIds.length) {
+        params.push(parsIds);
+        predicates.push(`text_par_id = ANY($${params.length}::int[])`);
+      }
+
+      if (equipmentMeta.names.has('company_id') && companyIds.length) {
+        params.push(companyIds);
+        predicates.push(`company_id = ANY($${params.length}::int[])`);
+      }
+
+      if (predicates.length) {
+        const { rows } = await db.query(
+          `
+            SELECT ${equipmentCols.join(',\n                   ')}
+            FROM ${quoteIdent(equipmentMeta.tableName)}
+            WHERE ${predicates.join(' OR ')}
+          `,
+          params,
+        );
+
+        for (const row of rows as any[]) {
+          const key =
+            row.text_par_id != null
+              ? `p:${row.text_par_id}`
+              : row.company_id != null
+                ? `c:${row.company_id}`
+                : null;
+          if (!key) continue;
+          const current = equipmentMap.get(key) ?? [];
+          current.push(row);
+          equipmentMap.set(key, current);
+        }
       }
     } catch (error) {
       console.warn('Failed to load ai_site_equipment data', error);
@@ -689,10 +795,12 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       .map((d) => parseString(d))
       .filter((d): d is string => !!d);
 
-    const prodclassRow = prodclassMap.get(row.pars_id) ?? {};
-    const goodsRows = goodsMap.get(row.pars_id) ?? [];
-    const equipmentRows = equipmentMap.get(row.pars_id) ?? [];
-    const openAiRow = openAiMap.get(row.pars_id) ?? {};
+    const prodclassRow =
+      prodclassMap.get(`p:${row.pars_id}`) ?? prodclassMap.get(`c:${row.company_id}`) ?? {};
+    const goodsRows = goodsMap.get(`p:${row.pars_id}`) ?? goodsMap.get(`c:${row.company_id}`) ?? [];
+    const equipmentRows =
+      equipmentMap.get(`p:${row.pars_id}`) ?? equipmentMap.get(`c:${row.company_id}`) ?? [];
+    const openAiRow = openAiMap.get(`p:${row.pars_id}`) ?? openAiMap.get(`c:${row.company_id}`) ?? {};
 
     const fallbackGoods = goodsRows.length
       ? goodsRows
@@ -710,6 +818,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
 
     const fallback: SiteAnalyzerFallback = {
       parsId: row.pars_id ?? null,
+      companyId: row.company_id ?? null,
       description:
         parseString(row.description) ||
         parseString(row.site_1_description) ||
