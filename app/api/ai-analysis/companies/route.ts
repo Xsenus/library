@@ -115,6 +115,9 @@ const QUEUE_CACHE_TTL_MS = 5 * 60 * 1000;
 const QUEUE_STALE_MS = 120 * 60 * 1000;
 const QUEUE_STALE_INTERVAL = `${QUEUE_STALE_MS / 1000 / 60} minutes`;
 
+let cachedEquipmentCols: { names: Set<string>; available: boolean; ts: number } | null = null;
+const EQUIPMENT_CACHE_TTL_MS = 5 * 60 * 1000;
+
 async function isQueueTableAvailable(): Promise<boolean> {
   const now = Date.now();
   if (cachedQueueCheck && now - cachedQueueCheck.ts < QUEUE_CACHE_TTL_MS) {
@@ -131,6 +134,40 @@ async function isQueueTableAvailable(): Promise<boolean> {
     console.warn('ai_analysis_queue availability check failed:', error);
     cachedQueueCheck = { available: false, ts: now };
     return false;
+  }
+}
+
+async function getEquipmentColumns(): Promise<{ names: Set<string>; available: boolean }> {
+  const now = Date.now();
+  if (cachedEquipmentCols && now - cachedEquipmentCols.ts < EQUIPMENT_CACHE_TTL_MS) {
+    return { names: cachedEquipmentCols.names, available: cachedEquipmentCols.available };
+  }
+
+  try {
+    const existsRes = await db.query<{ exists: boolean }>(
+      "SELECT to_regclass('public.equipment_all') IS NOT NULL AS exists",
+    );
+    const available = !!existsRes.rows?.[0]?.exists;
+    if (!available) {
+      cachedEquipmentCols = { names: new Set(), available, ts: now };
+      return { names: new Set(), available };
+    }
+
+    const { rows } = await db.query<{ column_name: string }>(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'equipment_all'
+      `,
+    );
+
+    const names = new Set(rows.map((r) => r.column_name));
+    cachedEquipmentCols = { names, available: true, ts: now };
+    return { names, available: true };
+  } catch (error) {
+    console.warn('Failed to load equipment_all metadata', error);
+    cachedEquipmentCols = { names: new Set(), available: false, ts: now };
+    return { names: new Set(), available: false };
   }
 }
 
@@ -165,6 +202,39 @@ function buildOptionalSelect(existing: Set<string>): SelectBuild {
   }
 
   return { sql: parts.join(',\n        '), selected };
+}
+
+async function getEquipmentByInn(inns: string[]): Promise<Map<string, any[]>> {
+  const result = new Map<string, any[]>();
+  if (!inns.length) return result;
+
+  const meta = await getEquipmentColumns();
+  if (!meta.available) return result;
+  if (!meta.names.has('inn')) return result;
+
+  const equipmentCol = ['equipment', 'equipment_list', 'equipment_ai', 'equipment_data', 'equipment_json'].find((c) =>
+    meta.names.has(c),
+  );
+
+  if (!equipmentCol) return result;
+
+  try {
+    const { rows } = await db.query<{ inn: string; equipment: any }>(
+      `SELECT inn, ${equipmentCol} AS equipment FROM equipment_all WHERE inn = ANY($1::text[])`,
+      [inns],
+    );
+
+    for (const row of rows) {
+      const parsed = normalizeEquipment(row.equipment);
+      if (parsed.length) {
+        result.set(row.inn, parsed);
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to load equipment_all data', error);
+  }
+
+  return result;
 }
 
 function buildActivitySql(optionalSelect: SelectBuild, queueAvailable: boolean, whereSql: string): string | null {
@@ -581,6 +651,7 @@ export async function GET(request: NextRequest) {
 
     const inns = dataRes.rows.map((row: any) => row.inn).filter(Boolean);
     let contactsByInn = new Map<string, { emails?: any; webSites?: any }>();
+    let equipmentByInn = new Map<string, any[]>();
 
     if (inns.length) {
       try {
@@ -600,15 +671,17 @@ export async function GET(request: NextRequest) {
       } catch (error) {
         console.error('Failed to refresh company contacts', error);
       }
+
+      equipmentByInn = await getEquipmentByInn(inns);
     }
 
     const total = countRes.rows?.[0]?.cnt ?? 0;
 
-      const items = dataRes.rows.map((row: any) => {
-        const core = okvedCompanySchema.parse(row);
-        const contacts = contactsByInn.get(core.inn);
+    const items = dataRes.rows.map((row: any) => {
+      const core = okvedCompanySchema.parse(row);
+      const contacts = contactsByInn.get(core.inn);
 
-        const analysisInfo = parseJson(row.analysis_info);
+      const analysisInfo = parseJson(row.analysis_info);
 
       const startedAt = parseIso(row.analysis_started_at);
       const finishedAt = parseIso(row.analysis_finished_at);
@@ -654,8 +727,14 @@ export async function GET(request: NextRequest) {
         parseString(row.analysis_domain) ||
         (analysisInfo && parseString((analysisInfo as any)?.domain));
 
-      const equipment = normalizeEquipment(row.analysis_equipment);
-        const tnved = normalizeTnved(row.analysis_tnved);
+      let equipment = normalizeEquipment(row.analysis_equipment);
+      if (!equipment.length) {
+        const equipmentFromAux = equipmentByInn.get(core.inn);
+        if (equipmentFromAux?.length) {
+          equipment = equipmentFromAux;
+        }
+      }
+      const tnved = normalizeTnved(row.analysis_tnved);
       const metaSites = parseStringArray(contacts?.webSites);
       const metaEmails = parseStringArray(contacts?.emails);
 
@@ -727,8 +806,8 @@ export async function GET(request: NextRequest) {
         main_okved: mainOkved,
         analysis_okved_match: okvedMatch,
         analysis_description: description,
-          analysis_tnved: tnved,
-          analysis_info: mergedAnalyzer,
+        analysis_tnved: tnved,
+        analysis_info: mergedAnalyzer,
         analysis_pipeline: pipeline,
         queued_at: queuedAt,
         queued_by: queuedBy,
