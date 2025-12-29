@@ -412,12 +412,115 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
       }
     : null;
 
-  if (companyInfo && aiSites.length) {
-    if (!companyInfo.domain1_site && aiSites[0]) companyInfo.domain1_site = aiSites[0];
-    if (!companyInfo.domain2_site && aiSites[1]) companyInfo.domain2_site = aiSites[1];
+  const fallbackCompany = !companyInfo
+    ? {
+        domain1: data.domain1 ?? data.domain_1 ?? data.site_1_description ?? null,
+        domain2: data.domain2 ?? data.domain_2 ?? data.site_2_description ?? null,
+        domain1_site:
+          normalizeSite(
+            data.domain1_site ??
+              data.domain_1_site ??
+              data.domain_1 ??
+              data.domain1 ??
+              (Array.isArray(data.domains) ? data.domains[0] : null),
+          ) ?? null,
+        domain2_site:
+          normalizeSite(
+            data.domain2_site ??
+              data.domain_2_site ??
+              data.domain_2 ??
+              data.domain2 ??
+              (Array.isArray(data.domains) ? data.domains[1] : null),
+          ) ?? null,
+      }
+    : null;
+
+  const fallbackSites = aiSites.length
+    ? aiSites
+    : toSiteArray(
+        data.sites ??
+          data.domains ??
+          data.site_list ??
+          [data.domain, data.domain1_site, data.domain2_site, data.domain_1, data.domain_2].filter(Boolean),
+      );
+
+  const fallbackProducts = !aiInfo || !aiInfo.products?.length
+    ? (() => {
+        const rawProducts =
+          (Array.isArray((data as any).products) ? (data as any).products : null) ??
+          (Array.isArray((data as any).tnved) ? (data as any).tnved : null) ??
+          (Array.isArray((data as any).analysis_products) ? (data as any).analysis_products : null);
+        return rawProducts ? mapProducts(rawProducts) : [];
+      })()
+    : aiInfo.products;
+
+  const fallbackEquipment = !aiInfo || !aiInfo.equipment?.length
+    ? (() => {
+        const rawEquipment =
+          (Array.isArray((data as any).equipment) ? (data as any).equipment : null) ??
+          (Array.isArray((data as any).top_equipment) ? (data as any).top_equipment : null) ??
+          (Array.isArray((data as any).analysis_equipment) ? (data as any).analysis_equipment : null);
+        return rawEquipment ? mapEquipment(rawEquipment) : [];
+      })()
+    : aiInfo.equipment;
+
+  const fallbackProdclass = !aiInfo || !aiInfo.prodclass
+    ? (() => {
+        const rawProdclass = (data as any).prodclass ?? (data as any).found_class ?? null;
+        const rawScore = (data as any).prodclass_score ?? (data as any).analysis_match_level ?? null;
+        const rawOkvedMatch =
+          (data as any).description_okved_score ?? (data as any).okved_match_score ?? (data as any).analysis_okved_match ?? null;
+
+        if (!rawProdclass && rawScore == null && rawOkvedMatch == null) return null;
+
+        if (rawProdclass && typeof rawProdclass === 'object') {
+          return {
+            id: rawProdclass.id ?? rawProdclass.prodclass_id ?? null,
+            name: rawProdclass.name ?? rawProdclass.prodclass ?? rawProdclass.label ?? null,
+            label: rawProdclass.label ?? rawProdclass.name ?? rawProdclass.prodclass ?? null,
+            score: rawProdclass.score ?? rawProdclass.prodclass_score ?? (rawScore != null ? Number(rawScore) : null),
+            description_okved_score:
+              rawProdclass.description_okved_score ??
+              rawProdclass.okved_match_score ??
+              (rawOkvedMatch != null ? Number(rawOkvedMatch) : null),
+          };
+        }
+
+        return {
+          id: null,
+          name: rawProdclass ?? null,
+          label: rawProdclass ?? null,
+          score: rawScore != null ? Number(rawScore) : null,
+          description_okved_score: rawOkvedMatch != null ? Number(rawOkvedMatch) : null,
+        };
+      })()
+    : aiInfo.prodclass;
+
+  const mergedCompanyInfo = companyInfo || (fallbackCompany && Object.values(fallbackCompany).some(Boolean) ? fallbackCompany : null);
+
+  const mergedAiInfo = aiInfo ||
+    ((fallbackSites.length || fallbackProducts.length || fallbackEquipment.length || fallbackProdclass) && {
+      sites: fallbackSites,
+      products: fallbackProducts,
+      equipment: fallbackEquipment,
+      prodclass: fallbackProdclass,
+      industry: (data as any).industry ?? null,
+      utp: (data as any).utp ?? (data as any).usp ?? null,
+      letter: (data as any).letter ?? (data as any).email ?? null,
+      note: (data as any).note ?? null,
+    });
+
+  const resolvedCompany = mergedCompanyInfo ? { ...mergedCompanyInfo } : null;
+  const resolvedAi = mergedAiInfo ? { ...mergedAiInfo } : null;
+
+  if (resolvedCompany && (resolvedAi?.sites?.length ?? 0) > 0) {
+    if (!resolvedCompany.domain1_site && resolvedAi?.sites?.[0]) resolvedCompany.domain1_site = resolvedAi.sites[0];
+    if (!resolvedCompany.domain2_site && resolvedAi?.sites?.[1]) resolvedCompany.domain2_site = resolvedAi.sites[1];
   }
 
-  return { company: companyInfo, ai: aiInfo };
+  if (!resolvedCompany && !resolvedAi) return null;
+
+  return { company: resolvedCompany, ai: resolvedAi };
 }
 
 function toSiteArray(value: any): string[] {
