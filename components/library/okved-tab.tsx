@@ -21,43 +21,6 @@ const MAX_SIDEBAR = 1200;
 const MIN_RIGHT = 420;
 const DEFAULT_SIDEBAR = 640;
 const LS_KEY = 'okved:sidebarWidth';
-const PAGE_SIZE_KEY = 'okved:pageSize';
-const COL_WIDTHS_KEY = 'okved:columnWidths';
-
-type ColWidthKey =
-  | 'icon'
-  | 'inn'
-  | 'name'
-  | 'revenue'
-  | 'staff'
-  | 'branches'
-  | 'year'
-  | 'responsible'
-  | 'address';
-
-const DEFAULT_COL_WIDTHS: Record<ColWidthKey, number> = {
-  icon: 40,
-  inn: 120,
-  name: 340,
-  revenue: 150,
-  staff: 100,
-  branches: 100,
-  year: 90,
-  responsible: 160,
-  address: 260,
-};
-
-const MIN_COL_WIDTHS: Record<ColWidthKey, number> = {
-  icon: 35,
-  inn: 90,
-  name: 220,
-  revenue: 120,
-  staff: 90,
-  branches: 90,
-  year: 80,
-  responsible: 140,
-  address: 180,
-};
 
 type ListResponse<T> = {
   items: T[];
@@ -198,23 +161,10 @@ export default function OkvedTab() {
   const [page, setPage] = useState(initialPage);
   const [loading, setLoading] = useState(false);
 
-  const initialPageSize = Number(sp.get('pageSize')) || 0;
-  const [pageSize, setPageSize] = useState<number>(() => {
-    const paramPageSize = [5, 10, 20, 25, 50, 75, 100].includes(initialPageSize)
-      ? initialPageSize
-      : null;
-
-    if (paramPageSize) return paramPageSize;
-
-    if (typeof window !== 'undefined') {
-      const stored = Number(localStorage.getItem(PAGE_SIZE_KEY));
-      if ([5, 10, 20, 25, 50, 75, 100].includes(stored)) {
-        return stored;
-      }
-    }
-
-    return 20;
-  });
+  const initialPageSize = Number(sp.get('pageSize')) || 20;
+  const [pageSize, setPageSize] = useState<number>(
+    [5, 10, 20, 25, 50, 75, 100].includes(initialPageSize) ? initialPageSize : 20,
+  );
 
   const [industryList, setIndustryList] = useState<IndustryItem[]>([]);
   const [industriesLoading, setIndustriesLoading] = useState<boolean>(true);
@@ -236,42 +186,6 @@ export default function OkvedTab() {
   const [responsibles, setResponsibles] = useState<Record<string, RespInfo>>({});
   const [respLoading, setRespLoading] = useState(false);
 
-  const [columnWidths, setColumnWidths] = useState<Record<ColWidthKey, number>>(() => {
-    if (typeof window === 'undefined') return DEFAULT_COL_WIDTHS;
-
-    try {
-      const raw = localStorage.getItem(COL_WIDTHS_KEY);
-      if (!raw) return DEFAULT_COL_WIDTHS;
-      const parsed = JSON.parse(raw) as Partial<Record<ColWidthKey, number>>;
-
-      const sanitized = Object.entries(parsed ?? {}).reduce(
-        (acc, [key, value]) => {
-          const colKey = key as ColWidthKey;
-          if (typeof value === 'number' && Number.isFinite(value)) {
-            acc[colKey] = Math.max(MIN_COL_WIDTHS[colKey], value);
-          }
-          return acc;
-        },
-        {} as Partial<Record<ColWidthKey, number>>,
-      );
-
-      return { ...DEFAULT_COL_WIDTHS, ...sanitized } as Record<ColWidthKey, number>;
-    } catch (err) {
-      console.error('Failed to parse column widths from storage', err);
-      return DEFAULT_COL_WIDTHS;
-    }
-  });
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem(PAGE_SIZE_KEY, String(pageSize));
-  }, [pageSize]);
-
-  useEffect(() => {
-    if (typeof window === 'undefined') return;
-    localStorage.setItem(COL_WIDTHS_KEY, JSON.stringify(columnWidths));
-  }, [columnWidths]);
-
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     if (typeof window === 'undefined') return DEFAULT_SIDEBAR;
     const v = Number(localStorage.getItem(LS_KEY));
@@ -292,41 +206,6 @@ export default function OkvedTab() {
     window.addEventListener('resize', ensureBounds);
     return () => window.removeEventListener('resize', ensureBounds);
   }, []);
-
-  const startColumnResize = useCallback(
-    (key: ColWidthKey, e: React.MouseEvent | React.TouchEvent) => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      const startX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
-      if (typeof startX !== 'number') return;
-
-      const baseWidth = columnWidths[key] ?? DEFAULT_COL_WIDTHS[key];
-      const handleMove = (ev: MouseEvent | TouchEvent) => {
-        const clientX = 'touches' in ev ? ev.touches[0]?.clientX : (ev as MouseEvent).clientX;
-        if (typeof clientX !== 'number') return;
-        const delta = clientX - startX;
-
-        setColumnWidths((prev) => ({
-          ...prev,
-          [key]: Math.max(MIN_COL_WIDTHS[key], baseWidth + delta),
-        }));
-      };
-
-      const handleUp = () => {
-        document.removeEventListener('mousemove', handleMove as any);
-        document.removeEventListener('touchmove', handleMove as any);
-        document.removeEventListener('mouseup', handleUp);
-        document.removeEventListener('touchend', handleUp);
-      };
-
-      document.addEventListener('mousemove', handleMove as any);
-      document.addEventListener('touchmove', handleMove as any, { passive: false });
-      document.addEventListener('mouseup', handleUp);
-      document.addEventListener('touchend', handleUp);
-    },
-    [columnWidths],
-  );
 
   const okvedReqId = useRef(0);
   const companiesReqId = useRef(0);
@@ -765,7 +644,7 @@ export default function OkvedTab() {
                   setIndustryId(e.target.value);
                   setPage(1);
                 }}
-                className="h-8 w-[340px] max-w-[360px] truncate border rounded-md px-2 text-xs"
+                className="h-8 w-[260px] max-w-[260px] truncate border rounded-md px-2 text-xs"
                 title={
                   industryId !== 'all'
                     ? industryList.find((i) => String(i.id) === industryId)?.industry
@@ -1007,107 +886,26 @@ export default function OkvedTab() {
               <table className="w-full text-[13px]">
                 <thead className="[&_tr]:border-b">
                   <tr className="text-center">
+                    <th className="py-1 pr-2 w-[35px]"></th>
+                    <th className="py-1 pr-2">ИНН</th>
+                    <th className="py-1 pr-2">Название</th>
                     <th
-                      className="py-1 pr-2 relative"
-                      style={{ width: columnWidths.icon, minWidth: MIN_COL_WIDTHS.icon }}>
-                      <span className="sr-only">Карточка</span>
-                      <span
-                        className="absolute right-0 top-0 h-full w-2 cursor-col-resize"
-                        onMouseDown={(e) => startColumnResize('icon', e)}
-                        onTouchStart={(e) => startColumnResize('icon', e)}
-                      />
-                    </th>
-                    <th
-                      className="py-1 pr-2 relative"
-                      style={{ width: columnWidths.inn, minWidth: MIN_COL_WIDTHS.inn }}>
-                      <span>ИНН</span>
-                      <span
-                        className="absolute right-0 top-0 h-full w-2 cursor-col-resize"
-                        onMouseDown={(e) => startColumnResize('inn', e)}
-                        onTouchStart={(e) => startColumnResize('inn', e)}
-                      />
-                    </th>
-                    <th
-                      className="py-1 pr-2 relative text-left"
-                      style={{ width: columnWidths.name, minWidth: MIN_COL_WIDTHS.name }}>
-                      <span>Название</span>
-                      <span
-                        className="absolute right-0 top-0 h-full w-2 cursor-col-resize"
-                        onMouseDown={(e) => startColumnResize('name', e)}
-                        onTouchStart={(e) => startColumnResize('name', e)}
-                      />
-                    </th>
-                    <th
-                      className="py-1 pr-3 cursor-pointer select-none relative"
+                      className="py-1 pr-3 cursor-pointer select-none"
                       title="Сортировать по выручке"
                       onClick={() => {
                         setSortKey((s) => (s === 'revenue_desc' ? 'revenue_asc' : 'revenue_desc'));
                         setPage(1);
-                      }}
-                      style={{ width: columnWidths.revenue, minWidth: MIN_COL_WIDTHS.revenue }}>
+                      }}>
                       Выручка, млн
                       <span className="ml-1 text-[11px] text-muted-foreground">
                         {sortKey === 'revenue_desc' ? '↓' : '↑'}
                       </span>
-                      <span
-                        className="absolute right-0 top-0 h-full w-2 cursor-col-resize"
-                        onMouseDown={(e) => startColumnResize('revenue', e)}
-                        onTouchStart={(e) => startColumnResize('revenue', e)}
-                      />
                     </th>
-                    <th
-                      className="py-1 pr-2 relative"
-                      style={{ width: columnWidths.staff, minWidth: MIN_COL_WIDTHS.staff }}>
-                      <span>Штат</span>
-                      <span
-                        className="absolute right-0 top-0 h-full w-2 cursor-col-resize"
-                        onMouseDown={(e) => startColumnResize('staff', e)}
-                        onTouchStart={(e) => startColumnResize('staff', e)}
-                      />
-                    </th>
-                    <th
-                      className="py-1 pr-2 relative"
-                      style={{ width: columnWidths.branches, minWidth: MIN_COL_WIDTHS.branches }}>
-                      <span>Филиалы</span>
-                      <span
-                        className="absolute right-0 top-0 h-full w-2 cursor-col-resize"
-                        onMouseDown={(e) => startColumnResize('branches', e)}
-                        onTouchStart={(e) => startColumnResize('branches', e)}
-                      />
-                    </th>
-                    <th
-                      className="py-1 pr-2 relative"
-                      style={{ width: columnWidths.year, minWidth: MIN_COL_WIDTHS.year }}>
-                      <span>Год</span>
-                      <span
-                        className="absolute right-0 top-0 h-full w-2 cursor-col-resize"
-                        onMouseDown={(e) => startColumnResize('year', e)}
-                        onTouchStart={(e) => startColumnResize('year', e)}
-                      />
-                    </th>
-                    <th
-                      className="py-1 pr-2 relative"
-                      style={{
-                        width: columnWidths.responsible,
-                        minWidth: MIN_COL_WIDTHS.responsible,
-                      }}>
-                      <span>Ответственный</span>
-                      <span
-                        className="absolute right-0 top-0 h-full w-2 cursor-col-resize"
-                        onMouseDown={(e) => startColumnResize('responsible', e)}
-                        onTouchStart={(e) => startColumnResize('responsible', e)}
-                      />
-                    </th>
-                    <th
-                      className="py-1 pl-2 relative text-left"
-                      style={{ width: columnWidths.address, minWidth: MIN_COL_WIDTHS.address }}>
-                      <span>Адрес</span>
-                      <span
-                        className="absolute right-0 top-0 h-full w-2 cursor-col-resize"
-                        onMouseDown={(e) => startColumnResize('address', e)}
-                        onTouchStart={(e) => startColumnResize('address', e)}
-                      />
-                    </th>
+                    <th className="py-1 pr-2">Штат</th>
+                    <th className="py-1 pr-2">Филиалы</th>
+                    <th className="py-1 pr-2">Год</th>
+                    <th className="py-1 pr-2">Ответственный</th>
+                    <th className="py-1 pl-2">Адрес</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1149,9 +947,7 @@ export default function OkvedTab() {
                           ].join(' ')}
                           style={hasColor ? { backgroundColor: rowBg } : undefined}
                           title={resp?.colorLabel ? `Цвет: ${resp.colorLabel}` : undefined}>
-                          <td
-                            className="py-0.5 pr-2 align-middle text-center"
-                            style={{ width: columnWidths.icon, minWidth: MIN_COL_WIDTHS.icon }}>
+                          <td className="py-0.5 pr-2 align-middle text-center">
                             <SquareImgButton
                               icon="bitrix"
                               title="Открыть карточку компании в Bitrix24"
@@ -1169,21 +965,11 @@ export default function OkvedTab() {
                             />
                           </td>
 
-                          <td
-                            className="py-0.5 pr-2 whitespace-nowrap"
-                            style={{ width: columnWidths.inn, minWidth: MIN_COL_WIDTHS.inn }}>
-                            {c.inn}
-                          </td>
-                          <td
-                            className="py-0.5 pr-3"
-                            style={{ width: columnWidths.name, minWidth: MIN_COL_WIDTHS.name }}>
-                            {c.short_name}
-                          </td>
+                          <td className="py-0.5 pr-2 whitespace-nowrap">{c.inn}</td>
+                          <td className="py-0.5 pr-3">{c.short_name}</td>
 
                           {/* мини-график + цифра рядом */}
-                          <td
-                            className="py-0.5 pr-3 align-middle"
-                            style={{ width: columnWidths.revenue, minWidth: MIN_COL_WIDTHS.revenue }}>
+                          <td className="py-0.5 pr-3 align-middle">
                             <div className="flex items-center gap-2">
                               <div className="w-[100px] h-[45px] shrink-0 overflow-hidden">
                                 <InlineRevenueBars
@@ -1202,23 +988,15 @@ export default function OkvedTab() {
                           </td>
 
                           {/* Штат */}
-                          <td
-                            className="py-0.5 pr-3 text-center"
-                            style={{ width: columnWidths.staff, minWidth: MIN_COL_WIDTHS.staff }}>
+                          <td className="py-0.5 pr-3 text-center">
                             {formatEmployees(getEmployeeCount(c))}
                           </td>
 
                           {/* Филиалы */}
-                          <td
-                            className="py-0.5 pr-3 text-center"
-                            style={{ width: columnWidths.branches, minWidth: MIN_COL_WIDTHS.branches }}>
-                            {c.branch_count ?? '—'}
-                          </td>
+                          <td className="py-0.5 pr-3 text-center">{c.branch_count ?? '—'}</td>
 
                           {/* Год */}
-                          <td
-                            className="py-0.5 pr-2 text-center"
-                            style={{ width: columnWidths.year, minWidth: MIN_COL_WIDTHS.year }}>
+                          <td className="py-0.5 pr-2 text-center">
                             <span
                               className={`inline-block px-1.5 py-0.5 rounded border ${
                                 isActual
@@ -1233,19 +1011,12 @@ export default function OkvedTab() {
                           </td>
 
                           {/* Ответственный */}
-                          <td
-                            className="py-0.5 pr-3 whitespace-nowrap text-center"
-                            style={{
-                              width: columnWidths.responsible,
-                              minWidth: MIN_COL_WIDTHS.responsible,
-                            }}>
+                          <td className="py-0.5 pr-3 whitespace-nowrap text-center">
                       {resp?.assignedName ?? (respLoading ? '…' : '—')}
                     </td>
 
                     {/* Адрес — последний столбец, уменьшенный и более серый */}
-                    <td
-                      className="py-0.5 pl-2 text-[10px] text-muted-foreground opacity-90"
-                      style={{ width: columnWidths.address, minWidth: MIN_COL_WIDTHS.address }}>
+                    <td className="py-0.5 pl-2 text-[10px] text-muted-foreground opacity-90">
                       {c.address ?? '—'}
                     </td>
                   </tr>

@@ -1190,7 +1190,7 @@ export default function LibraryPage() {
                         />
                         Отрасли
                       </label>
-                      <div className="max-w-[340px] w-[340px]">
+                      <div className="max-w-[260px]">
                         <select
                           className="h-9 w-full rounded-md border px-2 text-sm overflow-hidden text-ellipsis whitespace-nowrap"
                           disabled={!csIndustryEnabled}
@@ -1231,7 +1231,7 @@ export default function LibraryPage() {
                         onValueChange={(v) => setCsOkvedId(v === 'all' ? null : Number(v))}>
                         <SelectTrigger
                           title={selectedOkvedLabel}
-                          className="h-9 w-[460px] max-w-[480px] truncate">
+                          className="h-9 w-[360px] max-w-[360px] truncate">
                           <SelectValue placeholder="— Все ОКВЭД —" />
                         </SelectTrigger>
 
