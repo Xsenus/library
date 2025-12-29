@@ -109,6 +109,10 @@ type AiCompany = {
   analysis_match_level?: string | null;
   analysis_class?: string | null;
   analysis_equipment?: any;
+  description_score?: number | null;
+  description_okved_score?: number | null;
+  okved_score?: number | null;
+  prodclass_by_okved?: number | null;
   analysis_okved_match?: string | null;
   analysis_description?: string | null;
   analysis_tnved?: any;
@@ -853,7 +857,13 @@ export default function AiCompanyAnalysisTab() {
   const analyzerSites = analyzerInfo?.ai?.sites ?? [];
   const analyzerProdclass = analyzerInfo?.ai?.prodclass ?? null;
   const analyzerProdclassByOkved = analyzerInfo?.ai?.prodclass_by_okved ?? null;
-  const analyzerOkvedScore = analyzerProdclass?.okved_score ?? analyzerInfo?.ai?.okved_score ?? null;
+  const analyzerOkvedScore =
+    analyzerProdclass?.okved_score ?? analyzerInfo?.ai?.okved_score ?? infoCompany?.okved_score ?? null;
+  const analyzerDescriptionOkvedScore =
+    analyzerProdclass?.description_okved_score ??
+    analyzerInfo?.ai?.description_okved_score ??
+    infoCompany?.description_okved_score ??
+    null;
   const [filtersDialogOpen, setFiltersDialogOpen] = useState(false);
   const forcedLaunchMode = useMemo(() => getForcedLaunchMode(true), []);
   const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
@@ -1997,12 +2007,13 @@ export default function AiCompanyAnalysisTab() {
     infoCompany?.analysis_class ||
     null;
   const prodclassScoreText =
+    formatMatchScore(analyzerDescriptionOkvedScore) ||
     formatMatchScore(analyzerProdclass?.score ?? null) ||
     formatMatchScore(analyzerOkvedScore) ||
     (infoCompany?.analysis_match_level ? String(infoCompany.analysis_match_level) : null);
   const okvedMatchText =
-    formatMatchScore(analyzerProdclass?.description_okved_score ?? null) ||
-    formatMatchScore(analyzerOkvedScore ?? null) ||
+    formatMatchScore(analyzerOkvedScore ?? infoCompany?.okved_score ?? null) ||
+    formatMatchScore(analyzerDescriptionOkvedScore ?? null) ||
     (infoCompany?.analysis_okved_match ? String(infoCompany.analysis_okved_match) : null);
   const analysisDomainValue =
     infoCompany?.analysis_domain ||

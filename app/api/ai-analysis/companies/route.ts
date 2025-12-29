@@ -96,6 +96,11 @@ const OPTIONAL_COLUMNS: OptionalColumnSpec[] = [
     candidates: ['analysis_description', 'site_description', 'ai_description'],
     fallback: 'NULL::text',
   },
+  {
+    alias: 'description_okved_score',
+    candidates: ['description_okved_score', 'analysis_description_okved_score', 'description_okved_match'],
+    fallback: 'NULL::numeric',
+  },
   { alias: 'analysis_tnved', candidates: ['analysis_tnved', 'tnved_products', 'analysis_products'], fallback: 'NULL::jsonb' },
   {
     alias: 'analysis_info',
@@ -257,7 +262,9 @@ async function getEquipmentByInn(inns: string[]): Promise<Map<string, any[]>> {
 
   const meta = await getEquipmentColumns();
   if (!meta.available) return result;
-  if (!meta.names.has('inn')) return result;
+
+  const idColumn = meta.names.has('company_id') ? 'company_id' : meta.names.has('inn') ? 'inn' : null;
+  if (!idColumn) return result;
 
   const equipmentCol = ['equipment', 'equipment_list', 'equipment_ai', 'equipment_data', 'equipment_json'].find((c) =>
     meta.names.has(c),
@@ -265,16 +272,61 @@ async function getEquipmentByInn(inns: string[]): Promise<Map<string, any[]>> {
 
   if (!equipmentCol) return result;
 
+  const clientsMeta = await getTableColumns('clients_requests');
+
+  const companyMap = new Map<number, string>();
+  if (idColumn === 'company_id') {
+    if (!clientsMeta.available || !clientsMeta.names.has('inn') || !clientsMeta.names.has('id')) return result;
+
+    try {
+      const orderExpr = clientsMeta.names.has('ended_at')
+        ? 'COALESCE(cr.ended_at, cr.created_at) DESC NULLS LAST'
+        : clientsMeta.names.has('created_at')
+          ? 'cr.created_at DESC NULLS LAST'
+          : 'cr.id DESC';
+
+      const { rows } = await db.query<{ inn: string; company_id: number }>(
+        `
+          SELECT DISTINCT ON (cr.inn) cr.inn, cr.id AS company_id
+          FROM clients_requests cr
+          WHERE cr.inn = ANY($1::text[])
+          ORDER BY cr.inn, ${orderExpr}
+        `,
+        [inns],
+      );
+
+      for (const row of rows) {
+        if (row.company_id && row.inn) {
+          companyMap.set(row.company_id, row.inn);
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load company_id for equipment_all lookup', error);
+      return result;
+    }
+
+    if (!companyMap.size) return result;
+  }
+
   try {
-    const { rows } = await db.query<{ inn: string; equipment: any }>(
-      `SELECT inn, ${equipmentCol} AS equipment FROM equipment_all WHERE inn = ANY($1::text[])`,
-      [inns],
+    const args =
+      idColumn === 'company_id'
+        ? [Array.from(companyMap.keys())]
+        : [inns.map((inn) => (inn == null ? null : String(inn)))];
+
+    const { rows } = await db.query<{ inn: string | number; equipment: any }>(
+      `SELECT ${idColumn} AS inn, ${equipmentCol} AS equipment FROM equipment_all WHERE ${idColumn} = ANY($1::${
+        idColumn === 'company_id' ? 'int' : 'text'
+      }[])`,
+      args,
     );
 
     for (const row of rows) {
+      const inn = idColumn === 'company_id' ? companyMap.get(row.inn as number) : (row.inn as string);
+      if (!inn) continue;
       const parsed = normalizeEquipment(row.equipment);
       if (parsed.length) {
-        result.set(row.inn, parsed);
+        result.set(inn, parsed);
       }
     }
   } catch (error) {
@@ -313,30 +365,53 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   if (!clientsMeta.names.has('id') || !clientsMeta.names.has('inn')) return result;
   if (!parsMeta.names.has('company_id') || !parsMeta.names.has('id')) return result;
 
-  const descriptionExpr = parsMeta.names.has('description') ? 'ps.description' : 'NULL::text AS description';
-  const domain1Expr = parsMeta.names.has('domain_1') ? 'ps.domain_1' : 'NULL::text AS domain_1';
-  const domain2Expr = parsMeta.names.has('domain_2') ? 'ps.domain_2' : 'NULL::text AS domain_2';
-  const urlExpr = parsMeta.names.has('url') ? 'ps.url' : 'NULL::text AS url';
+  const descriptionExpr = parsMeta.names.has('description') ? 'ps.description' : 'NULL::text';
+  const domain1Expr = parsMeta.names.has('domain_1') ? 'ps.domain_1' : 'NULL::text';
+  const domain2Expr = parsMeta.names.has('domain_2') ? 'ps.domain_2' : 'NULL::text';
+  const urlExpr = parsMeta.names.has('url') ? 'ps.url' : 'NULL::text';
   const createdExpr = parsMeta.names.has('created_at') ? 'ps.created_at DESC NULLS LAST,' : '';
+  const site1DescriptionExpr = clientsMeta.names.has('site_1_description')
+    ? 'im.site_1_description'
+    : 'NULL::text AS site_1_description';
+  const site2DescriptionExpr = clientsMeta.names.has('site_2_description')
+    ? 'im.site_2_description'
+    : 'NULL::text AS site_2_description';
 
-  let parsRows: { inn: string; pars_id: number; description: any; domain_1: any; domain_2: any; url: any }[] = [];
+  let parsRows: {
+    inn: string;
+    pars_id: number | null;
+    description: any;
+    domain_1: any;
+    domain_2: any;
+    url: any;
+    site_1_description: any;
+    site_2_description: any;
+  }[] = [];
   try {
     const { rows } = await db.query(
       `
         WITH inn_map AS (
-          SELECT inn, id AS company_id
+          SELECT
+            inn,
+            id AS company_id,
+            ${clientsMeta.names.has('site_1_description') ? 'site_1_description' : 'NULL::text AS site_1_description'},
+            ${clientsMeta.names.has('site_2_description') ? 'site_2_description' : 'NULL::text AS site_2_description'},
+            ${clientsMeta.names.has('domain_1') ? 'domain_1' : 'NULL::text AS domain_1'},
+            ${clientsMeta.names.has('domain_2') ? 'domain_2' : 'NULL::text AS domain_2'}
           FROM clients_requests
           WHERE inn = ANY($1::text[])
         )
         SELECT DISTINCT ON (im.inn)
           im.inn,
           ps.id AS pars_id,
-          ${descriptionExpr},
-          ${domain1Expr},
-          ${domain2Expr},
-          ${urlExpr}
+          ${descriptionExpr} AS description,
+          COALESCE(${domain1Expr}, im.domain_1) AS domain_1,
+          COALESCE(${domain2Expr}, im.domain_2) AS domain_2,
+          ${urlExpr} AS url,
+          ${site1DescriptionExpr},
+          ${site2DescriptionExpr}
         FROM inn_map im
-        JOIN pars_site ps ON ps.company_id = im.company_id
+        LEFT JOIN pars_site ps ON ps.company_id = im.company_id
         ORDER BY im.inn, ${createdExpr} ps.id DESC
       `,
       [inns],
@@ -588,7 +663,11 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
 
     const fallback: SiteAnalyzerFallback = {
       parsId: row.pars_id ?? null,
-      description: parseString(row.description) ?? parseString((openAiRow as any).description),
+      description:
+        parseString(row.description) ||
+        parseString(row.site_1_description) ||
+        parseString(row.site_2_description) ||
+        parseString((openAiRow as any).description),
       domains: Array.from(new Set(domains)),
       prodclass: prodclassRow.prodclass ?? (openAiRow as any).prodclass ?? null,
       prodclassScore: parseNumber(prodclassRow.prodclass_score) ?? parseNumber((openAiRow as any).prodclass_score),
@@ -795,6 +874,7 @@ function mergeAnalyzerInfo(
     tnved: any[];
     descriptionScore: number | null;
     okvedScore: number | null;
+    descriptionOkvedScore: number | null;
     prodclassByOkved: number | null;
   },
 ) {
@@ -813,6 +893,10 @@ function mergeAnalyzerInfo(
     ai.okved_score = extra.okvedScore;
   }
 
+  if (ai.description_okved_score == null && extra.descriptionOkvedScore != null) {
+    ai.description_okved_score = extra.descriptionOkvedScore;
+  }
+
   if (ai.prodclass_by_okved == null && extra.prodclassByOkved != null) {
     ai.prodclass_by_okved = extra.prodclassByOkved;
   }
@@ -821,9 +905,21 @@ function mergeAnalyzerInfo(
     ai.prodclass = {
       name: extra.analysisClass ?? null,
       label: extra.analysisClass ?? null,
-      score: extra.matchLevel ? parseNumber(extra.matchLevel) : null,
-      description_okved_score: extra.okvedMatch ? parseNumber(extra.okvedMatch) : null,
+      score: extra.descriptionOkvedScore ?? (extra.matchLevel ? parseNumber(extra.matchLevel) : null),
+      description_okved_score: extra.descriptionOkvedScore ?? (extra.okvedMatch ? parseNumber(extra.okvedMatch) : null),
+      okved_score: extra.okvedScore ?? null,
     };
+  } else if (ai.prodclass) {
+    if (ai.prodclass.description_okved_score == null && extra.descriptionOkvedScore != null) {
+      ai.prodclass.description_okved_score = extra.descriptionOkvedScore;
+    }
+    if (ai.prodclass.okved_score == null && extra.okvedScore != null) {
+      ai.prodclass.okved_score = extra.okvedScore;
+    }
+    if (ai.prodclass.score == null && (extra.descriptionOkvedScore != null || extra.matchLevel)) {
+      ai.prodclass.score =
+        extra.descriptionOkvedScore ?? (extra.matchLevel ? parseNumber(extra.matchLevel) : ai.prodclass.score ?? null);
+    }
   }
 
   if (!company.domain1 && extra.description) company.domain1 = extra.description;
@@ -1110,20 +1206,26 @@ export async function GET(request: NextRequest) {
         parseString(row.analysis_description) ||
         (analysisInfo && parseString((analysisInfo as any)?.description)) ||
         parseString(siteFallback?.description);
-      const okvedMatch =
-        parseString(row.analysis_okved_match) ||
-        (analysisInfo && parseString((analysisInfo as any)?.okved_match)) ||
-        (siteFallback?.descriptionOkvedScore != null ? String(siteFallback.descriptionOkvedScore) : null);
       const descriptionScore =
         parseNumber(row.description_score) ??
         parseNumber((analysisInfo as any)?.description_score) ??
         parseNumber((analysisInfo as any)?.ai?.description_score) ??
         siteFallback?.descriptionScore ?? null;
+      const descriptionOkvedScore =
+        parseNumber(row.description_okved_score) ??
+        parseNumber((analysisInfo as any)?.description_okved_score) ??
+        parseNumber((analysisInfo as any)?.ai?.description_okved_score) ??
+        siteFallback?.descriptionOkvedScore ?? null;
       const okvedScore =
         parseNumber(row.okved_score) ??
         parseNumber((analysisInfo as any)?.okved_score) ??
         parseNumber((analysisInfo as any)?.ai?.okved_score) ??
         siteFallback?.okvedScore ?? null;
+      const okvedMatch =
+        parseString(row.analysis_okved_match) ||
+        (analysisInfo && parseString((analysisInfo as any)?.okved_match)) ||
+        (okvedScore != null ? String(okvedScore) : null) ||
+        (descriptionOkvedScore != null ? String(descriptionOkvedScore) : null);
       const prodclassByOkved =
         parseNumber(row.prodclass_by_okved) ??
         parseNumber((analysisInfo as any)?.prodclass_by_okved) ??
@@ -1172,6 +1274,7 @@ export async function GET(request: NextRequest) {
         equipment,
         tnved,
         descriptionScore,
+        descriptionOkvedScore,
         okvedScore,
         prodclassByOkved,
       });
@@ -1179,8 +1282,10 @@ export async function GET(request: NextRequest) {
 
       const score =
         parseNumber(row.analysis_score) ??
+        descriptionOkvedScore ??
         parseNumber((analysisInfo as any)?.score) ??
         parseNumber((analysisInfo as any)?.ai?.score) ??
+        okvedScore ??
         parseNumber((analysisInfo as any)?.company?.score);
 
       const progress = parseProgress(row.analysis_progress);
@@ -1214,6 +1319,7 @@ export async function GET(request: NextRequest) {
         analysis_class: analysisClass,
         analysis_equipment: equipment,
         description_score: descriptionScore,
+        description_okved_score: descriptionOkvedScore,
         okved_score: okvedScore,
         prodclass_by_okved: prodclassByOkved,
         main_okved: mainOkved,
