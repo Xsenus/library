@@ -1362,7 +1362,9 @@ export async function GET(request: NextRequest) {
       const siteFallback = siteAnalyzerByInn.get(core.inn);
 
       const analysisInfo = parseJson(row.analysis_info);
-      const mainOkved = parseString(row.main_okved);
+      const mainOkved =
+        parseString(row.main_okved) ||
+        parseString((analysisInfo as any)?.main_okved);
       const okvedList = parseStringArray(row.okveds);
 
       const startedAt = parseIso(row.analysis_started_at);
@@ -1489,10 +1491,6 @@ export async function GET(request: NextRequest) {
         parseNumber(row.analysis_attempts) ??
         parseNumber((analysisInfo as any)?.attempts) ??
         parseNumber((analysisInfo as any)?.retry_count);
-
-      const mainOkved =
-        parseString(row.main_okved) ||
-        parseString((analysisInfo as any)?.main_okved);
 
       return {
         ...core,
