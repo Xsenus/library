@@ -59,16 +59,16 @@ const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 75, 100];
 type ColumnWidthKey = 'company' | 'contacts' | 'status' | 'pipeline' | 'actions';
 
 const DEFAULT_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
-  company: 280,
-  contacts: 240,
+  company: 250,
+  contacts: 190,
   status: 300,
-  pipeline: 260,
-  actions: 190,
+  pipeline: 220,
+  actions: 150,
 };
 
 const MIN_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
-  company: 220,
-  contacts: 200,
+  company: 250,
+  contacts: 190,
   status: 240,
   pipeline: 220,
   actions: 150,
