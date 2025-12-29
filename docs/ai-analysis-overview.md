@@ -141,6 +141,128 @@
 5. **Топ-10 оборудования.** `ai.equipment[]`, отсортированный по `equipment_score` и ограниченный 100 строками. Если нужен именно топ-10, обрезается на фронте.
 6. **Виды найденной продукции на сайте и ТНВЭД.** `ai.products[]` с названием продукции/группы и `tnved_code` из `goods_type_id` или справочника; сортировка по `goods_types_score`, лимит 100 строк.
 
+## Интерфейс AI-анализа компаний
+
+### Где брать данные для полей UI «AI-анализ компаний»
+Ниже — упорядоченный гайд, откуда поднимать значения для таблицы и модалки. Всегда
+держим последний `company_id` и `text_pars_id`, найденные по ИНН: сначала берём
+свежую заявку из `public.clients_requests`, потом по ней — последний парс из
+`public.pars_site`.
+
+1. **Получить ключи по ИНН.**
+   ```sql
+   -- Последний company_id
+   SELECT id AS company_id, domain_1, domain_2
+   FROM public.clients_requests
+   WHERE inn = :inn
+   ORDER BY id DESC
+   LIMIT 1;
+
+   -- Последний парс для company_id
+   SELECT id AS pars_id, domain_1, url, created_at, description
+   FROM public.pars_site
+   WHERE company_id = :company_id
+   ORDER BY created_at DESC NULLS LAST, id DESC
+   LIMIT 1;
+   ```
+   Если таблицы недоступны или поле пустое, сразу переходим к следующему
+   источнику.
+
+2. **Оценка и уровень соответствия / найденный класс.**
+   - Primary: `public.ai_site_prodclass` (schema `parsing_data`).
+     ```sql
+     SELECT prodclass, prodclass_score, description_score, okved_score,
+            description_okved_score, prodclass_by_okved
+     FROM public.ai_site_prodclass
+     WHERE text_pars_id = :pars_id
+     ORDER BY id DESC
+     LIMIT 1;
+     ```
+     `prodclass` → класс предприятия, `prodclass_score` → основная оценка.
+     Соответствие ОКВЭД — `description_score` или `okved_score`; если оба
+     `NULL`, используем `description_okved_score`.
+   - Fallback 1: `public.ai_site_openai_responses`.
+     ```sql
+     SELECT prodclass, prodclass_score, prodclass_by_okved,
+            description_score, okved_score, description
+     FROM public.ai_site_openai_responses
+     WHERE text_pars_id = :pars_id
+     ORDER BY created_at DESC, id DESC
+     LIMIT 1;
+     ```
+     Берём `prodclass`/`prodclass_score`; если пусто — `prodclass_by_okved`.
+     Для оценки соответствия ОКВЭД подойдут `description_score`/`okved_score`.
+   - Fallback 2: `public.dadata_result` (`bitrix_data` → `postgres`).
+     Ищем `main_okved` по ИНН, конвертируем в `prodclass_by_okved` (оценка =
+     `NULL`).
+
+3. **Соответствие ИИ-описания сайта и ОКВЭД.**
+   Сначала берём `description_score` или `okved_score` из последнего
+   `ai_site_prodclass`. Если поля пусты, пересчитываем так же, как сервис
+   `_compute_description_okved_score`: объединяем все `pars_site.description` по
+   `company_id`, сравниваем с `main_okved` (`bitrix_data.public.dadata_result`
+   → `postgres.public.dadata_result`).
+
+4. **Топ-10 оборудования.**
+   - Primary: `public.ai_site_equipment`.
+     ```sql
+     SELECT equipment, equipment_id, equipment_score
+     FROM public.ai_site_equipment
+     WHERE text_par_id = :pars_id
+     ORDER BY equipment_score DESC NULLS LAST, id DESC
+     LIMIT 10;
+     ```
+   - Fallback 1: `public.ai_site_openai_responses` — поле `equipment_site`
+     (JSON/массив) последнего ответа по `pars_id` или домену.
+   - Fallback 2: `public.equipment_all` — по `inn` или `company_id`, сортировка
+     по `score`.
+
+5. **Виды найденной продукции и ТНВЭД.**
+   - Primary: `public.ai_site_goods_types`.
+     ```sql
+     SELECT goods_type, goods_type_id, goods_types_score
+     FROM public.ai_site_goods_types
+     WHERE text_par_id = :pars_id
+     ORDER BY goods_types_score DESC NULLS LAST, id DESC
+     LIMIT 50;
+     ```
+   - Fallback 1: `public.ai_site_openai_responses` — `goods`/`goods_type` по
+     `pars_id`.
+   - Fallback 2: `public.clients_requests` — пользовательские товары/оборуд.
+   - Fallback 3: `public.dadata_result` — `okveds`/`main_okved` для грубой
+     заглушки.
+
+6. **Очередь и статусы.**
+   - `public.ai_analysis_queue` — `queued_at`, `queued_by`, количество
+     running/queued задач.
+   - Статусы/прогресс (`analysis_status`, `analysis_progress`,
+     `analysis_started_at/finished_at`, `analysis_pipeline`) — ищем в
+     `public.dadata_result`; если колонок нет, оставляем `NULL` и ждём
+     фолбэков.
+
+7. **Быстрая проверка наличия таблиц.**
+   ```sql
+   SELECT to_regclass('public.ai_site_prodclass') AS prodclass,
+          to_regclass('public.ai_site_openai_responses') AS ai_responses,
+          to_regclass('public.ai_site_equipment') AS equipment,
+          to_regclass('public.ai_site_goods_types') AS goods_types,
+          to_regclass('public.dadata_result') AS dadata,
+          to_regclass('public.ai_analysis_queue') AS queue;
+   ```
+
+### Таблица в карточке «AI-анализ компаний»
+- Основная выборка идёт из `public.dadata_result`: API `/api/ai-analysis/companies` выбирает базовые атрибуты компании (`inn`, `short_name`, адрес, филиалы, год, выручку, сотрудников) и опциональные колонки с прогрессом, статусами и итогами AI-анализатора. Если в `dadata_result` нет нужных полей, backend подставляет `NULL`-значения по списку синонимов (`analysis_status`, `analysis_progress`, `analysis_ok`, `server_error`, `analysis_domain` и т.д.).
+- При наличии таблицы `ai_analysis_queue` к выборке добавляются `queued_at` и `queued_by`, а также вычисляется количество текущих running/queued задач. Это позволяет таблице показывать свежие статусы очереди без отдельного запроса.
+- Контакты (сайты/почты) загружаются отдельной функцией `refreshCompanyContacts`, чтобы таблица отображала актуальные домены и e-mail даже если их нет в `dadata_result`.
+- Если в `dadata_result` отсутствуют поля AI-анализатора, данные дополняются fallback-данными: пара доменов/описаний и продукты/оборудование подтягиваются через `loadSiteAnalyzerFallbacks` из `clients_requests`, `pars_site`, `ai_site_prodclass`, `ai_site_goods_types`, `ai_site_equipment` и `ai_site_openai_responses`; оборудование также может приходить из `equipment_all` (по `inn` или `company_id`).
+- Итоговый объект строки объединяет всё найденное: статусы, прогресс, временные метки старта/финиша, предметную область (`analysis_class`, `prodclass_by_okved`), домен для парсинга, оборудование/ТНВЭД, оценку соответствия (`analysis_score`, `okved_score`), а также исходный `analysis_info/pipeline` (если сохранены в БД).
+
+### Модальное окно по строке таблицы
+- Шапка модалки использует те же поля `analysis_status`, `analysis_outcome`, `analysis_progress`, `analysis_started_at/finished_at`, `queued_at/by` и пайплайн (`analysis_pipeline`) — это непосредственный вывод значений, которые API собрал из `dadata_result` и очереди с учётом fallback-источников.
+- Блок «Данные карточки (AI-анализатор)» отображает сохранённый payload `analysis_info.ai`: список сайтов, найденные продукты (`ai.products` с кодами ТНВЭД), топ оборудования (`ai.equipment`), класс предприятия (`ai.prodclass`/`analysis_class`), отрасль и UTP/письмо. Если payload отсутствует, модалка показывает заглушку без перерасчёта данных.
+- Подробные сведения снизу модалки (уровень соответствия, основной ОКВЭД, домен для парсинга, ИИ-описание сайта, топ-10 оборудования, перечень продукции) собираются из объединённого ответа API: в приоритете значения из `analysis_info`/`analysis_*` полей `dadata_result`, далее — fallback из связанных таблиц `pars_site`/`clients_requests`/`ai_site_*` и оборудования из `equipment_all`.
+- Вкладка логов подтягивает последние записи из `ai_debug_events` по ИНН: тип события, время, источник и JSON-полезную нагрузку выводятся в списке, отдельная кнопка открывает JSON в отдельном диалоге.
+
 ### Что не пересчитывается
 - Эндпоинт `/v1/lookup/{inn}/ai-analyzer` не триггерит новый анализ и не обращается к внешним сервисам: он только читает сохранённые строки. Пустые таблицы = пустые поля.
 - UTP, письмо, домены и оборудование/продукты берутся только из перечисленных таблиц; отсутствие данных в `clients_requests` или `ai_site_*` не компенсируется внешними источниками.
