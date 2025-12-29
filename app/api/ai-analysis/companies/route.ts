@@ -1383,6 +1383,11 @@ export async function GET(request: NextRequest) {
         queueAvailable && queuedAt && queueFresh && (!finishedAt || queuedAt > finishedAt) && !runningStatus;
       const status = shouldForceQueued ? 'queued' : rawStatus;
 
+      const prodclassByOkved =
+        parseNumber(row.prodclass_by_okved) ??
+        parseNumber((analysisInfo as any)?.prodclass_by_okved) ??
+        parseNumber((analysisInfo as any)?.ai?.prodclass_by_okved) ??
+        siteFallback?.prodclassByOkved ?? null;
       const matchLevel =
         parseString(row.analysis_match_level) ||
         (analysisInfo && parseString((analysisInfo as any)?.match_level)) ||
@@ -1418,11 +1423,6 @@ export async function GET(request: NextRequest) {
         (analysisInfo && parseString((analysisInfo as any)?.okved_match)) ||
         (okvedScore != null ? String(okvedScore) : null) ||
         (descriptionOkvedScore != null ? String(descriptionOkvedScore) : null);
-      const prodclassByOkved =
-        parseNumber(row.prodclass_by_okved) ??
-        parseNumber((analysisInfo as any)?.prodclass_by_okved) ??
-        parseNumber((analysisInfo as any)?.ai?.prodclass_by_okved) ??
-        siteFallback?.prodclassByOkved ?? null;
       const domain =
         parseString(row.analysis_domain) ||
         (analysisInfo && parseString((analysisInfo as any)?.domain)) ||
