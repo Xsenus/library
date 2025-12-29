@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from 'react';
+import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
   AlertTriangle,
   CheckCircle2,
@@ -784,54 +785,65 @@ export default function AiCompanyAnalysisTab() {
 
   const activeOffPage = Math.max(0, activeTotal - activeCount);
 
+  const resizeStateRef = useRef<{ key: ColumnWidthKey; startX: number; baseWidth: number } | null>(null);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return undefined;
+
+    const handleMove = (event: PointerEvent) => {
+      const state = resizeStateRef.current;
+      if (!state) return;
+
+      event.preventDefault();
+
+      const delta = event.clientX - state.startX;
+      setColumnWidths((prev) => ({
+        ...prev,
+        [state.key]: Math.max(MIN_COLUMN_WIDTHS[state.key], state.baseWidth + delta),
+      }));
+    };
+
+    const handleUp = () => {
+      if (!resizeStateRef.current) return;
+      resizeStateRef.current = null;
+      document.body.style.cursor = '';
+    };
+
+    window.addEventListener('pointermove', handleMove);
+    window.addEventListener('pointerup', handleUp);
+
+    return () => {
+      window.removeEventListener('pointermove', handleMove);
+      window.removeEventListener('pointerup', handleUp);
+    };
+  }, []);
+
   const startColumnResize = useCallback(
-    (key: ColumnWidthKey, e: React.MouseEvent | React.TouchEvent) => {
+    (key: ColumnWidthKey, e: ReactPointerEvent) => {
       e.preventDefault();
       e.stopPropagation();
 
-      const startX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
-      if (typeof startX !== 'number') return;
-
-      const baseWidth = columnWidths[key] ?? DEFAULT_COLUMN_WIDTHS[key];
-
-      const handleMove = (ev: MouseEvent | TouchEvent) => {
-        const clientX = 'touches' in ev ? ev.touches[0]?.clientX : (ev as MouseEvent).clientX;
-        if (typeof clientX !== 'number') return;
-        const delta = clientX - startX;
-
-        setColumnWidths((prev) => ({
-          ...prev,
-          [key]: Math.max(MIN_COLUMN_WIDTHS[key], baseWidth + delta),
-        }));
+      resizeStateRef.current = {
+        key,
+        startX: e.clientX,
+        baseWidth: columnWidths[key] ?? DEFAULT_COLUMN_WIDTHS[key],
       };
 
-      const handleUp = () => {
-        document.removeEventListener('mousemove', handleMove as any);
-        document.removeEventListener('touchmove', handleMove as any);
-        document.removeEventListener('mouseup', handleUp);
-        document.removeEventListener('touchend', handleUp);
-        document.body.style.cursor = '';
-      };
-
+      (e.target as HTMLElement | null)?.setPointerCapture?.(e.pointerId);
       document.body.style.cursor = 'col-resize';
-      document.addEventListener('mousemove', handleMove as any);
-      document.addEventListener('touchmove', handleMove as any, { passive: false });
-      document.addEventListener('mouseup', handleUp);
-      document.addEventListener('touchend', handleUp);
     },
     [columnWidths],
   );
 
   const renderResizeHandle = (key: ColumnWidthKey) => (
-    <span className="group relative block h-full w-3 cursor-col-resize select-none">
+    <span className="group relative block h-full w-4 cursor-col-resize select-none">
       <span
         className="absolute right-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-full bg-border transition-colors group-hover:bg-primary"
         aria-hidden
       />
       <span
-        className="absolute inset-y-0 right-[-4px] block w-3"
-        onMouseDown={(e) => startColumnResize(key, e)}
-        onTouchStart={(e) => startColumnResize(key, e)}
+        className="absolute inset-y-0 right-[-6px] block w-4"
+        onPointerDown={(e) => startColumnResize(key, e)}
         onDoubleClick={() =>
           setColumnWidths((prev) => ({ ...prev, [key]: DEFAULT_COLUMN_WIDTHS[key] }))
         }
