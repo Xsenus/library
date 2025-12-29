@@ -365,10 +365,10 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   if (!clientsMeta.names.has('id') || !clientsMeta.names.has('inn')) return result;
   if (!parsMeta.names.has('company_id') || !parsMeta.names.has('id')) return result;
 
-  const descriptionExpr = parsMeta.names.has('description') ? 'ps.description' : 'NULL::text AS description';
-  const domain1Expr = parsMeta.names.has('domain_1') ? 'ps.domain_1' : 'NULL::text AS domain_1';
-  const domain2Expr = parsMeta.names.has('domain_2') ? 'ps.domain_2' : 'NULL::text AS domain_2';
-  const urlExpr = parsMeta.names.has('url') ? 'ps.url' : 'NULL::text AS url';
+  const descriptionExpr = parsMeta.names.has('description') ? 'ps.description' : 'NULL::text';
+  const domain1Expr = parsMeta.names.has('domain_1') ? 'ps.domain_1' : 'NULL::text';
+  const domain2Expr = parsMeta.names.has('domain_2') ? 'ps.domain_2' : 'NULL::text';
+  const urlExpr = parsMeta.names.has('url') ? 'ps.url' : 'NULL::text';
   const createdExpr = parsMeta.names.has('created_at') ? 'ps.created_at DESC NULLS LAST,' : '';
   const site1DescriptionExpr = clientsMeta.names.has('site_1_description')
     ? 'im.site_1_description'
@@ -404,10 +404,10 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         SELECT DISTINCT ON (im.inn)
           im.inn,
           ps.id AS pars_id,
-          ${descriptionExpr},
+          ${descriptionExpr} AS description,
           COALESCE(${domain1Expr}, im.domain_1) AS domain_1,
           COALESCE(${domain2Expr}, im.domain_2) AS domain_2,
-          ${urlExpr},
+          ${urlExpr} AS url,
           ${site1DescriptionExpr},
           ${site2DescriptionExpr}
         FROM inn_map im
@@ -1206,11 +1206,6 @@ export async function GET(request: NextRequest) {
         parseString(row.analysis_description) ||
         (analysisInfo && parseString((analysisInfo as any)?.description)) ||
         parseString(siteFallback?.description);
-      const okvedMatch =
-        parseString(row.analysis_okved_match) ||
-        (analysisInfo && parseString((analysisInfo as any)?.okved_match)) ||
-        (okvedScore != null ? String(okvedScore) : null) ||
-        (descriptionOkvedScore != null ? String(descriptionOkvedScore) : null);
       const descriptionScore =
         parseNumber(row.description_score) ??
         parseNumber((analysisInfo as any)?.description_score) ??
@@ -1226,6 +1221,11 @@ export async function GET(request: NextRequest) {
         parseNumber((analysisInfo as any)?.okved_score) ??
         parseNumber((analysisInfo as any)?.ai?.okved_score) ??
         siteFallback?.okvedScore ?? null;
+      const okvedMatch =
+        parseString(row.analysis_okved_match) ||
+        (analysisInfo && parseString((analysisInfo as any)?.okved_match)) ||
+        (okvedScore != null ? String(okvedScore) : null) ||
+        (descriptionOkvedScore != null ? String(descriptionOkvedScore) : null);
       const prodclassByOkved =
         parseNumber(row.prodclass_by_okved) ??
         parseNumber((analysisInfo as any)?.prodclass_by_okved) ??
