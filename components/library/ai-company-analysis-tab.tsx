@@ -291,6 +291,7 @@ type AiAnalyzerInfo = {
       tnved_code?: string | null;
     }>;
     equipment?: Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }>;
+    description_okved_score?: number | null;
     prodclass?: {
       id?: string | number | null;
       name?: string | null;
