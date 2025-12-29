@@ -74,6 +74,21 @@ const OPTIONAL_COLUMNS: OptionalColumnSpec[] = [
     candidates: ['analysis_equipment', 'top_equipment', 'analysis_top_equipment'],
     fallback: 'NULL::jsonb',
   },
+  {
+    alias: 'description_score',
+    candidates: ['description_score', 'analysis_description_score', 'description_similarity'],
+    fallback: 'NULL::numeric',
+  },
+  {
+    alias: 'okved_score',
+    candidates: ['okved_score', 'analysis_okved_score', 'okved_similarity'],
+    fallback: 'NULL::numeric',
+  },
+  {
+    alias: 'prodclass_by_okved',
+    candidates: ['prodclass_by_okved', 'analysis_prodclass_by_okved', 'prodclass_by_okved_score'],
+    fallback: 'NULL::int',
+  },
   { alias: 'main_okved', candidates: ['main_okved', 'primary_okved'], fallback: 'NULL::text' },
   { alias: 'analysis_okved_match', candidates: ['analysis_okved_match', 'okved_match'], fallback: 'NULL::text' },
   {
@@ -312,6 +327,9 @@ function mergeAnalyzerInfo(
     okvedMatch: string | null;
     equipment: any[];
     tnved: any[];
+    descriptionScore: number | null;
+    okvedScore: number | null;
+    prodclassByOkved: number | null;
   },
 ) {
   const company = base?.company && typeof base.company === 'object' ? { ...base.company } : {};
@@ -320,6 +338,18 @@ function mergeAnalyzerInfo(
   if (!ai.sites && extra.sites?.length) ai.sites = extra.sites;
   if (!ai.products && extra.tnved?.length) ai.products = extra.tnved;
   if (!ai.equipment && extra.equipment?.length) ai.equipment = extra.equipment;
+
+  if (ai.description_score == null && extra.descriptionScore != null) {
+    ai.description_score = extra.descriptionScore;
+  }
+
+  if (ai.okved_score == null && extra.okvedScore != null) {
+    ai.okved_score = extra.okvedScore;
+  }
+
+  if (ai.prodclass_by_okved == null && extra.prodclassByOkved != null) {
+    ai.prodclass_by_okved = extra.prodclassByOkved;
+  }
 
   if (!ai.prodclass && (extra.analysisClass || extra.matchLevel || extra.okvedMatch)) {
     ai.prodclass = {
@@ -608,11 +638,23 @@ export async function GET(request: NextRequest) {
       const okvedMatch =
         parseString(row.analysis_okved_match) ||
         (analysisInfo && parseString((analysisInfo as any)?.okved_match));
-        const domain =
-          parseString(row.analysis_domain) ||
-          (analysisInfo && parseString((analysisInfo as any)?.domain));
+      const descriptionScore =
+        parseNumber(row.description_score) ??
+        parseNumber((analysisInfo as any)?.description_score) ??
+        parseNumber((analysisInfo as any)?.ai?.description_score);
+      const okvedScore =
+        parseNumber(row.okved_score) ??
+        parseNumber((analysisInfo as any)?.okved_score) ??
+        parseNumber((analysisInfo as any)?.ai?.okved_score);
+      const prodclassByOkved =
+        parseNumber(row.prodclass_by_okved) ??
+        parseNumber((analysisInfo as any)?.prodclass_by_okved) ??
+        parseNumber((analysisInfo as any)?.ai?.prodclass_by_okved);
+      const domain =
+        parseString(row.analysis_domain) ||
+        (analysisInfo && parseString((analysisInfo as any)?.domain));
 
-        const equipment = normalizeEquipment(row.analysis_equipment);
+      const equipment = normalizeEquipment(row.analysis_equipment);
         const tnved = normalizeTnved(row.analysis_tnved);
       const metaSites = parseStringArray(contacts?.webSites);
       const metaEmails = parseStringArray(contacts?.emails);
@@ -637,6 +679,9 @@ export async function GET(request: NextRequest) {
         okvedMatch,
         equipment,
         tnved,
+        descriptionScore,
+        okvedScore,
+        prodclassByOkved,
       });
       const pipeline = parsePipeline(row.analysis_pipeline || (analysisInfo as any)?.pipeline);
 
@@ -676,6 +721,9 @@ export async function GET(request: NextRequest) {
         analysis_match_level: matchLevel,
         analysis_class: analysisClass,
         analysis_equipment: equipment,
+        description_score: descriptionScore,
+        okved_score: okvedScore,
+        prodclass_by_okved: prodclassByOkved,
         main_okved: mainOkved,
         analysis_okved_match: okvedMatch,
         analysis_description: description,
