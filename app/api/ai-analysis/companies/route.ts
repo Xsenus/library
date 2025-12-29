@@ -74,6 +74,21 @@ const OPTIONAL_COLUMNS: OptionalColumnSpec[] = [
     candidates: ['analysis_equipment', 'top_equipment', 'analysis_top_equipment'],
     fallback: 'NULL::jsonb',
   },
+  {
+    alias: 'description_score',
+    candidates: ['description_score', 'analysis_description_score', 'description_similarity'],
+    fallback: 'NULL::numeric',
+  },
+  {
+    alias: 'okved_score',
+    candidates: ['okved_score', 'analysis_okved_score', 'okved_similarity'],
+    fallback: 'NULL::numeric',
+  },
+  {
+    alias: 'prodclass_by_okved',
+    candidates: ['prodclass_by_okved', 'analysis_prodclass_by_okved', 'prodclass_by_okved_score'],
+    fallback: 'NULL::int',
+  },
   { alias: 'main_okved', candidates: ['main_okved', 'primary_okved'], fallback: 'NULL::text' },
   { alias: 'analysis_okved_match', candidates: ['analysis_okved_match', 'okved_match'], fallback: 'NULL::text' },
   {
@@ -100,6 +115,13 @@ const QUEUE_CACHE_TTL_MS = 5 * 60 * 1000;
 const QUEUE_STALE_MS = 120 * 60 * 1000;
 const QUEUE_STALE_INTERVAL = `${QUEUE_STALE_MS / 1000 / 60} minutes`;
 
+let cachedEquipmentCols: { names: Set<string>; available: boolean; ts: number } | null = null;
+const EQUIPMENT_CACHE_TTL_MS = 5 * 60 * 1000;
+
+type TableMetaCache = { names: Set<string>; available: boolean; ts: number };
+const TABLE_CACHE_TTL_MS = 5 * 60 * 1000;
+const tableCache = new Map<string, TableMetaCache>();
+
 async function isQueueTableAvailable(): Promise<boolean> {
   const now = Date.now();
   if (cachedQueueCheck && now - cachedQueueCheck.ts < QUEUE_CACHE_TTL_MS) {
@@ -116,6 +138,83 @@ async function isQueueTableAvailable(): Promise<boolean> {
     console.warn('ai_analysis_queue availability check failed:', error);
     cachedQueueCheck = { available: false, ts: now };
     return false;
+  }
+}
+
+async function getEquipmentColumns(): Promise<{ names: Set<string>; available: boolean }> {
+  const now = Date.now();
+  if (cachedEquipmentCols && now - cachedEquipmentCols.ts < EQUIPMENT_CACHE_TTL_MS) {
+    return { names: cachedEquipmentCols.names, available: cachedEquipmentCols.available };
+  }
+
+  try {
+    const existsRes = await db.query<{ exists: boolean }>(
+      "SELECT to_regclass('public.equipment_all') IS NOT NULL AS exists",
+    );
+    const available = !!existsRes.rows?.[0]?.exists;
+    if (!available) {
+      cachedEquipmentCols = { names: new Set(), available, ts: now };
+      return { names: new Set(), available };
+    }
+
+    const { rows } = await db.query<{ column_name: string }>(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = 'public' AND table_name = 'equipment_all'
+      `,
+    );
+
+    const names = new Set(rows.map((r) => r.column_name));
+    cachedEquipmentCols = { names, available: true, ts: now };
+    return { names, available: true };
+  } catch (error) {
+    console.warn('Failed to load equipment_all metadata', error);
+    cachedEquipmentCols = { names: new Set(), available: false, ts: now };
+    return { names: new Set(), available: false };
+  }
+}
+
+async function getTableColumns(
+  table: string,
+  { schema = 'public', connection = db, ttlMs = TABLE_CACHE_TTL_MS }: { schema?: string; connection?: typeof db; ttlMs?: number } = {},
+): Promise<{ names: Set<string>; available: boolean }> {
+  const key = `${schema}.${table}`;
+  const now = Date.now();
+  const cached = tableCache.get(key);
+  if (cached && now - cached.ts < ttlMs) {
+    return { names: cached.names, available: cached.available };
+  }
+
+  try {
+    const existsRes = await connection.query<{ exists: boolean }>(
+      `SELECT to_regclass($1) IS NOT NULL AS exists`,
+      [`${schema}.${table}`],
+    );
+    const available = !!existsRes.rows?.[0]?.exists;
+    if (!available) {
+      const names = new Set<string>();
+      tableCache.set(key, { names, available, ts: now });
+      return { names, available };
+    }
+
+    const { rows } = await connection.query<{ column_name: string }>(
+      `
+        SELECT column_name
+        FROM information_schema.columns
+        WHERE table_schema = $1 AND table_name = $2
+      `,
+      [schema, table],
+    );
+
+    const names = new Set(rows.map((r) => r.column_name));
+    tableCache.set(key, { names, available: true, ts: now });
+    return { names, available: true };
+  } catch (error) {
+    console.warn(`Failed to load metadata for ${schema}.${table}`, error);
+    const names = new Set<string>();
+    tableCache.set(key, { names, available: false, ts: now });
+    return { names, available: false };
   }
 }
 
@@ -150,6 +249,239 @@ function buildOptionalSelect(existing: Set<string>): SelectBuild {
   }
 
   return { sql: parts.join(',\n        '), selected };
+}
+
+async function getEquipmentByInn(inns: string[]): Promise<Map<string, any[]>> {
+  const result = new Map<string, any[]>();
+  if (!inns.length) return result;
+
+  const meta = await getEquipmentColumns();
+  if (!meta.available) return result;
+  if (!meta.names.has('inn')) return result;
+
+  const equipmentCol = ['equipment', 'equipment_list', 'equipment_ai', 'equipment_data', 'equipment_json'].find((c) =>
+    meta.names.has(c),
+  );
+
+  if (!equipmentCol) return result;
+
+  try {
+    const { rows } = await db.query<{ inn: string; equipment: any }>(
+      `SELECT inn, ${equipmentCol} AS equipment FROM equipment_all WHERE inn = ANY($1::text[])`,
+      [inns],
+    );
+
+    for (const row of rows) {
+      const parsed = normalizeEquipment(row.equipment);
+      if (parsed.length) {
+        result.set(row.inn, parsed);
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to load equipment_all data', error);
+  }
+
+  return result;
+}
+
+type SiteAnalyzerFallback = {
+  parsId: number | null;
+  description: string | null;
+  domains: string[];
+  prodclass: number | string | null;
+  prodclassScore: number | null;
+  descriptionScore: number | null;
+  okvedScore: number | null;
+  descriptionOkvedScore: number | null;
+  prodclassByOkved: number | null;
+  goods: any[];
+  equipment: any[];
+};
+
+async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, SiteAnalyzerFallback>> {
+  const result = new Map<string, SiteAnalyzerFallback>();
+  if (!inns.length) return result;
+
+  const clientsMeta = await getTableColumns('clients_requests');
+  const parsMeta = await getTableColumns('pars_site');
+  const prodclassMeta = await getTableColumns('ai_site_prodclass');
+  const goodsMeta = await getTableColumns('ai_site_goods_types');
+  const equipmentMeta = await getTableColumns('ai_site_equipment');
+
+  if (!clientsMeta.available || !parsMeta.available) return result;
+  if (!clientsMeta.names.has('id') || !clientsMeta.names.has('inn')) return result;
+  if (!parsMeta.names.has('company_id') || !parsMeta.names.has('id')) return result;
+
+  const descriptionExpr = parsMeta.names.has('description') ? 'ps.description' : 'NULL::text AS description';
+  const domain1Expr = parsMeta.names.has('domain_1') ? 'ps.domain_1' : 'NULL::text AS domain_1';
+  const domain2Expr = parsMeta.names.has('domain_2') ? 'ps.domain_2' : 'NULL::text AS domain_2';
+  const urlExpr = parsMeta.names.has('url') ? 'ps.url' : 'NULL::text AS url';
+  const createdExpr = parsMeta.names.has('created_at') ? 'ps.created_at DESC NULLS LAST,' : '';
+
+  let parsRows: { inn: string; pars_id: number; description: any; domain_1: any; domain_2: any; url: any }[] = [];
+  try {
+    const { rows } = await db.query(
+      `
+        WITH inn_map AS (
+          SELECT inn, id AS company_id
+          FROM clients_requests
+          WHERE inn = ANY($1::text[])
+        )
+        SELECT DISTINCT ON (im.inn)
+          im.inn,
+          ps.id AS pars_id,
+          ${descriptionExpr},
+          ${domain1Expr},
+          ${domain2Expr},
+          ${urlExpr}
+        FROM inn_map im
+        JOIN pars_site ps ON ps.company_id = im.company_id
+        ORDER BY im.inn, ${createdExpr} ps.id DESC
+      `,
+      [inns],
+    );
+    parsRows = rows as any;
+  } catch (error) {
+    console.warn('Failed to load pars_site data', error);
+    return result;
+  }
+
+  if (!parsRows.length) return result;
+
+  const parsIds = parsRows.map((row) => row.pars_id).filter((id) => typeof id === 'number');
+
+  const prodclassMap = new Map<number, any>();
+  if (prodclassMeta.available && prodclassMeta.names.has('text_pars_id')) {
+    try {
+      const prodclassCols = [
+        prodclassMeta.names.has('prodclass') ? 'prodclass' : null,
+        prodclassMeta.names.has('prodclass_score') ? 'prodclass_score' : null,
+        prodclassMeta.names.has('description_score') ? 'description_score' : null,
+        prodclassMeta.names.has('okved_score') ? 'okved_score' : null,
+        prodclassMeta.names.has('description_okved_score') ? 'description_okved_score' : null,
+        prodclassMeta.names.has('prodclass_by_okved') ? 'prodclass_by_okved' : null,
+      ].filter(Boolean) as string[];
+
+      if (prodclassCols.length) {
+        const { rows } = await db.query(
+          `
+            SELECT DISTINCT ON (text_pars_id)
+              text_pars_id,
+              ${prodclassCols.join(',\n              ')}
+            FROM ai_site_prodclass
+            WHERE text_pars_id = ANY($1::int[])
+            ORDER BY text_pars_id, id DESC
+          `,
+          [parsIds],
+        );
+        for (const row of rows as any[]) {
+          prodclassMap.set(row.text_pars_id, row);
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load ai_site_prodclass data', error);
+    }
+  }
+
+  const goodsMap = new Map<number, any[]>();
+  if (goodsMeta.available && goodsMeta.names.has('text_par_id')) {
+    try {
+      const goodsCols = [
+        goodsMeta.names.has('goods_type') ? 'goods_type' : null,
+        goodsMeta.names.has('goods_type_id') ? 'goods_type_id' : null,
+        goodsMeta.names.has('match_id') ? 'match_id' : null,
+        goodsMeta.names.has('goods_types_score') ? 'goods_types_score' : null,
+        goodsMeta.names.has('text_vector') ? 'text_vector' : null,
+        'text_par_id',
+      ].filter(Boolean) as string[];
+
+      const { rows } = await db.query(
+        `
+          SELECT ${goodsCols.join(',\n                 ')}
+          FROM ai_site_goods_types
+          WHERE text_par_id = ANY($1::int[])
+        `,
+        [parsIds],
+      );
+
+      for (const row of rows as any[]) {
+        const current = goodsMap.get(row.text_par_id) ?? [];
+        current.push(row);
+        goodsMap.set(row.text_par_id, current);
+      }
+    } catch (error) {
+      console.warn('Failed to load ai_site_goods_types data', error);
+    }
+  }
+
+  const equipmentMap = new Map<number, any[]>();
+  if (equipmentMeta.available && equipmentMeta.names.has('text_par_id')) {
+    try {
+      const equipmentCols = [
+        equipmentMeta.names.has('equipment') ? 'equipment' : null,
+        equipmentMeta.names.has('equipment_id') ? 'equipment_id' : null,
+        equipmentMeta.names.has('match_id') ? 'match_id' : null,
+        equipmentMeta.names.has('equipment_score') ? 'equipment_score' : null,
+        equipmentMeta.names.has('text_vector') ? 'text_vector' : null,
+        'text_par_id',
+      ].filter(Boolean) as string[];
+
+      const { rows } = await db.query(
+        `
+          SELECT ${equipmentCols.join(',\n                 ')}
+          FROM ai_site_equipment
+          WHERE text_par_id = ANY($1::int[])
+        `,
+        [parsIds],
+      );
+
+      for (const row of rows as any[]) {
+        const current = equipmentMap.get(row.text_par_id) ?? [];
+        current.push(row);
+        equipmentMap.set(row.text_par_id, current);
+      }
+    } catch (error) {
+      console.warn('Failed to load ai_site_equipment data', error);
+    }
+  }
+
+  for (const row of parsRows) {
+    const domains = [row.domain_1, row.domain_2, row.url]
+      .map((d) => parseString(d))
+      .filter((d): d is string => !!d);
+
+    const prodclassRow = prodclassMap.get(row.pars_id) ?? {};
+    const goodsRows = goodsMap.get(row.pars_id) ?? [];
+    const equipmentRows = equipmentMap.get(row.pars_id) ?? [];
+
+    const fallback: SiteAnalyzerFallback = {
+      parsId: row.pars_id ?? null,
+      description: parseString(row.description),
+      domains: Array.from(new Set(domains)),
+      prodclass: prodclassRow.prodclass ?? null,
+      prodclassScore: parseNumber(prodclassRow.prodclass_score),
+      descriptionScore: parseNumber(prodclassRow.description_score),
+      okvedScore: parseNumber(prodclassRow.okved_score),
+      descriptionOkvedScore: parseNumber(prodclassRow.description_okved_score),
+      prodclassByOkved: parseNumber(prodclassRow.prodclass_by_okved),
+      goods: goodsRows.map((g) => ({
+        name: parseString(g.goods_type) ?? parseString(g.goods_type_id) ?? parseString(g.match_id),
+        id: parseNumber(g.goods_type_id) ?? parseNumber(g.match_id),
+        score: parseNumber(g.goods_types_score),
+        text_vector: g.text_vector ?? null,
+      })),
+      equipment: equipmentRows.map((eq) => ({
+        name: parseString(eq.equipment) ?? parseString(eq.equipment_id) ?? parseString(eq.match_id),
+        id: parseNumber(eq.equipment_id) ?? parseNumber(eq.match_id),
+        score: parseNumber(eq.equipment_score),
+        text_vector: eq.text_vector ?? null,
+      })),
+    };
+
+    result.set(row.inn, fallback);
+  }
+
+  return result;
 }
 
 function buildActivitySql(optionalSelect: SelectBuild, queueAvailable: boolean, whereSql: string): string | null {
@@ -299,6 +631,65 @@ function parseProgress(val: any): number | null {
   if (num > 1 && num <= 100) return Math.round(num) / 100;
   if (num >= 0 && num <= 1) return num;
   return null;
+}
+
+function mergeAnalyzerInfo(
+  base: any,
+  extra: {
+    sites: string[] | null;
+    description: string | null;
+    domain: string | null;
+    matchLevel: string | null;
+    analysisClass: string | null;
+    okvedMatch: string | null;
+    equipment: any[];
+    tnved: any[];
+    descriptionScore: number | null;
+    okvedScore: number | null;
+    prodclassByOkved: number | null;
+  },
+) {
+  const company = base?.company && typeof base.company === 'object' ? { ...base.company } : {};
+  const ai = base?.ai && typeof base.ai === 'object' ? { ...base.ai } : {};
+
+  if (!ai.sites && extra.sites?.length) ai.sites = extra.sites;
+  if (!ai.products && extra.tnved?.length) ai.products = extra.tnved;
+  if (!ai.equipment && extra.equipment?.length) ai.equipment = extra.equipment;
+
+  if (ai.description_score == null && extra.descriptionScore != null) {
+    ai.description_score = extra.descriptionScore;
+  }
+
+  if (ai.okved_score == null && extra.okvedScore != null) {
+    ai.okved_score = extra.okvedScore;
+  }
+
+  if (ai.prodclass_by_okved == null && extra.prodclassByOkved != null) {
+    ai.prodclass_by_okved = extra.prodclassByOkved;
+  }
+
+  if (!ai.prodclass && (extra.analysisClass || extra.matchLevel || extra.okvedMatch)) {
+    ai.prodclass = {
+      name: extra.analysisClass ?? null,
+      label: extra.analysisClass ?? null,
+      score: extra.matchLevel ? parseNumber(extra.matchLevel) : null,
+      description_okved_score: extra.okvedMatch ? parseNumber(extra.okvedMatch) : null,
+    };
+  }
+
+  if (!company.domain1 && extra.description) company.domain1 = extra.description;
+  if (!company.domain1_site && extra.domain) company.domain1_site = extra.domain;
+
+  const hasCompany = Object.keys(company).length > 0;
+  const hasAi = Object.keys(ai).length > 0;
+
+  if (!hasCompany && !hasAi) return base ?? null;
+
+  return {
+    ...base,
+    ...(hasCompany ? { company } : {}),
+    ...(hasAi ? { ai } : {}),
+  };
 }
 
 function normalizeEquipment(raw: any): any[] {
@@ -507,6 +898,8 @@ export async function GET(request: NextRequest) {
 
     const inns = dataRes.rows.map((row: any) => row.inn).filter(Boolean);
     let contactsByInn = new Map<string, { emails?: any; webSites?: any }>();
+    let equipmentByInn = new Map<string, any[]>();
+    let siteAnalyzerByInn = new Map<string, SiteAnalyzerFallback>();
 
     if (inns.length) {
       try {
@@ -526,6 +919,9 @@ export async function GET(request: NextRequest) {
       } catch (error) {
         console.error('Failed to refresh company contacts', error);
       }
+
+      equipmentByInn = await getEquipmentByInn(inns);
+      siteAnalyzerByInn = await loadSiteAnalyzerFallbacks(inns);
     }
 
     const total = countRes.rows?.[0]?.cnt ?? 0;
@@ -533,6 +929,7 @@ export async function GET(request: NextRequest) {
     const items = dataRes.rows.map((row: any) => {
       const core = okvedCompanySchema.parse(row);
       const contacts = contactsByInn.get(core.inn);
+      const siteFallback = siteAnalyzerByInn.get(core.inn);
 
       const analysisInfo = parseJson(row.analysis_info);
 
@@ -554,24 +951,53 @@ export async function GET(request: NextRequest) {
 
       const matchLevel =
         parseString(row.analysis_match_level) ||
-        (analysisInfo && parseString((analysisInfo as any)?.match_level));
+        (analysisInfo && parseString((analysisInfo as any)?.match_level)) ||
+        (siteFallback?.prodclassScore != null ? String(siteFallback.prodclassScore) : null);
       const analysisClass =
         parseString(row.analysis_class) ||
-        (analysisInfo && parseString((analysisInfo as any)?.found_class));
+        (analysisInfo && parseString((analysisInfo as any)?.found_class)) ||
+        (siteFallback?.prodclass != null ? parseString(siteFallback.prodclass) : null);
       const description =
         parseString(row.analysis_description) ||
-        (analysisInfo && parseString((analysisInfo as any)?.description));
+        (analysisInfo && parseString((analysisInfo as any)?.description)) ||
+        parseString(siteFallback?.description);
       const okvedMatch =
         parseString(row.analysis_okved_match) ||
-        (analysisInfo && parseString((analysisInfo as any)?.okved_match));
+        (analysisInfo && parseString((analysisInfo as any)?.okved_match)) ||
+        (siteFallback?.descriptionOkvedScore != null ? String(siteFallback.descriptionOkvedScore) : null);
+      const descriptionScore =
+        parseNumber(row.description_score) ??
+        parseNumber((analysisInfo as any)?.description_score) ??
+        parseNumber((analysisInfo as any)?.ai?.description_score) ??
+        siteFallback?.descriptionScore ?? null;
+      const okvedScore =
+        parseNumber(row.okved_score) ??
+        parseNumber((analysisInfo as any)?.okved_score) ??
+        parseNumber((analysisInfo as any)?.ai?.okved_score) ??
+        siteFallback?.okvedScore ?? null;
+      const prodclassByOkved =
+        parseNumber(row.prodclass_by_okved) ??
+        parseNumber((analysisInfo as any)?.prodclass_by_okved) ??
+        parseNumber((analysisInfo as any)?.ai?.prodclass_by_okved) ??
+        siteFallback?.prodclassByOkved ?? null;
       const domain =
         parseString(row.analysis_domain) ||
-        (analysisInfo && parseString((analysisInfo as any)?.domain));
+        (analysisInfo && parseString((analysisInfo as any)?.domain)) ||
+        (siteFallback?.domains?.[0] ?? null);
 
-      const equipment = normalizeEquipment(row.analysis_equipment);
-      const tnved = normalizeTnved(row.analysis_tnved);
-      const pipeline = parsePipeline(row.analysis_pipeline || (analysisInfo as any)?.pipeline);
-
+      let equipment = normalizeEquipment(row.analysis_equipment);
+      if (!equipment.length) {
+        const equipmentFromAux = equipmentByInn.get(core.inn);
+        if (equipmentFromAux?.length) {
+          equipment = equipmentFromAux;
+        } else if (siteFallback?.equipment?.length) {
+          equipment = siteFallback.equipment.filter((item) => item && (item.name || item.id));
+        }
+      }
+      let tnved = normalizeTnved(row.analysis_tnved);
+      if (!tnved.length && siteFallback?.goods?.length) {
+        tnved = siteFallback.goods.filter((item) => item && (item.name || item.id));
+      }
       const metaSites = parseStringArray(contacts?.webSites);
       const metaEmails = parseStringArray(contacts?.emails);
 
@@ -579,12 +1005,28 @@ export async function GET(request: NextRequest) {
         metaSites ||
         parseStringArray(row.sites) ||
         parseStringArray((analysisInfo as any)?.sites) ||
-        parseStringArray(row.analysis_domain ? [row.analysis_domain] : null);
+        parseStringArray(row.analysis_domain ? [row.analysis_domain] : null) ||
+        (siteFallback?.domains?.length ? siteFallback.domains : null);
 
       const emails =
         metaEmails ||
         parseStringArray(row.emails) ||
         parseStringArray((analysisInfo as any)?.emails);
+
+      const mergedAnalyzer = mergeAnalyzerInfo(analysisInfo, {
+        sites,
+        description,
+        domain,
+        matchLevel,
+        analysisClass,
+        okvedMatch,
+        equipment,
+        tnved,
+        descriptionScore,
+        okvedScore,
+        prodclassByOkved,
+      });
+      const pipeline = parsePipeline(row.analysis_pipeline || (analysisInfo as any)?.pipeline);
 
       const score =
         parseNumber(row.analysis_score) ??
@@ -622,11 +1064,14 @@ export async function GET(request: NextRequest) {
         analysis_match_level: matchLevel,
         analysis_class: analysisClass,
         analysis_equipment: equipment,
+        description_score: descriptionScore,
+        okved_score: okvedScore,
+        prodclass_by_okved: prodclassByOkved,
         main_okved: mainOkved,
         analysis_okved_match: okvedMatch,
         analysis_description: description,
         analysis_tnved: tnved,
-        analysis_info: analysisInfo,
+        analysis_info: mergedAnalyzer,
         analysis_pipeline: pipeline,
         queued_at: queuedAt,
         queued_by: queuedBy,
