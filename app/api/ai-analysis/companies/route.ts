@@ -307,6 +307,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   const prodclassMeta = await getTableColumns('ai_site_prodclass');
   const goodsMeta = await getTableColumns('ai_site_goods_types');
   const equipmentMeta = await getTableColumns('ai_site_equipment');
+  const openAiMeta = await getTableColumns('ai_site_openai_responses');
 
   if (!clientsMeta.available || !parsMeta.available) return result;
   if (!clientsMeta.names.has('id') || !clientsMeta.names.has('inn')) return result;
@@ -349,6 +350,122 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   if (!parsRows.length) return result;
 
   const parsIds = parsRows.map((row) => row.pars_id).filter((id) => typeof id === 'number');
+
+  const parseArray = (val: any): any[] => {
+    const parsed = parseJson(val);
+    return Array.isArray(parsed) ? parsed : [];
+  };
+
+  const mapGoodsList = (raw: any): any[] =>
+    parseArray(raw).reduce<any[]>((acc, item) => {
+      if (!item) return acc;
+      if (typeof item === 'string') {
+        acc.push({ name: item });
+        return acc;
+      }
+
+      if (typeof item === 'object') {
+        const name =
+          parseString((item as any).goods_type) ||
+          parseString((item as any).goods) ||
+          parseString((item as any).name) ||
+          parseString((item as any).title);
+        const id =
+          parseNumber((item as any).goods_type_id) ??
+          parseNumber((item as any).match_id) ??
+          parseNumber((item as any).id) ??
+          parseNumber((item as any).code);
+        const score =
+          parseNumber((item as any).goods_types_score) ??
+          parseNumber((item as any).score) ??
+          parseNumber((item as any).match_score);
+
+        if (!name && id == null) return acc;
+        acc.push({ name: name || (id != null ? String(id) : '—'), id, score, text_vector: (item as any).text_vector ?? null });
+        return acc;
+      }
+
+      acc.push({ name: String(item) });
+      return acc;
+    }, []);
+
+  const mapEquipmentList = (raw: any): any[] =>
+    parseArray(raw).reduce<any[]>((acc, item) => {
+      if (!item) return acc;
+      if (typeof item === 'string') {
+        acc.push({ name: item });
+        return acc;
+      }
+
+      if (typeof item === 'object') {
+        const name =
+          parseString((item as any).equipment) ||
+          parseString((item as any).equipment_site) ||
+          parseString((item as any).name) ||
+          parseString((item as any).title);
+        const id =
+          parseNumber((item as any).equipment_id) ??
+          parseNumber((item as any).match_id) ??
+          parseNumber((item as any).id) ??
+          parseNumber((item as any).code);
+        const score =
+          parseNumber((item as any).equipment_score) ??
+          parseNumber((item as any).score) ??
+          parseNumber((item as any).match_score);
+
+        if (!name && id == null) return acc;
+        acc.push({ name: name || (id != null ? String(id) : '—'), id, score, text_vector: (item as any).text_vector ?? null });
+        return acc;
+      }
+
+      acc.push({ name: String(item) });
+      return acc;
+    }, []);
+
+  const openAiMap = new Map<number, any>();
+  if (openAiMeta.available && openAiMeta.names.has('text_pars_id')) {
+    try {
+      const openAiCols = [
+        'text_pars_id',
+        openAiMeta.names.has('description') ? 'description' : null,
+        openAiMeta.names.has('description_score') ? 'description_score' : null,
+        openAiMeta.names.has('description_okved_score') ? 'description_okved_score' : null,
+        openAiMeta.names.has('okved_score') ? 'okved_score' : null,
+        openAiMeta.names.has('prodclass') ? 'prodclass' : null,
+        openAiMeta.names.has('prodclass_score') ? 'prodclass_score' : null,
+        openAiMeta.names.has('prodclass_by_okved') ? 'prodclass_by_okved' : null,
+        openAiMeta.names.has('equipment_site') ? 'equipment_site' : null,
+        openAiMeta.names.has('equipment') ? 'equipment' : null,
+        openAiMeta.names.has('goods') ? 'goods' : null,
+        openAiMeta.names.has('goods_type') ? 'goods_type' : null,
+      ].filter(Boolean) as string[];
+
+      if (openAiCols.length > 1) {
+        const orderExpr = openAiMeta.names.has('created_at')
+          ? 'created_at DESC NULLS LAST'
+          : openAiMeta.names.has('id')
+            ? 'id DESC'
+            : 'text_pars_id';
+
+        const { rows } = await db.query(
+          `
+            SELECT DISTINCT ON (text_pars_id)
+              ${openAiCols.join(',\n              ')}
+            FROM ai_site_openai_responses
+            WHERE text_pars_id = ANY($1::int[])
+            ORDER BY text_pars_id, ${orderExpr}
+          `,
+          [parsIds],
+        );
+
+        for (const row of rows as any[]) {
+          openAiMap.set(row.text_pars_id, row);
+        }
+      }
+    } catch (error) {
+      console.warn('Failed to load ai_site_openai_responses data', error);
+    }
+  }
 
   const prodclassMap = new Map<number, any>();
   if (prodclassMeta.available && prodclassMeta.names.has('text_pars_id')) {
@@ -453,27 +570,59 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
     const prodclassRow = prodclassMap.get(row.pars_id) ?? {};
     const goodsRows = goodsMap.get(row.pars_id) ?? [];
     const equipmentRows = equipmentMap.get(row.pars_id) ?? [];
+    const openAiRow = openAiMap.get(row.pars_id) ?? {};
+
+    const fallbackGoods = goodsRows.length
+      ? goodsRows
+      : [
+          ...mapGoodsList((openAiRow as any).goods),
+          ...mapGoodsList((openAiRow as any).goods_type),
+        ];
+
+    const fallbackEquipment = equipmentRows.length
+      ? equipmentRows
+      : [
+          ...mapEquipmentList((openAiRow as any).equipment),
+          ...mapEquipmentList((openAiRow as any).equipment_site),
+        ];
 
     const fallback: SiteAnalyzerFallback = {
       parsId: row.pars_id ?? null,
-      description: parseString(row.description),
+      description: parseString(row.description) ?? parseString((openAiRow as any).description),
       domains: Array.from(new Set(domains)),
-      prodclass: prodclassRow.prodclass ?? null,
-      prodclassScore: parseNumber(prodclassRow.prodclass_score),
-      descriptionScore: parseNumber(prodclassRow.description_score),
-      okvedScore: parseNumber(prodclassRow.okved_score),
-      descriptionOkvedScore: parseNumber(prodclassRow.description_okved_score),
-      prodclassByOkved: parseNumber(prodclassRow.prodclass_by_okved),
-      goods: goodsRows.map((g) => ({
-        name: parseString(g.goods_type) ?? parseString(g.goods_type_id) ?? parseString(g.match_id),
-        id: parseNumber(g.goods_type_id) ?? parseNumber(g.match_id),
-        score: parseNumber(g.goods_types_score),
+      prodclass: prodclassRow.prodclass ?? (openAiRow as any).prodclass ?? null,
+      prodclassScore: parseNumber(prodclassRow.prodclass_score) ?? parseNumber((openAiRow as any).prodclass_score),
+      descriptionScore: parseNumber(prodclassRow.description_score) ?? parseNumber((openAiRow as any).description_score),
+      okvedScore: parseNumber(prodclassRow.okved_score) ?? parseNumber((openAiRow as any).okved_score),
+      descriptionOkvedScore:
+        parseNumber(prodclassRow.description_okved_score) ??
+        parseNumber((openAiRow as any).description_okved_score),
+      prodclassByOkved:
+        parseNumber(prodclassRow.prodclass_by_okved) ?? parseNumber((openAiRow as any).prodclass_by_okved),
+      goods: fallbackGoods.map((g) => ({
+        name:
+          parseString(g.goods_type) ??
+          parseString(g.goods_type_id) ??
+          parseString(g.match_id) ??
+          parseString((g as any).name),
+        id: parseNumber(g.goods_type_id) ?? parseNumber(g.match_id) ?? parseNumber((g as any).id),
+        score:
+          parseNumber(g.goods_types_score) ??
+          parseNumber((g as any).score) ??
+          parseNumber((g as any).match_score),
         text_vector: g.text_vector ?? null,
       })),
-      equipment: equipmentRows.map((eq) => ({
-        name: parseString(eq.equipment) ?? parseString(eq.equipment_id) ?? parseString(eq.match_id),
-        id: parseNumber(eq.equipment_id) ?? parseNumber(eq.match_id),
-        score: parseNumber(eq.equipment_score),
+      equipment: fallbackEquipment.map((eq) => ({
+        name:
+          parseString(eq.equipment) ??
+          parseString(eq.equipment_id) ??
+          parseString(eq.match_id) ??
+          parseString((eq as any).name),
+        id: parseNumber(eq.equipment_id) ?? parseNumber(eq.match_id) ?? parseNumber((eq as any).id),
+        score:
+          parseNumber(eq.equipment_score) ??
+          parseNumber((eq as any).score) ??
+          parseNumber((eq as any).match_score),
         text_vector: eq.text_vector ?? null,
       })),
     };

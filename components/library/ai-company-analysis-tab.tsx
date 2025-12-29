@@ -293,7 +293,10 @@ type AiAnalyzerInfo = {
       label?: string | null;
       score?: number | null;
       description_okved_score?: number | null;
+      okved_score?: number | null;
     } | null;
+    prodclass_by_okved?: string | number | null;
+    okved_score?: number | null;
     industry?: string | null;
     utp?: string | null;
     letter?: string | null;
@@ -390,6 +393,8 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
     }, []);
 
   const prodclass = ai?.prodclass && typeof ai.prodclass === 'object' ? ai.prodclass : null;
+  const prodclassByOkved = ai?.prodclass_by_okved ?? null;
+  const okvedScore = ai?.okved_score ?? prodclass?.okved_score ?? null;
 
   const aiInfo = ai
     ? {
@@ -402,9 +407,13 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
               name: prodclass.name ?? prodclass.prodclass ?? null,
               label: prodclass.label ?? prodclass.full_name ?? null,
               score: prodclass.score ?? prodclass.prodclass_score ?? null,
-              description_okved_score: prodclass.description_okved_score ?? prodclass.okved_match_score ?? null,
+              description_okved_score:
+                prodclass.description_okved_score ?? prodclass.okved_match_score ?? prodclass.okved_score ?? null,
+              okved_score: prodclass.okved_score ?? null,
             }
           : null,
+        prodclass_by_okved: prodclassByOkved,
+        okved_score: okvedScore,
         industry: ai.industry ?? null,
         utp: ai.utp ?? ai.usp ?? null,
         letter: ai.letter ?? ai.email ?? null,
@@ -448,6 +457,8 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
     ? (() => {
         const rawProducts =
           (Array.isArray((data as any).products) ? (data as any).products : null) ??
+          (Array.isArray((data as any).goods) ? (data as any).goods : null) ??
+          (Array.isArray((data as any).goods_type) ? (data as any).goods_type : null) ??
           (Array.isArray((data as any).tnved) ? (data as any).tnved : null) ??
           (Array.isArray((data as any).analysis_products) ? (data as any).analysis_products : null);
         return rawProducts ? mapProducts(rawProducts) : [];
@@ -458,6 +469,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
     ? (() => {
         const rawEquipment =
           (Array.isArray((data as any).equipment) ? (data as any).equipment : null) ??
+          (Array.isArray((data as any).equipment_site) ? (data as any).equipment_site : null) ??
           (Array.isArray((data as any).top_equipment) ? (data as any).top_equipment : null) ??
           (Array.isArray((data as any).analysis_equipment) ? (data as any).analysis_equipment : null);
         return rawEquipment ? mapEquipment(rawEquipment) : [];
@@ -470,8 +482,21 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
         const rawScore = (data as any).prodclass_score ?? (data as any).analysis_match_level ?? null;
         const rawOkvedMatch =
           (data as any).description_okved_score ?? (data as any).okved_match_score ?? (data as any).analysis_okved_match ?? null;
+        const rawOkvedScore =
+          (data as any).okved_score ??
+          (prodclass && typeof prodclass === 'object' ? (prodclass as any).okved_score : null) ??
+          null;
+        const rawProdclassByOkved =
+          prodclassByOkved ?? (data as any).prodclass_by_okved ?? (data as any).prodclassByOkved ?? null;
 
-        if (!rawProdclass && rawScore == null && rawOkvedMatch == null) return null;
+        if (
+          !rawProdclass &&
+          rawProdclassByOkved == null &&
+          rawScore == null &&
+          rawOkvedMatch == null &&
+          rawOkvedScore == null
+        )
+          return null;
 
         if (rawProdclass && typeof rawProdclass === 'object') {
           return {
@@ -482,16 +507,19 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
             description_okved_score:
               rawProdclass.description_okved_score ??
               rawProdclass.okved_match_score ??
+              rawProdclass.okved_score ??
               (rawOkvedMatch != null ? Number(rawOkvedMatch) : null),
+            okved_score: rawProdclass.okved_score ?? (rawOkvedScore != null ? Number(rawOkvedScore) : null),
           };
         }
 
         return {
           id: null,
-          name: rawProdclass ?? null,
-          label: rawProdclass ?? null,
-          score: rawScore != null ? Number(rawScore) : null,
+          name: rawProdclass ?? (rawProdclassByOkved ? String(rawProdclassByOkved) : null),
+          label: rawProdclass ?? (rawProdclassByOkved ? String(rawProdclassByOkved) : null),
+          score: rawScore != null ? Number(rawScore) : rawOkvedScore != null ? Number(rawOkvedScore) : null,
           description_okved_score: rawOkvedMatch != null ? Number(rawOkvedMatch) : null,
+          okved_score: rawOkvedScore != null ? Number(rawOkvedScore) : null,
         };
       })()
     : aiInfo.prodclass;
@@ -824,6 +852,8 @@ export default function AiCompanyAnalysisTab() {
   const analyzerInfo = useMemo(() => (infoCompany ? normalizeAnalyzerInfo(infoCompany.analysis_info) : null), [infoCompany]);
   const analyzerSites = analyzerInfo?.ai?.sites ?? [];
   const analyzerProdclass = analyzerInfo?.ai?.prodclass ?? null;
+  const analyzerProdclassByOkved = analyzerInfo?.ai?.prodclass_by_okved ?? null;
+  const analyzerOkvedScore = analyzerProdclass?.okved_score ?? analyzerInfo?.ai?.okved_score ?? null;
   const [filtersDialogOpen, setFiltersDialogOpen] = useState(false);
   const forcedLaunchMode = useMemo(() => getForcedLaunchMode(true), []);
   const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
@@ -1960,12 +1990,19 @@ export default function AiCompanyAnalysisTab() {
     return items;
   };
 
-  const prodclassLabel = analyzerProdclass?.label || analyzerProdclass?.name || infoCompany?.analysis_class || null;
+  const prodclassLabel =
+    analyzerProdclass?.label ||
+    analyzerProdclass?.name ||
+    (analyzerProdclassByOkved != null ? String(analyzerProdclassByOkved) : null) ||
+    infoCompany?.analysis_class ||
+    null;
   const prodclassScoreText =
     formatMatchScore(analyzerProdclass?.score ?? null) ||
+    formatMatchScore(analyzerOkvedScore) ||
     (infoCompany?.analysis_match_level ? String(infoCompany.analysis_match_level) : null);
   const okvedMatchText =
     formatMatchScore(analyzerProdclass?.description_okved_score ?? null) ||
+    formatMatchScore(analyzerOkvedScore ?? null) ||
     (infoCompany?.analysis_okved_match ? String(infoCompany.analysis_okved_match) : null);
   const analysisDomainValue =
     infoCompany?.analysis_domain ||
