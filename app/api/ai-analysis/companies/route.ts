@@ -108,6 +108,7 @@ const OPTIONAL_COLUMNS: OptionalColumnSpec[] = [
     fallback: 'NULL::jsonb',
   },
   { alias: 'analysis_pipeline', candidates: ['analysis_pipeline', 'analysis_step', 'analysis_process'], fallback: 'NULL::text' },
+  { alias: 'okveds', candidates: ['okveds', 'okved_list'], fallback: 'NULL::jsonb' },
 ];
 
 const CONTACTS_MAX_AGE_MINUTES = 24 * 60;
@@ -418,6 +419,12 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   const domain2Expr = parsMeta.names.has('domain_2') ? 'ps.domain_2' : 'NULL::text';
   const urlExpr = parsMeta.names.has('url') ? 'ps.url' : 'NULL::text';
   const createdExpr = parsMeta.names.has('created_at') ? 'ps.created_at DESC NULLS LAST,' : '';
+  const clientGoodsCols = ['goods', 'goods_list', 'goods_ai', 'products', 'products_list', 'product_list']
+    .filter((col) => clientsMeta.names.has(col))
+    .map((col) => `cr.${quoteIdent(col)} AS ${quoteIdent(col)}`);
+  const clientEquipmentCols = ['equipment', 'equipment_list', 'equipment_ai']
+    .filter((col) => clientsMeta.names.has(col))
+    .map((col) => `cr.${quoteIdent(col)} AS ${quoteIdent(col)}`);
   const site1DescriptionExpr = clientsMeta.names.has('site_1_description')
     ? 'im.site_1_description'
     : 'NULL::text AS site_1_description';
@@ -435,6 +442,15 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
     url: any;
     site_1_description: any;
     site_2_description: any;
+    goods?: any;
+    goods_list?: any;
+    goods_ai?: any;
+    products?: any;
+    products_list?: any;
+    product_list?: any;
+    equipment?: any;
+    equipment_list?: any;
+    equipment_ai?: any;
   }[] = [];
   try {
     const { rows } = await db.query(
@@ -459,7 +475,9 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           COALESCE(${domain2Expr}, im.domain_2) AS domain_2,
           ${urlExpr} AS url,
           ${site1DescriptionExpr},
-          ${site2DescriptionExpr}
+          ${site2DescriptionExpr}${clientGoodsCols.length ? `,
+          ${clientGoodsCols.join(',\n          ')}` : ''}${clientEquipmentCols.length ? `,
+          ${clientEquipmentCols.join(',\n          ')}` : ''}
         FROM inn_map im
         LEFT JOIN pars_site ps ON ps.company_id = im.company_id
         ORDER BY im.inn, ${createdExpr} ps.id DESC
@@ -802,11 +820,19 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       equipmentMap.get(`p:${row.pars_id}`) ?? equipmentMap.get(`c:${row.company_id}`) ?? [];
     const openAiRow = openAiMap.get(`p:${row.pars_id}`) ?? openAiMap.get(`c:${row.company_id}`) ?? {};
 
+    const clientGoodsRaw = clientGoodsCols
+      .map((col) => (row as any)[col.replace('cr.', '')])
+      .find((val) => val != null);
+    const clientEquipmentRaw = clientEquipmentCols
+      .map((col) => (row as any)[col.replace('cr.', '')])
+      .find((val) => val != null);
+
     const fallbackGoods = goodsRows.length
       ? goodsRows
       : [
           ...mapGoodsList((openAiRow as any).goods),
           ...mapGoodsList((openAiRow as any).goods_type),
+          ...mapGoodsList(clientGoodsRaw),
         ];
 
     const fallbackEquipment = equipmentRows.length
@@ -814,6 +840,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       : [
           ...mapEquipmentList((openAiRow as any).equipment),
           ...mapEquipmentList((openAiRow as any).equipment_site),
+          ...normalizeEquipment(clientEquipmentRaw),
         ];
 
     const fallback: SiteAnalyzerFallback = {
@@ -846,6 +873,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           parseNumber((g as any).score) ??
           parseNumber((g as any).match_score),
         text_vector: g.text_vector ?? null,
+        source: 'site',
       })),
       equipment: fallbackEquipment.map((eq) => ({
         name:
@@ -859,6 +887,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           parseNumber((eq as any).score) ??
           parseNumber((eq as any).match_score),
         text_vector: eq.text_vector ?? null,
+        source: 'site',
       })),
     };
 
@@ -1333,6 +1362,8 @@ export async function GET(request: NextRequest) {
       const siteFallback = siteAnalyzerByInn.get(core.inn);
 
       const analysisInfo = parseJson(row.analysis_info);
+      const mainOkved = parseString(row.main_okved);
+      const okvedList = parseStringArray(row.okveds);
 
       const startedAt = parseIso(row.analysis_started_at);
       const finishedAt = parseIso(row.analysis_finished_at);
@@ -1357,7 +1388,10 @@ export async function GET(request: NextRequest) {
       const analysisClass =
         parseString(row.analysis_class) ||
         (analysisInfo && parseString((analysisInfo as any)?.found_class)) ||
-        (siteFallback?.prodclass != null ? parseString(siteFallback.prodclass) : null);
+        (siteFallback?.prodclass != null ? parseString(siteFallback.prodclass) : null) ||
+        (prodclassByOkved != null ? String(prodclassByOkved) : null) ||
+        mainOkved ||
+        (okvedList?.length ? okvedList[0] : null);
       const description =
         parseString(row.analysis_description) ||
         (analysisInfo && parseString((analysisInfo as any)?.description)) ||
@@ -1404,6 +1438,11 @@ export async function GET(request: NextRequest) {
       let tnved = normalizeTnved(row.analysis_tnved);
       if (!tnved.length && siteFallback?.goods?.length) {
         tnved = siteFallback.goods.filter((item) => item && (item.name || item.id));
+      } else if (!tnved.length) {
+        const okvedSource = okvedList && okvedList.length ? okvedList : mainOkved ? [mainOkved] : null;
+        if (okvedSource?.length) {
+          tnved = okvedSource.map((code) => ({ name: code, id: code }));
+        }
       }
       const metaSites = parseStringArray(contacts?.webSites);
       const metaEmails = parseStringArray(contacts?.emails);
