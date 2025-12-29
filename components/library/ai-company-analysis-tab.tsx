@@ -866,6 +866,10 @@ export default function AiCompanyAnalysisTab() {
 
   const isRefreshing = loading || isPending;
   const okvedSelectValue = okvedCode ?? '__all__';
+  const selectedOkved = useMemo(
+    () => okvedOptions.find((item) => item.okved_code === okvedCode) ?? null,
+    [okvedCode, okvedOptions],
+  );
   const selectedSteps = useMemo(
     () => (launchModeLocked ? forcedSteps : stepOptions.filter((opt) => stepFlags[opt.key]).map((opt) => opt.key)),
     [forcedSteps, launchModeLocked, stepFlags],
@@ -1102,7 +1106,37 @@ export default function AiCompanyAnalysisTab() {
         }
         const data = await res.json();
         const items = Array.isArray(data.items) ? data.items : [];
-        setOkvedOptions(items);
+
+        const deduped = items
+          .map((item) => {
+            const code = typeof item.okved_code === 'string' ? item.okved_code.trim() : String(item.okved_code ?? '');
+            const main = typeof item.okved_main === 'string' ? item.okved_main.trim() : '';
+            if (!code) return null;
+            return { ...item, okved_code: code, okved_main: main } as {
+              id: number;
+              okved_code: string;
+              okved_main: string;
+            };
+          })
+          .filter(Boolean) as Array<{ id: number; okved_code: string; okved_main: string }>;
+
+        const uniqueByCode = Array.from(
+          deduped.reduce((acc, item) => {
+            const existing = acc.get(item.okved_code);
+            if (!existing) {
+              acc.set(item.okved_code, item);
+              return acc;
+            }
+
+            if (item.okved_main && item.okved_main.length > existing.okved_main.length) {
+              acc.set(item.okved_code, item);
+            }
+
+            return acc;
+          }, new Map<string, { id: number; okved_code: string; okved_main: string }>()),
+        ).map(([, value]) => value);
+
+        setOkvedOptions(uniqueByCode);
       } catch (error) {
         console.error('Failed to load OKВЭД list:', error);
         setOkvedOptions([]);
@@ -2597,7 +2631,18 @@ export default function AiCompanyAnalysisTab() {
                     onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
                   >
                     <SelectTrigger className="h-9 w-full text-left text-sm">
-                      <SelectValue placeholder="Все коды" />
+                      <SelectValue placeholder="Все коды">
+                        {selectedOkved ? (
+                          <div className="flex flex-col gap-0.5 text-left">
+                            <span className="font-medium text-foreground">{selectedOkved.okved_code}</span>
+                            {selectedOkved.okved_main && (
+                              <span className="text-xs text-muted-foreground whitespace-normal break-words">
+                                {truncateText(selectedOkved.okved_main, 120)}
+                              </span>
+                            )}
+                          </div>
+                        ) : null}
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent className="min-w-full sm:min-w-[480px] lg:min-w-[620px]">
                       <SelectItem value="__all__">Все коды</SelectItem>
