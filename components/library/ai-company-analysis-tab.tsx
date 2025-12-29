@@ -1879,7 +1879,7 @@ export default function AiCompanyAnalysisTab() {
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
-                <div className="flex min-w-[300px] flex-1 flex-col gap-1 sm:flex-[0_0_420px]">
+                <div className="flex min-w-[360px] flex-1 flex-col gap-1 sm:flex-[0_0_520px]">
                   <span className="text-xs font-medium text-muted-foreground">Отрасль</span>
                   <div className="flex items-center gap-2">
                     <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
@@ -1888,7 +1888,7 @@ export default function AiCompanyAnalysisTab() {
                         disabled={industriesLoading && industries.length === 0}>
                         <SelectValue placeholder="Все отрасли" />
                       </SelectTrigger>
-                      <SelectContent className="min-w-[420px]">
+                      <SelectContent className="min-w-[520px]">
                         <SelectItem value="all">Все отрасли</SelectItem>
                         {industries.map((item) => (
                           <SelectItem key={item.id} value={String(item.id)}>
@@ -1902,7 +1902,7 @@ export default function AiCompanyAnalysisTab() {
                     )}
                   </div>
                 </div>
-                <div className="flex min-w-[340px] flex-1 flex-col gap-1 sm:flex-[0_0_480px]">
+                <div className="flex min-w-[420px] flex-1 flex-col gap-1 sm:flex-[0_0_580px]">
                   <span className="text-xs font-medium text-muted-foreground">ОКВЭД</span>
                   <Select
                     value={okvedSelectValue}
@@ -1911,7 +1911,7 @@ export default function AiCompanyAnalysisTab() {
                     <SelectTrigger className="h-9 w-full text-left text-sm">
                       <SelectValue placeholder="Все коды" />
                     </SelectTrigger>
-                    <SelectContent className="min-w-[460px]">
+                    <SelectContent className="min-w-[580px] max-w-[720px]">
                       <SelectItem value="__all__">Все коды</SelectItem>
                       {okvedOptions.map((item) => (
                         <SelectItem key={item.id} value={item.okved_code} title={item.okved_main}>
