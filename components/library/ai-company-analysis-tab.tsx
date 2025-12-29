@@ -29,15 +29,6 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
@@ -725,6 +716,7 @@ export default function AiCompanyAnalysisTab() {
   const analyzerInfo = useMemo(() => (infoCompany ? normalizeAnalyzerInfo(infoCompany.analysis_info) : null), [infoCompany]);
   const analyzerSites = analyzerInfo?.ai?.sites ?? [];
   const analyzerProdclass = analyzerInfo?.ai?.prodclass ?? null;
+  const [filtersDialogOpen, setFiltersDialogOpen] = useState(false);
   const forcedLaunchMode = useMemo(() => getForcedLaunchMode(true), []);
   const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
   const forcedSteps = useMemo(() => getForcedSteps(true), []);
@@ -753,6 +745,25 @@ export default function AiCompanyAnalysisTab() {
   const { toast } = useToast();
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (search.trim()) count += 1;
+    if (industryId !== 'all') count += 1;
+    if (okvedCode) count += 1;
+    count += statusFilters.length;
+    return count;
+  }, [industryId, okvedCode, search, statusFilters]);
+
+  const hasFilters = activeFilterCount > 0;
+
+  const resetFilters = useCallback(() => {
+    setSearch('');
+    setIndustryId('all');
+    setOkvedCode(undefined);
+    setStatusFilters([]);
+    setPage(1);
+  }, []);
 
   const activeTotal = useMemo(() => {
     if (!activeSummary) return 0;
@@ -1868,120 +1879,27 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <div className="flex flex-1 flex-wrap items-end gap-3">
-                <div className="flex min-w-[230px] flex-1 flex-col gap-1 md:min-w-[260px]">
-                  <span className="text-xs font-medium text-muted-foreground">Поиск</span>
-                  <Input
-                    className="h-9 flex-1 text-sm"
-                    placeholder="Поиск по названию или ИНН"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                </div>
-                <div className="flex min-w-[360px] flex-1 flex-col gap-1 sm:flex-[0_0_520px]">
-                  <span className="text-xs font-medium text-muted-foreground">Отрасль</span>
-                  <div className="flex items-center gap-2">
-                    <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
-                      <SelectTrigger
-                        className="h-9 w-full text-left text-sm"
-                        disabled={industriesLoading && industries.length === 0}>
-                        <SelectValue placeholder="Все отрасли" />
-                      </SelectTrigger>
-                      <SelectContent className="min-w-[520px]">
-                        <SelectItem value="all">Все отрасли</SelectItem>
-                        {industries.map((item) => (
-                          <SelectItem key={item.id} value={String(item.id)}>
-                            {item.industry}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {industriesLoading && (
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    )}
-                  </div>
-                </div>
-                <div className="flex min-w-[420px] flex-1 flex-col gap-1 sm:flex-[0_0_580px]">
-                  <span className="text-xs font-medium text-muted-foreground">ОКВЭД</span>
-                  <Select
-                    value={okvedSelectValue}
-                    onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
-                  >
-                    <SelectTrigger className="h-9 w-full text-left text-sm">
-                      <SelectValue placeholder="Все коды" />
-                    </SelectTrigger>
-                    <SelectContent className="min-w-[580px] max-w-[720px]">
-                      <SelectItem value="__all__">Все коды</SelectItem>
-                      {okvedOptions.map((item) => (
-                        <SelectItem key={item.id} value={item.okved_code} title={item.okved_main}>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-medium text-foreground">{item.okved_code}</span>
-                            <span className="text-xs text-muted-foreground whitespace-normal break-words">
-                              {truncateText(item.okved_main, 140)}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex flex-col gap-1 sm:w-auto">
-                  <span className="text-xs font-medium text-muted-foreground">Статусы</span>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant={statusFilters.length ? 'secondary' : 'outline'}
-                        size="sm"
-                        className="h-9 gap-2"
-                      >
-                        <Filter className="h-4 w-4" />
-                        Статусы
-                        {statusFilters.length > 0 && (
-                          <span className="rounded-full bg-background/80 px-2 py-0.5 text-xs text-foreground">
-                            {statusFilters.length}
-                          </span>
-                        )}
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-60">
-                      <DropdownMenuLabel>Фильтр статусов</DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      {statusOptions.map((option) => (
-                        <DropdownMenuCheckboxItem
-                          key={option.key}
-                          checked={statusFilters.includes(option.key)}
-                          disabled={available?.[option.field] === false}
-                          onCheckedChange={(checked) => {
-                            setStatusFilters((prev) => {
-                              if (checked) {
-                                if (prev.includes(option.key)) return prev;
-                                return [...prev, option.key];
-                              }
-                              return prev.filter((value) => value !== option.key);
-                            });
-                          }}
-                        >
-                          {option.label}
-                        </DropdownMenuCheckboxItem>
-                      ))}
-                      {statusFilters.length > 0 && (
-                        <>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onSelect={(event) => {
-                              event.preventDefault();
-                              setStatusFilters([]);
-                            }}
-                          >
-                            Сбросить фильтры
-                          </DropdownMenuItem>
-                        </>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant={hasFilters ? 'secondary' : 'outline'}
+                  className="h-9 gap-2"
+                  onClick={() => setFiltersDialogOpen(true)}
+                >
+                  <Filter className="h-4 w-4" />
+                  Фильтры
+                  {hasFilters && (
+                    <Badge variant="outline" className="px-1 text-[11px]">
+                      {activeFilterCount}
+                    </Badge>
+                  )}
+                </Button>
+                {hasFilters && (
+                  <Button type="button" variant="ghost" size="sm" className="h-9" onClick={resetFilters}>
+                    Сбросить
+                  </Button>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
               <Tooltip>
@@ -2050,6 +1968,25 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
+            {(search.trim() || industryId !== 'all' || okvedCode) && (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {search.trim() && (
+                  <Badge variant="secondary" className="max-w-full whitespace-normal">
+                    Поиск: {search.trim()}
+                  </Badge>
+                )}
+                {industryId !== 'all' && (
+                  <Badge variant="secondary" className="max-w-full whitespace-normal">
+                    Отрасль: {industries.find((item) => String(item.id) === industryId)?.industry ?? industryId}
+                  </Badge>
+                )}
+                {okvedCode && (
+                  <Badge variant="secondary" className="max-w-full whitespace-normal">
+                    ОКВЭД: {okvedCode}
+                  </Badge>
+                )}
+              </div>
+            )}
             <div
               className={cn(
                 'flex flex-col gap-2 rounded-lg border bg-background/60 p-3',
@@ -2612,6 +2549,117 @@ export default function AiCompanyAnalysisTab() {
             </div>
           </CardContent>
         </Card>
+
+        <Dialog open={filtersDialogOpen} onOpenChange={setFiltersDialogOpen}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>Фильтры AI-анализа</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <span className="text-[11px] uppercase text-muted-foreground">Поиск</span>
+                <Input
+                  className="h-9 text-sm"
+                  placeholder="Поиск по названию или ИНН"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1">
+                  <span className="text-[11px] uppercase text-muted-foreground">Отрасль</span>
+                  <div className="flex items-center gap-2">
+                    <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
+                      <SelectTrigger
+                        className="h-9 w-full text-left text-sm"
+                        disabled={industriesLoading && industries.length === 0}
+                      >
+                        <SelectValue placeholder="Все отрасли" />
+                      </SelectTrigger>
+                      <SelectContent className="min-w-full sm:min-w-[420px]">
+                        <SelectItem value="all">Все отрасли</SelectItem>
+                        {industries.map((item) => (
+                          <SelectItem key={item.id} value={String(item.id)}>
+                            {item.industry}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {industriesLoading && (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[11px] uppercase text-muted-foreground">ОКВЭД</span>
+                  <Select
+                    value={okvedSelectValue}
+                    onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
+                  >
+                    <SelectTrigger className="h-9 w-full text-left text-sm">
+                      <SelectValue placeholder="Все коды" />
+                    </SelectTrigger>
+                    <SelectContent className="min-w-full sm:min-w-[480px] lg:min-w-[620px]">
+                      <SelectItem value="__all__">Все коды</SelectItem>
+                      {okvedOptions.map((item) => (
+                        <SelectItem key={item.id} value={item.okved_code} title={item.okved_main}>
+                          <div className="flex flex-col gap-0.5 text-left">
+                            <span className="font-medium text-foreground">{item.okved_code}</span>
+                            <span className="text-xs text-muted-foreground whitespace-normal break-words">
+                              {truncateText(item.okved_main, 160)}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <span className="text-[11px] uppercase text-muted-foreground">Статусы</span>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {statusOptions.map((option) => (
+                    <label
+                      key={option.key}
+                      className={cn(
+                        'flex items-center gap-3 rounded-md border bg-muted/50 px-3 py-2 text-sm',
+                        available?.[option.field] === false && 'opacity-60',
+                      )}
+                    >
+                      <Checkbox
+                        checked={statusFilters.includes(option.key)}
+                        disabled={available?.[option.field] === false}
+                        onCheckedChange={(checked) => {
+                          setStatusFilters((prev) => {
+                            if (checked) {
+                              if (prev.includes(option.key)) return prev;
+                              return [...prev, option.key];
+                            }
+                            return prev.filter((value) => value !== option.key);
+                          });
+                        }}
+                      />
+                      <span className="text-foreground">{option.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">
+                  {hasFilters ? 'Применены пользовательские фильтры.' : 'Фильтры не выбраны.'}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="ghost" size="sm" onClick={resetFilters}>
+                    Сбросить фильтры
+                  </Button>
+                  <Button type="button" onClick={() => setFiltersDialogOpen(false)}>
+                    Готово
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>
           <DialogContent className="max-w-4xl">
