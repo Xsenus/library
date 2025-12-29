@@ -80,6 +80,8 @@ const COLUMN_WIDTHS_KEY = 'ai-analysis-column-widths';
 
 type PipelineStep = { label: string; status?: string | null };
 
+type OkvedOption = { id: number; okved_code: string; okved_main: string };
+
 const QUEUE_STALE_MS = 120 * 60 * 1000;
 
 type AiCompany = {
@@ -652,7 +654,7 @@ export default function AiCompanyAnalysisTab() {
   const [okvedCode, setOkvedCode] = useState<string | undefined>(undefined);
   const [industries, setIndustries] = useState<Industry[]>([]);
   const [industriesLoading, setIndustriesLoading] = useState(false);
-  const [okvedOptions, setOkvedOptions] = useState<Array<{ id: number; okved_code: string; okved_main: string }>>([]);
+  const [okvedOptions, setOkvedOptions] = useState<OkvedOption[]>([]);
   const [infoCompany, setInfoCompany] = useState<AiCompany | null>(null);
   const [logs, setLogs] = useState<AiDebugEventRecord[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
@@ -1129,20 +1131,16 @@ export default function AiCompanyAnalysisTab() {
           throw new Error(`Failed with ${res.status}`);
         }
         const data = await res.json();
-        const items = Array.isArray(data.items) ? data.items : [];
+        const items = Array.isArray(data.items) ? (data.items as OkvedOption[]) : [];
 
         const deduped = items
-          .map((item) => {
+          .map((item: OkvedOption) => {
             const code = typeof item.okved_code === 'string' ? item.okved_code.trim() : String(item.okved_code ?? '');
             const main = typeof item.okved_main === 'string' ? item.okved_main.trim() : '';
             if (!code) return null;
-            return { ...item, okved_code: code, okved_main: main } as {
-              id: number;
-              okved_code: string;
-              okved_main: string;
-            };
+            return { ...item, okved_code: code, okved_main: main } as OkvedOption;
           })
-          .filter(Boolean) as Array<{ id: number; okved_code: string; okved_main: string }>;
+          .filter(Boolean) as OkvedOption[];
 
         const uniqueByCode = Array.from(
           deduped.reduce((acc, item) => {
@@ -1157,7 +1155,7 @@ export default function AiCompanyAnalysisTab() {
             }
 
             return acc;
-          }, new Map<string, { id: number; okved_code: string; okved_main: string }>()),
+          }, new Map<string, OkvedOption>()),
         ).map(([, value]) => value);
 
         setOkvedOptions(uniqueByCode);
