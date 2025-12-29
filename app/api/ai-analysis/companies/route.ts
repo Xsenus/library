@@ -386,6 +386,7 @@ type SiteAnalyzerFallback = {
   parsId: number | null;
   companyId: number | null;
   description: string | null;
+  allDescriptions: string[];
   domains: string[];
   prodclass: number | string | null;
   prodclassScore: number | null;
@@ -476,6 +477,32 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
 
   const parsIds = parsRows.map((row) => row.pars_id).filter((id) => typeof id === 'number');
   const companyIds = parsRows.map((row) => row.company_id).filter((id) => typeof id === 'number');
+
+  const descriptionsByCompany = new Map<number, string[]>();
+  if (parsMeta.names.has('description') && companyIds.length) {
+    try {
+      const { rows } = await db.query<{ company_id: number; descriptions: string[] }>(
+        `
+          SELECT company_id, array_remove(array_agg(description), NULL) AS descriptions
+          FROM pars_site
+          WHERE company_id = ANY($1::int[])
+          GROUP BY company_id
+        `,
+        [companyIds],
+      );
+
+      for (const row of rows) {
+        const arr = Array.isArray(row.descriptions)
+          ? row.descriptions
+              .map((value) => parseString(value))
+              .filter((v): v is string => !!v)
+          : [];
+        descriptionsByCompany.set(row.company_id, arr);
+      }
+    } catch (error) {
+      console.warn('Failed to aggregate pars_site descriptions', error);
+    }
+  }
 
   const parseArray = (val: any): any[] => {
     const parsed = parseJson(val);
@@ -824,6 +851,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         parseString(row.site_1_description) ||
         parseString(row.site_2_description) ||
         parseString((openAiRow as any).description),
+      allDescriptions: descriptionsByCompany.get(row.company_id ?? -1) ?? [],
       domains: Array.from(new Set(domains)),
       prodclass: prodclassRow.prodclass ?? (openAiRow as any).prodclass ?? null,
       prodclassScore: parseNumber(prodclassRow.prodclass_score) ?? parseNumber((openAiRow as any).prodclass_score),
@@ -1015,6 +1043,40 @@ function parseProgress(val: any): number | null {
   if (num > 1 && num <= 100) return Math.round(num) / 100;
   if (num >= 0 && num <= 1) return num;
   return null;
+}
+
+function tokenize(text: string): string[] {
+  return text
+    .toLowerCase()
+    .replace(/[^a-zа-я0-9\s]/gi, ' ')
+    .split(/\s+/)
+    .map((chunk) => chunk.trim())
+    .filter(Boolean);
+}
+
+function jaccardSimilarity(a: string[], b: string[]): number | null {
+  if (!a.length || !b.length) return null;
+  const setA = new Set(a);
+  const setB = new Set(b);
+  const intersection = Array.from(setA).filter((item) => setB.has(item)).length;
+  const union = new Set([...setA, ...setB]).size;
+  if (union === 0) return null;
+  return intersection / union;
+}
+
+function estimateDescriptionOkvedScore(
+  mainOkved: string | null,
+  description: string | null,
+  extras: string[] = [],
+): number | null {
+  const okvedTokens = mainOkved ? tokenize(mainOkved) : [];
+  const descriptionTokens = description ? tokenize(description) : [];
+  const extraTokens = extras.flatMap((text) => tokenize(text)).slice(0, 200);
+  const combined = [...descriptionTokens, ...extraTokens];
+  if (!okvedTokens.length || !combined.length) return null;
+  const score = jaccardSimilarity(okvedTokens, combined);
+  if (score == null) return null;
+  return Number.isFinite(score) ? Math.max(0, Math.min(1, score)) : null;
 }
 
 function mergeAnalyzerInfo(
@@ -1341,6 +1403,9 @@ export async function GET(request: NextRequest) {
       const queuedBy = queueAvailable ? parseString(row.queued_by) : null;
       const rawStatus = parseString(row.analysis_status);
       const outcome = parseString(row.analysis_outcome);
+      const mainOkved =
+        parseString(row.main_okved) ||
+        parseString((analysisInfo as any)?.main_okved);
       const statusLower = rawStatus ? rawStatus.toLowerCase() : '';
       const runningStatus = ['run', 'process', 'progress', 'start'].some((token) =>
         statusLower.includes(token),
@@ -1367,7 +1432,7 @@ export async function GET(request: NextRequest) {
         parseNumber((analysisInfo as any)?.description_score) ??
         parseNumber((analysisInfo as any)?.ai?.description_score) ??
         siteFallback?.descriptionScore ?? null;
-      const descriptionOkvedScore =
+      const descriptionOkvedScoreRaw =
         parseNumber(row.description_okved_score) ??
         parseNumber((analysisInfo as any)?.description_okved_score) ??
         parseNumber((analysisInfo as any)?.ai?.description_okved_score) ??
@@ -1377,6 +1442,13 @@ export async function GET(request: NextRequest) {
         parseNumber((analysisInfo as any)?.okved_score) ??
         parseNumber((analysisInfo as any)?.ai?.okved_score) ??
         siteFallback?.okvedScore ?? null;
+      const descriptionOkvedScore =
+        descriptionOkvedScoreRaw ??
+        estimateDescriptionOkvedScore(
+          mainOkved,
+          description ?? siteFallback?.description ?? null,
+          siteFallback?.allDescriptions ?? [],
+        );
       const okvedMatch =
         parseString(row.analysis_okved_match) ||
         (analysisInfo && parseString((analysisInfo as any)?.okved_match)) ||
@@ -1450,10 +1522,6 @@ export async function GET(request: NextRequest) {
         parseNumber(row.analysis_attempts) ??
         parseNumber((analysisInfo as any)?.attempts) ??
         parseNumber((analysisInfo as any)?.retry_count);
-
-      const mainOkved =
-        parseString(row.main_okved) ||
-        parseString((analysisInfo as any)?.main_okved);
 
       return {
         ...core,
