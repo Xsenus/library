@@ -1194,10 +1194,6 @@ export async function GET(request: NextRequest) {
         queueAvailable && queuedAt && queueFresh && (!finishedAt || queuedAt > finishedAt) && !runningStatus;
       const status = shouldForceQueued ? 'queued' : rawStatus;
 
-      const matchLevel =
-        parseString(row.analysis_match_level) ||
-        (analysisInfo && parseString((analysisInfo as any)?.match_level)) ||
-        (siteFallback?.prodclassScore != null ? String(siteFallback.prodclassScore) : null);
       const analysisClass =
         parseString(row.analysis_class) ||
         (analysisInfo && parseString((analysisInfo as any)?.found_class)) ||
@@ -1221,6 +1217,12 @@ export async function GET(request: NextRequest) {
         parseNumber((analysisInfo as any)?.okved_score) ??
         parseNumber((analysisInfo as any)?.ai?.okved_score) ??
         siteFallback?.okvedScore ?? null;
+      const matchLevel =
+        parseString(row.analysis_match_level) ||
+        (analysisInfo && parseString((analysisInfo as any)?.match_level)) ||
+        (descriptionOkvedScore != null ? String(descriptionOkvedScore) : null) ||
+        (siteFallback?.prodclassScore != null ? String(siteFallback.prodclassScore) : null) ||
+        (okvedScore != null ? String(okvedScore) : null);
       const okvedMatch =
         parseString(row.analysis_okved_match) ||
         (analysisInfo && parseString((analysisInfo as any)?.okved_match)) ||
