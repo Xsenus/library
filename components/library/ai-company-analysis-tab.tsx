@@ -857,9 +857,13 @@ export default function AiCompanyAnalysisTab() {
   const analyzerSites = analyzerInfo?.ai?.sites ?? [];
   const analyzerProdclass = analyzerInfo?.ai?.prodclass ?? null;
   const analyzerProdclassByOkved = analyzerInfo?.ai?.prodclass_by_okved ?? null;
-  const analyzerOkvedScore = analyzerProdclass?.okved_score ?? analyzerInfo?.ai?.okved_score ?? null;
+  const analyzerOkvedScore =
+    analyzerProdclass?.okved_score ?? analyzerInfo?.ai?.okved_score ?? infoCompany?.okved_score ?? null;
   const analyzerDescriptionOkvedScore =
-    analyzerProdclass?.description_okved_score ?? analyzerInfo?.ai?.description_okved_score ?? null;
+    analyzerProdclass?.description_okved_score ??
+    analyzerInfo?.ai?.description_okved_score ??
+    infoCompany?.description_okved_score ??
+    null;
   const [filtersDialogOpen, setFiltersDialogOpen] = useState(false);
   const forcedLaunchMode = useMemo(() => getForcedLaunchMode(true), []);
   const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
