@@ -29,15 +29,6 @@ import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import {
-  DropdownMenu,
-  DropdownMenuCheckboxItem,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Separator } from '@/components/ui/separator';
 import { cn } from '@/lib/utils';
@@ -60,6 +51,39 @@ const stepOptions: { key: StepKey; label: string }[] = [
   { key: 'ib_match', label: 'Продклассы' },
   { key: 'equipment_selection', label: 'Оборудование' },
 ];
+
+const PAGE_SIZE_STORAGE_KEY = 'ai-analysis-page-size';
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 75, 100];
+
+type ColumnWidthKey = 'company' | 'contacts' | 'status' | 'pipeline' | 'actions';
+
+const DEFAULT_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
+  company: 340,
+  contacts: 300,
+  status: 320,
+  pipeline: 320,
+  actions: 180,
+};
+
+const COLUMN_LABELS: Record<ColumnWidthKey, string> = {
+  company: 'Компания',
+  contacts: 'Контакты',
+  status: 'Запуски и статус',
+  pipeline: 'Пайплайн',
+  actions: 'Действия',
+};
+
+const MIN_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
+  company: 240,
+  contacts: 220,
+  status: 240,
+  pipeline: 240,
+  actions: 150,
+};
+
+const COLUMN_WIDTHS_KEY = 'ai-analysis-column-widths';
+const COLUMN_ORDER_KEY = 'ai-analysis-column-order';
+const DEFAULT_COLUMN_ORDER: ColumnWidthKey[] = ['company', 'contacts', 'status', 'pipeline', 'actions'];
 
 type PipelineStep = { label: string; status?: string | null };
 
@@ -622,7 +646,12 @@ export default function AiCompanyAnalysisTab() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState<number>(() => {
+    if (typeof window === 'undefined') return 20;
+    const stored = Number(localStorage.getItem(PAGE_SIZE_STORAGE_KEY));
+    if (Number.isFinite(stored) && PAGE_SIZE_OPTIONS.includes(stored)) return stored;
+    return 20;
+  });
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
@@ -669,9 +698,66 @@ export default function AiCompanyAnalysisTab() {
   const [filterLimit, setFilterLimit] = useState(200);
   const [filterIncludeQueued, setFilterIncludeQueued] = useState(false);
   const [filterIncludeRunning, setFilterIncludeRunning] = useState(false);
+  const [columnOrder, setColumnOrder] = useState<ColumnWidthKey[]>(() => {
+    if (typeof window === 'undefined') return DEFAULT_COLUMN_ORDER;
+
+    try {
+      const raw = localStorage.getItem(COLUMN_ORDER_KEY);
+      if (!raw) return DEFAULT_COLUMN_ORDER;
+
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return DEFAULT_COLUMN_ORDER;
+
+      const seen = new Set<ColumnWidthKey>();
+      const normalized = parsed.reduce((acc, value) => {
+        if (DEFAULT_COLUMN_ORDER.includes(value) && !seen.has(value)) {
+          const key = value as ColumnWidthKey;
+          seen.add(key);
+          acc.push(key);
+        }
+        return acc;
+      }, [] as ColumnWidthKey[]);
+
+      DEFAULT_COLUMN_ORDER.forEach((key) => {
+        if (!seen.has(key)) normalized.push(key);
+      });
+
+      return normalized;
+    } catch (err) {
+      console.error('Failed to parse AI analysis column order from storage', err);
+      return DEFAULT_COLUMN_ORDER;
+    }
+  });
+  const [columnWidths, setColumnWidths] = useState<Record<ColumnWidthKey, number>>(() => {
+    if (typeof window === 'undefined') return DEFAULT_COLUMN_WIDTHS;
+
+    try {
+      const raw = localStorage.getItem(COLUMN_WIDTHS_KEY);
+      if (!raw) return DEFAULT_COLUMN_WIDTHS;
+      const parsed = JSON.parse(raw) as Partial<Record<ColumnWidthKey, number>>;
+
+      const sanitized = Object.entries(parsed ?? {}).reduce(
+        (acc, [key, value]) => {
+          const colKey = key as ColumnWidthKey;
+          if (typeof value === 'number' && Number.isFinite(value)) {
+            acc[colKey] = Math.max(MIN_COLUMN_WIDTHS[colKey], value);
+          }
+          return acc;
+        },
+        {} as Partial<Record<ColumnWidthKey, number>>,
+      );
+
+      return { ...DEFAULT_COLUMN_WIDTHS, ...sanitized } as Record<ColumnWidthKey, number>;
+    } catch (err) {
+      console.error('Failed to parse AI analysis column widths from storage', err);
+      return DEFAULT_COLUMN_WIDTHS;
+    }
+  });
+  const [draggingColumn, setDraggingColumn] = useState<ColumnWidthKey | null>(null);
   const analyzerInfo = useMemo(() => (infoCompany ? normalizeAnalyzerInfo(infoCompany.analysis_info) : null), [infoCompany]);
   const analyzerSites = analyzerInfo?.ai?.sites ?? [];
   const analyzerProdclass = analyzerInfo?.ai?.prodclass ?? null;
+  const [filtersDialogOpen, setFiltersDialogOpen] = useState(false);
   const forcedLaunchMode = useMemo(() => getForcedLaunchMode(true), []);
   const launchModeLocked = useMemo(() => isLaunchModeLocked(true), []);
   const forcedSteps = useMemo(() => getForcedSteps(true), []);
@@ -686,10 +772,44 @@ export default function AiCompanyAnalysisTab() {
     );
   });
 
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(pageSize));
+  }, [pageSize]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths));
+  }, [columnWidths]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(COLUMN_ORDER_KEY, JSON.stringify(columnOrder));
+  }, [columnOrder]);
+
   const debouncedSearch = useDebounce(search, 400);
   const { toast } = useToast();
 
   const totalPages = Math.max(1, Math.ceil(total / pageSize));
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    if (search.trim()) count += 1;
+    if (industryId !== 'all') count += 1;
+    if (okvedCode) count += 1;
+    count += statusFilters.length;
+    return count;
+  }, [industryId, okvedCode, search, statusFilters]);
+
+  const hasFilters = activeFilterCount > 0;
+
+  const resetFilters = useCallback(() => {
+    setSearch('');
+    setIndustryId('all');
+    setOkvedCode(undefined);
+    setStatusFilters([]);
+    setPage(1);
+  }, []);
 
   const activeTotal = useMemo(() => {
     if (!activeSummary) return 0;
@@ -707,6 +827,102 @@ export default function AiCompanyAnalysisTab() {
   );
 
   const activeOffPage = Math.max(0, activeTotal - activeCount);
+
+  const reorderColumns = useCallback((source: ColumnWidthKey, target: ColumnWidthKey) => {
+    if (source === target) return;
+
+    setColumnOrder((prev) => {
+      if (!prev.includes(source) || !prev.includes(target)) return prev;
+      const next = prev.filter((key) => key !== source);
+      const targetIndex = next.indexOf(target);
+      if (targetIndex === -1) return prev;
+      next.splice(targetIndex, 0, source);
+      return [...next];
+    });
+  }, []);
+
+  const handleColumnDragStart = useCallback((key: ColumnWidthKey, e: React.DragEvent) => {
+    setDraggingColumn(key);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('text/column', key);
+  }, []);
+
+  const handleColumnDrop = useCallback(
+    (target: ColumnWidthKey, e: React.DragEvent) => {
+      e.preventDefault();
+      const source = (e.dataTransfer.getData('text/column') as ColumnWidthKey) || draggingColumn;
+      if (!source) return;
+      reorderColumns(source, target);
+      setDraggingColumn(null);
+    },
+    [draggingColumn, reorderColumns],
+  );
+
+  const handleColumnDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  }, []);
+
+  const startColumnResize = useCallback(
+    (key: ColumnWidthKey, e: React.MouseEvent | React.TouchEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const startX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
+      if (typeof startX !== 'number') return;
+
+      const baseWidth = columnWidths[key] ?? DEFAULT_COLUMN_WIDTHS[key];
+
+      const handleMove = (ev: MouseEvent | TouchEvent) => {
+        const clientX = 'touches' in ev ? ev.touches[0]?.clientX : (ev as MouseEvent).clientX;
+        if (typeof clientX !== 'number') return;
+        const delta = clientX - startX;
+
+        setColumnWidths((prev) => ({
+          ...prev,
+          [key]: Math.max(MIN_COLUMN_WIDTHS[key], baseWidth + delta),
+        }));
+      };
+
+      const handleUp = () => {
+        document.removeEventListener('mousemove', handleMove as any);
+        document.removeEventListener('touchmove', handleMove as any);
+        document.removeEventListener('mouseup', handleUp);
+        document.removeEventListener('touchend', handleUp);
+        document.body.style.cursor = '';
+      };
+
+      document.body.style.cursor = 'col-resize';
+      document.addEventListener('mousemove', handleMove as any);
+      document.addEventListener('touchmove', handleMove as any, { passive: false });
+      document.addEventListener('mouseup', handleUp);
+      document.addEventListener('touchend', handleUp);
+    },
+    [columnWidths],
+  );
+
+  const renderResizeHandle = (key: ColumnWidthKey) => (
+    <span className="hidden select-none lg:block">
+      <span
+        className="relative block w-2 cursor-col-resize"
+        onMouseDown={(e) => startColumnResize(key, e)}
+        onTouchStart={(e) => startColumnResize(key, e)}
+        role="presentation"
+      >
+        <span className="absolute right-0 top-0 h-full w-2" />
+      </span>
+    </span>
+  );
+
+  const columnStyle = useCallback(
+    (key: ColumnWidthKey) => ({ width: columnWidths[key], minWidth: MIN_COLUMN_WIDTHS[key] }),
+    [columnWidths],
+  );
+
+  const tableMinWidth = useMemo(
+    () => columnOrder.reduce((acc, key) => acc + (columnWidths[key] ?? DEFAULT_COLUMN_WIDTHS[key]), 80),
+    [columnOrder, columnWidths],
+  );
 
   const isAnyActive = useMemo(
     () => {
@@ -736,6 +952,10 @@ export default function AiCompanyAnalysisTab() {
 
   const isRefreshing = loading || isPending;
   const okvedSelectValue = okvedCode ?? '__all__';
+  const selectedOkved = useMemo(
+    () => okvedOptions.find((item) => item.okved_code === okvedCode) ?? null,
+    [okvedCode, okvedOptions],
+  );
   const selectedSteps = useMemo(
     () => (launchModeLocked ? forcedSteps : stepOptions.filter((opt) => stepFlags[opt.key]).map((opt) => opt.key)),
     [forcedSteps, launchModeLocked, stepFlags],
@@ -972,7 +1192,37 @@ export default function AiCompanyAnalysisTab() {
         }
         const data = await res.json();
         const items = Array.isArray(data.items) ? data.items : [];
-        setOkvedOptions(items);
+
+        const deduped = items
+          .map((item) => {
+            const code = typeof item.okved_code === 'string' ? item.okved_code.trim() : String(item.okved_code ?? '');
+            const main = typeof item.okved_main === 'string' ? item.okved_main.trim() : '';
+            if (!code) return null;
+            return { ...item, okved_code: code, okved_main: main } as {
+              id: number;
+              okved_code: string;
+              okved_main: string;
+            };
+          })
+          .filter(Boolean) as Array<{ id: number; okved_code: string; okved_main: string }>;
+
+        const uniqueByCode = Array.from(
+          deduped.reduce((acc, item) => {
+            const existing = acc.get(item.okved_code);
+            if (!existing) {
+              acc.set(item.okved_code, item);
+              return acc;
+            }
+
+            if (item.okved_main && item.okved_main.length > existing.okved_main.length) {
+              acc.set(item.okved_code, item);
+            }
+
+            return acc;
+          }, new Map<string, { id: number; okved_code: string; okved_main: string }>()),
+        ).map(([, value]) => value);
+
+        setOkvedOptions(uniqueByCode);
       } catch (error) {
         console.error('Failed to load OKВЭД list:', error);
         setOkvedOptions([]);
@@ -1749,120 +1999,27 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-end xl:justify-between">
-              <div className="flex flex-1 flex-wrap items-end gap-3">
-                <div className="flex min-w-[230px] flex-1 flex-col gap-1 md:min-w-[260px]">
-                  <span className="text-xs font-medium text-muted-foreground">Поиск</span>
-                  <Input
-                    className="h-9 flex-1 text-sm"
-                    placeholder="Поиск по названию или ИНН"
-                    value={search}
-                    onChange={(e) => setSearch(e.target.value)}
-                  />
-                </div>
-                <div className="flex min-w-[200px] flex-1 flex-col gap-1 sm:flex-[0_0_220px]">
-                  <span className="text-xs font-medium text-muted-foreground">Отрасль</span>
-                  <div className="flex items-center gap-2">
-                    <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
-                      <SelectTrigger
-                        className="h-9 w-full text-sm"
-                        disabled={industriesLoading && industries.length === 0}>
-                        <SelectValue placeholder="Все отрасли" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="all">Все отрасли</SelectItem>
-                        {industries.map((item) => (
-                          <SelectItem key={item.id} value={String(item.id)}>
-                            {item.industry}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {industriesLoading && (
-                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                    )}
-                  </div>
-                </div>
-                <div className="flex min-w-[240px] flex-1 flex-col gap-1 sm:flex-[0_0_260px]">
-                  <span className="text-xs font-medium text-muted-foreground">ОКВЭД</span>
-                  <Select
-                    value={okvedSelectValue}
-                    onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
-                  >
-                    <SelectTrigger className="h-9 w-full text-left text-sm">
-                      <SelectValue placeholder="Все коды" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="__all__">Все коды</SelectItem>
-                      {okvedOptions.map((item) => (
-                        <SelectItem key={item.id} value={item.okved_code} title={item.okved_main}>
-                          <div className="flex flex-col gap-0.5">
-                            <span className="font-medium text-foreground">{item.okved_code}</span>
-                            <span className="text-xs text-muted-foreground whitespace-normal break-words">
-                              {truncateText(item.okved_main, 140)}
-                            </span>
-                          </div>
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-                <div className="flex flex-col gap-1 sm:w-auto">
-                  <span className="text-xs font-medium text-muted-foreground">Статусы</span>
-                  <DropdownMenu>
-                    <DropdownMenuTrigger asChild>
-                      <Button
-                        type="button"
-                        variant={statusFilters.length ? 'secondary' : 'outline'}
-                        size="sm"
-                        className="h-9 gap-2"
-                      >
-                        <Filter className="h-4 w-4" />
-                        Статусы
-                        {statusFilters.length > 0 && (
-                          <span className="rounded-full bg-background/80 px-2 py-0.5 text-xs text-foreground">
-                            {statusFilters.length}
-                          </span>
-                        )}
-                      </Button>
-                    </DropdownMenuTrigger>
-                    <DropdownMenuContent align="start" className="w-60">
-                      <DropdownMenuLabel>Фильтр статусов</DropdownMenuLabel>
-                      <DropdownMenuSeparator />
-                      {statusOptions.map((option) => (
-                        <DropdownMenuCheckboxItem
-                          key={option.key}
-                          checked={statusFilters.includes(option.key)}
-                          disabled={available?.[option.field] === false}
-                          onCheckedChange={(checked) => {
-                            setStatusFilters((prev) => {
-                              if (checked) {
-                                if (prev.includes(option.key)) return prev;
-                                return [...prev, option.key];
-                              }
-                              return prev.filter((value) => value !== option.key);
-                            });
-                          }}
-                        >
-                          {option.label}
-                        </DropdownMenuCheckboxItem>
-                      ))}
-                      {statusFilters.length > 0 && (
-                        <>
-                          <DropdownMenuSeparator />
-                          <DropdownMenuItem
-                            onSelect={(event) => {
-                              event.preventDefault();
-                              setStatusFilters([]);
-                            }}
-                          >
-                            Сбросить фильтры
-                          </DropdownMenuItem>
-                        </>
-                      )}
-                    </DropdownMenuContent>
-                  </DropdownMenu>
-                </div>
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant={hasFilters ? 'secondary' : 'outline'}
+                  className="h-9 gap-2"
+                  onClick={() => setFiltersDialogOpen(true)}
+                >
+                  <Filter className="h-4 w-4" />
+                  Фильтры
+                  {hasFilters && (
+                    <Badge variant="outline" className="px-1 text-[11px]">
+                      {activeFilterCount}
+                    </Badge>
+                  )}
+                </Button>
+                {hasFilters && (
+                  <Button type="button" variant="ghost" size="sm" className="h-9" onClick={resetFilters}>
+                    Сбросить
+                  </Button>
+                )}
               </div>
               <div className="flex flex-wrap items-center gap-2">
               <Tooltip>
@@ -1931,6 +2088,25 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
+            {(search.trim() || industryId !== 'all' || okvedCode) && (
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                {search.trim() && (
+                  <Badge variant="secondary" className="max-w-full whitespace-normal">
+                    Поиск: {search.trim()}
+                  </Badge>
+                )}
+                {industryId !== 'all' && (
+                  <Badge variant="secondary" className="max-w-full whitespace-normal">
+                    Отрасль: {industries.find((item) => String(item.id) === industryId)?.industry ?? industryId}
+                  </Badge>
+                )}
+                {okvedCode && (
+                  <Badge variant="secondary" className="max-w-full whitespace-normal">
+                    ОКВЭД: {okvedCode}
+                  </Badge>
+                )}
+              </div>
+            )}
             <div
               className={cn(
                 'flex flex-col gap-2 rounded-lg border bg-background/60 p-3',
@@ -2004,7 +2180,8 @@ export default function AiCompanyAnalysisTab() {
                     value={String(pageSize)}
                     onValueChange={(value) => {
                       const num = Number(value) || 20;
-                      setPageSize(num);
+                      const nextSize = PAGE_SIZE_OPTIONS.includes(num) ? num : 20;
+                      setPageSize(nextSize);
                       setPage(1);
                     }}
                   >
@@ -2012,7 +2189,7 @@ export default function AiCompanyAnalysisTab() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {[10, 20, 30, 50, 75, 100].map((size) => (
+                      {PAGE_SIZE_OPTIONS.map((size) => (
                         <SelectItem key={size} value={String(size)}>
                           {size}
                         </SelectItem>
@@ -2042,31 +2219,48 @@ export default function AiCompanyAnalysisTab() {
                 </div>
               </div>
               <Separator />
-              <div className="relative rounded-lg border border-border/60 bg-background">
+              <div className="relative overflow-x-auto rounded-lg border border-border/60 bg-background">
                 {isRefreshing && (
                   <div className="pointer-events-none absolute right-4 top-3 z-10 flex items-center gap-2 rounded-full bg-background/90 px-3 py-1 text-xs text-muted-foreground shadow-sm">
                     <Loader2 className="h-3 w-3 animate-spin" />
                     Обновляем данные…
                   </div>
                 )}
-                <div className="overflow-hidden">
-                  <table className="w-full table-fixed border-separate border-spacing-0 text-sm">
-                    <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
-                      <tr>
-                        <th className="w-12 px-4 py-3 align-middle">
-                          <Checkbox
-                            checked={headerCheckedState}
-                            onCheckedChange={(value) => toggleSelectAll(Boolean(value))}
-                            aria-label="Выбрать все"
-                          />
+                <table
+                  className="w-full table-fixed border-separate border-spacing-0 text-sm"
+                  style={{ minWidth: tableMinWidth }}
+                >
+                  <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
+                    <tr>
+                      <th className="w-12 px-4 py-3 align-middle">
+                        <Checkbox
+                          checked={headerCheckedState}
+                          onCheckedChange={(value) => toggleSelectAll(Boolean(value))}
+                          aria-label="Выбрать все"
+                        />
+                      </th>
+                      {columnOrder.map((key) => (
+                        <th
+                          key={key}
+                          className={cn(
+                            'relative cursor-grab select-none px-4 py-3 text-left transition-colors',
+                            key === 'actions' && 'text-right',
+                            draggingColumn === key && 'bg-primary/5',
+                          )}
+                          style={columnStyle(key)}
+                          draggable
+                          onDragStart={(e) => handleColumnDragStart(key, e)}
+                          onDragOver={handleColumnDragOver}
+                          onDrop={(e) => handleColumnDrop(key, e)}
+                        >
+                          <div className="flex items-center justify-between gap-2">
+                            <span>{COLUMN_LABELS[key]}</span>
+                            {renderResizeHandle(key)}
+                          </div>
                         </th>
-                        <th className="w-[25%] px-4 py-3 text-left">Компания</th>
-                        <th className="w-[23%] px-4 py-3 text-left">Контакты</th>
-                        <th className="w-[24%] px-4 py-3 text-left">Запуски и статус</th>
-                        <th className="w-[20%] px-4 py-3 text-left">Пайплайн</th>
-                        <th className="w-[8%] px-4 py-3 text-right">Действия</th>
-                      </tr>
-                    </thead>
+                      ))}
+                    </tr>
+                  </thead>
                     <tbody>
                       {companies.map((company) => {
                         const steps = toPipelineSteps(company.analysis_pipeline);
@@ -2169,286 +2363,334 @@ export default function AiCompanyAnalysisTab() {
                                 aria-label={`Выбрать компанию ${company.short_name}`}
                               />
                             </td>
-                            <td className="px-4 py-4 align-top">
-                              <div className="space-y-2">
-                                <div className="flex items-center gap-2">
-                                  <outcome.icon className={cn('h-4 w-4', outcome.iconClass)} />
-                                  <div
-                                    className={cn(
-                                      'text-sm font-semibold leading-tight',
-                                      outcome.textClass ?? 'text-foreground',
-                                    )}
-                                  >
-                                    {company.short_name}
-                                  </div>
-                                </div>
-                                <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                                  <span>ИНН {company.inn}</span>
-                                  {company.branch_count != null && company.branch_count > 0 && (
-                                    <span>Филиалов: {company.branch_count}</span>
-                                  )}
-                                  {company.employee_count != null && company.employee_count > 0 && (
-                                    <span>Штат: {employees}</span>
-                                  )}
-                                </div>
-                                <div className="flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-muted-foreground">
-                                  <span>
-                                    Выручка: <span className="text-foreground">{revenueLabel}</span>
-                                  </span>
-                                  <span>
-                                    Оценка: <span className="text-foreground">{score}</span>
-                                  </span>
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 align-top text-xs">
-                              <div className="space-y-4">
-                                <div>
-                                  <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
-                                  {sites.length ? (
-                                    <div className="mt-1 flex flex-col gap-1">
-                                      {displaySites.map((site) => (
-                                        <a
-                                          key={site}
-                                          href={site.startsWith('http') ? site : `https://${site}`}
-                                          className="truncate text-blue-600 hover:underline"
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                        >
-                                          {site}
-                                        </a>
-                                      ))}
-                                      {showSiteToggle && (
-                                        <button
-                                          type="button"
-                                          className="self-start text-xs font-medium text-primary hover:underline"
-                                          onClick={() => toggleSiteExpansion(company.inn)}
-                                        >
-                                          {isSiteExpanded ? 'Скрыть' : `Показать все (${sites.length})`}
-                                        </button>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </div>
-                                <div>
-                                  <div className="text-[11px] uppercase text-muted-foreground">E-mail</div>
-                                  {emails.length ? (
-                                    <div className="mt-1 flex flex-col gap-1">
-                                      {displayEmails.map((email) => (
-                                        <a
-                                          key={email}
-                                          href={`mailto:${email}`}
-                                          className="truncate text-blue-600 hover:underline"
-                                        >
-                                          {email}
-                                        </a>
-                                      ))}
-                                      {showEmailToggle && (
-                                        <button
-                                          type="button"
-                                          className="self-start text-xs font-medium text-primary hover:underline"
-                                          onClick={() => toggleEmailExpansion(company.inn)}
-                                        >
-                                          {isEmailExpanded
-                                            ? 'Скрыть'
-                                            : `Показать все (${emails.length})`}
-                                        </button>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <span className="text-muted-foreground">—</span>
-                                  )}
-                                </div>
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 align-top text-xs">
-                              <div className="space-y-3">
-                                <div className="flex flex-wrap items-center gap-2">
-                                  <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
-                                  {state.running && (
-                                    <span className="text-[11px] text-muted-foreground">{progressPercent}%</span>
-                                  )}
-                                  {state.queued && queuedTime && (
-                                    <span className="text-[11px] text-muted-foreground">с {queuedTime}</span>
-                                  )}
-                                </div>
-                                <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-muted-foreground sm:grid-cols-2">
-                                  <div>
-                                    <div className="uppercase">Старт</div>
-                                    <div className="text-foreground">{startedAt}</div>
-                                  </div>
-                                  <div>
-                                    <div className="uppercase">Длительность</div>
-                                    <div className="text-foreground">{duration}</div>
-                                  </div>
-                                  <div>
-                                    <div className="uppercase">Попыток</div>
-                                    <div className="text-foreground">{attempts}</div>
-                                  </div>
-                                  <div>
-                                    <div className="uppercase">Оценка</div>
-                                    <div className="text-foreground">{score}</div>
-                                  </div>
-                                </div>
-                                {finishedAt && (
-                                  <div className="text-[11px] text-muted-foreground">
-                                    Завершено: <span className="text-foreground">{finishedAt}</span>
-                                  </div>
-                                )}
-                              </div>
-                            </td>
-                            <td className="px-4 py-4 align-top text-xs">
-                              {state.running ? (
-                                <div className="space-y-2">
-                                  <Progress value={progressPercent} className="h-2" />
-                                  <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                                    <span>{currentStage || 'Выполняется…'}</span>
-                                    <span>{progressPercent}%</span>
-                                  </div>
-                                </div>
-                              ) : steps.length ? (
-                                <div className="max-w-[260px] space-y-2">
-                                  <ul className="space-y-1 text-xs text-muted-foreground">
-                                    {steps.slice(0, 4).map((step, index) => (
-                                      <li key={`${company.inn}-step-${index}`} className="flex items-start gap-2">
-                                        <span className="mt-1 h-1.5 w-1.5 flex-none rounded-full bg-muted-foreground/60" />
-                                        <span className="text-foreground">{step.label}</span>
-                                        {step.status && (
-                                          <span className="text-muted-foreground">· {step.status}</span>
-                                        )}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                  {steps.length > 4 && (
-                                    <div className="text-[11px] text-muted-foreground">
-                                      + ещё {steps.length - 4}
-                                    </div>
-                                  )}
-                                </div>
-                              ) : state.queued ? (
-                                <div className="space-y-1 text-xs text-muted-foreground">
-                                  <Badge variant="outline" className="w-fit">
-                                    Ожидает запуска
-                                  </Badge>
-                                  {queuedTime && <div>с {queuedTime}</div>}
-                                </div>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
-                            </td>
-                            <td className="px-4 py-4 align-top text-right">
-                              <div className="flex flex-col items-end gap-2">
-                                <div className="flex items-center justify-end gap-2">
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        onClick={() => handleRunImmediate(company.inn)}
-                                        disabled={runDisabled}
-                                      >
-                                        {runInn === company.inn ? (
-                                          <Loader2 className="h-4 w-4 animate-spin" />
-                                        ) : (
-                                          <Play className="h-4 w-4" />
-                                        )}
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="bottom">{runTooltip}</TooltipContent>
-                                  </Tooltip>
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        type="button"
-                                        variant="outline"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        onClick={() => handleQueueSingle(company.inn)}
-                                        disabled={queueDisabled}
-                                      >
-                                        {queueInn === company.inn ? (
-                                          <Loader2 className="h-4 w-4 animate-spin" />
-                                        ) : (
-                                          <Clock3 className="h-4 w-4" />
-                                        )}
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="bottom">{queueTooltip}</TooltipContent>
-                                  </Tooltip>
-                                  {(state.running || state.queued) && (
-                                    <Tooltip>
-                                      <TooltipTrigger asChild>
-                                        <Button
-                                          type="button"
-                                          variant="destructive"
-                                          size="icon"
-                                          className="h-8 w-8"
-                                          onClick={() => stopAction(company.inn)}
-                                          disabled={stopBusy}
-                                          aria-label={`Остановить компанию ${company.short_name}`}
-                                        >
-                                          {stopBusy ? (
-                                            <Loader2 className="h-4 w-4 animate-spin" />
-                                          ) : (
-                                            <Square className="h-4 w-4" />
+                            {columnOrder.map((key) => {
+                              if (key === 'company') {
+                                return (
+                                  <td key={`${company.inn}-company`} className="px-4 py-4 align-top" style={columnStyle('company')}>
+                                    <div className="space-y-2">
+                                      <div className="flex items-center gap-2">
+                                        <outcome.icon className={cn('h-4 w-4', outcome.iconClass)} />
+                                        <div
+                                          className={cn(
+                                            'text-sm font-semibold leading-tight',
+                                            outcome.textClass ?? 'text-foreground',
                                           )}
-                                        </Button>
-                                      </TooltipTrigger>
-                                      <TooltipContent side="bottom">{stopTooltip}</TooltipContent>
-                                    </Tooltip>
-                                  )}
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Button
-                                        type="button"
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-8 w-8"
-                                        onClick={() => setInfoCompany(company)}
-                                        aria-label={`Подробности по компании ${company.short_name}`}
-                                      >
-                                        <Info className="h-4 w-4" />
-                                      </Button>
-                                    </TooltipTrigger>
-                                    <TooltipContent side="bottom">Подробнее</TooltipContent>
-                                  </Tooltip>
-                                </div>
-                                {showDebugStepButtons && (
-                                  <div className="flex flex-wrap items-center justify-end gap-1 rounded-md border border-dashed border-muted-foreground/40 bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground">
-                                    <span className="font-medium text-foreground">Шаги:</span>
-                                    {stepOptions.map((opt) => {
-                                      const loading =
-                                        debugStepLoading?.inn === company.inn && debugStepLoading.step === opt.key;
-                                      return (
-                                        <Tooltip key={`${company.inn}-debug-${opt.key}`}>
+                                        >
+                                          {company.short_name}
+                                        </div>
+                                      </div>
+                                      <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
+                                        <span>ИНН {company.inn}</span>
+                                        {company.branch_count != null && company.branch_count > 0 && (
+                                          <span>Филиалов: {company.branch_count}</span>
+                                        )}
+                                        {company.employee_count != null && company.employee_count > 0 && (
+                                          <span>Штат: {employees}</span>
+                                        )}
+                                      </div>
+                                      <div className="flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-muted-foreground">
+                                        <span>
+                                          Выручка: <span className="text-foreground">{revenueLabel}</span>
+                                        </span>
+                                        <span>
+                                          Оценка: <span className="text-foreground">{score}</span>
+                                        </span>
+                                      </div>
+                                    </div>
+                                  </td>
+                                );
+                              }
+
+                              if (key === 'contacts') {
+                                return (
+                                  <td
+                                    key={`${company.inn}-contacts`}
+                                    className="px-4 py-4 align-top text-xs"
+                                    style={columnStyle('contacts')}
+                                  >
+                                    <div className="space-y-4">
+                                      <div>
+                                        <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
+                                        {sites.length ? (
+                                          <div className="mt-1 flex flex-col gap-1">
+                                            {displaySites.map((site) => (
+                                              <a
+                                                key={site}
+                                                href={site.startsWith('http') ? site : `https://${site}`}
+                                                className="truncate text-blue-600 hover:underline"
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                              >
+                                                {site}
+                                              </a>
+                                            ))}
+                                            {showSiteToggle && (
+                                              <button
+                                                type="button"
+                                                className="self-start text-xs font-medium text-primary hover:underline"
+                                                onClick={() => toggleSiteExpansion(company.inn)}
+                                              >
+                                                {isSiteExpanded ? 'Скрыть' : `Показать все (${sites.length})`}
+                                              </button>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <span className="text-muted-foreground">—</span>
+                                        )}
+                                      </div>
+                                      <div>
+                                        <div className="text-[11px] uppercase text-muted-foreground">E-mail</div>
+                                        {emails.length ? (
+                                          <div className="mt-1 flex flex-col gap-1">
+                                            {displayEmails.map((email) => (
+                                              <a
+                                                key={email}
+                                                href={`mailto:${email}`}
+                                                className="truncate text-blue-600 hover:underline"
+                                              >
+                                                {email}
+                                              </a>
+                                            ))}
+                                            {showEmailToggle && (
+                                              <button
+                                                type="button"
+                                                className="self-start text-xs font-medium text-primary hover:underline"
+                                                onClick={() => toggleEmailExpansion(company.inn)}
+                                              >
+                                                {isEmailExpanded
+                                                  ? 'Скрыть'
+                                                  : `Показать все (${emails.length})`}
+                                              </button>
+                                            )}
+                                          </div>
+                                        ) : (
+                                          <span className="text-muted-foreground">—</span>
+                                        )}
+                                      </div>
+                                    </div>
+                                  </td>
+                                );
+                              }
+
+                              if (key === 'status') {
+                                return (
+                                  <td
+                                    key={`${company.inn}-status`}
+                                    className="px-4 py-4 align-top text-xs"
+                                    style={columnStyle('status')}
+                                  >
+                                    <div className="space-y-3">
+                                      <div className="flex flex-wrap items-center gap-2">
+                                        <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
+                                        {state.running && (
+                                          <span className="text-[11px] text-muted-foreground">{progressPercent}%</span>
+                                        )}
+                                        {state.queued && queuedTime && (
+                                          <span className="text-[11px] text-muted-foreground">с {queuedTime}</span>
+                                        )}
+                                      </div>
+                                      <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-[11px] text-muted-foreground sm:grid-cols-2">
+                                        <div>
+                                          <div className="uppercase">Старт</div>
+                                          <div className="text-foreground">{startedAt}</div>
+                                        </div>
+                                        <div>
+                                          <div className="uppercase">Длительность</div>
+                                          <div className="text-foreground">{duration}</div>
+                                        </div>
+                                        <div>
+                                          <div className="uppercase">Попыток</div>
+                                          <div className="text-foreground">{attempts}</div>
+                                        </div>
+                                        <div>
+                                          <div className="uppercase">Оценка</div>
+                                          <div className="text-foreground">{score}</div>
+                                        </div>
+                                      </div>
+                                      {finishedAt && (
+                                        <div className="text-[11px] text-muted-foreground">
+                                          Завершено: <span className="text-foreground">{finishedAt}</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                );
+                              }
+
+                              if (key === 'pipeline') {
+                                return (
+                                  <td
+                                    key={`${company.inn}-pipeline`}
+                                    className="px-4 py-4 align-top text-xs"
+                                    style={columnStyle('pipeline')}
+                                  >
+                                    {state.running ? (
+                                      <div className="space-y-2">
+                                        <Progress value={progressPercent} className="h-2" />
+                                        <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                          <span>{currentStage || 'Выполняется…'}</span>
+                                          <span>{progressPercent}%</span>
+                                        </div>
+                                      </div>
+                                    ) : steps.length ? (
+                                      <div className="space-y-2">
+                                        <ul className="space-y-1 text-xs text-muted-foreground">
+                                          {steps.slice(0, 4).map((step, index) => (
+                                            <li key={`${company.inn}-step-${index}`} className="flex items-start gap-2">
+                                              <span className="mt-1 h-1.5 w-1.5 flex-none rounded-full bg-muted-foreground/60" />
+                                              <span className="text-foreground">{step.label}</span>
+                                              {step.status && (
+                                                <span className="text-muted-foreground">· {step.status}</span>
+                                              )}
+                                            </li>
+                                          ))}
+                                        </ul>
+                                        {steps.length > 4 && (
+                                          <div className="text-[11px] text-muted-foreground">
+                                            + ещё {steps.length - 4}
+                                          </div>
+                                        )}
+                                      </div>
+                                    ) : state.queued ? (
+                                      <div className="space-y-1 text-xs text-muted-foreground">
+                                        <Badge variant="outline" className="w-fit">
+                                          Ожидает запуска
+                                        </Badge>
+                                        {queuedTime && <div>с {queuedTime}</div>}
+                                      </div>
+                                    ) : (
+                                      <span className="text-muted-foreground">—</span>
+                                    )}
+                                  </td>
+                                );
+                              }
+
+                              if (key === 'actions') {
+                                return (
+                                  <td
+                                    key={`${company.inn}-actions`}
+                                    className="px-4 py-4 align-top text-right"
+                                    style={columnStyle('actions')}
+                                  >
+                                    <div className="flex flex-col items-end gap-2">
+                                      <div className="flex items-center justify-end gap-2">
+                                        <Tooltip>
                                           <TooltipTrigger asChild>
                                             <Button
                                               type="button"
                                               variant="outline"
-                                              size="sm"
-                                              className="h-7"
-                                              onClick={() => handleRunDebugStep(company.inn, opt.key)}
-                                              disabled={
-                                                integrationOffline || !!debugStepLoading || state.running || state.queued
-                                              }
+                                              size="icon"
+                                              className="h-8 w-8"
+                                              onClick={() => handleRunImmediate(company.inn)}
+                                              disabled={runDisabled}
                                             >
-                                              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : opt.label}
+                                              {runInn === company.inn ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                              ) : (
+                                                <Play className="h-4 w-4" />
+                                              )}
                                             </Button>
                                           </TooltipTrigger>
-                                          <TooltipContent side="bottom">
-                                            Запустить только шаг «{opt.label}» для компании {company.short_name}
-                                          </TooltipContent>
+                                          <TooltipContent side="bottom">{runTooltip}</TooltipContent>
                                         </Tooltip>
-                                      );
-                                    })}
-                                  </div>
-                                )}
-                              </div>
-                            </td>
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              type="button"
+                                              variant="outline"
+                                              size="icon"
+                                              className="h-8 w-8"
+                                              onClick={() => handleQueueSingle(company.inn)}
+                                              disabled={queueDisabled}
+                                            >
+                                              {queueInn === company.inn ? (
+                                                <Loader2 className="h-4 w-4 animate-spin" />
+                                              ) : (
+                                                <Clock3 className="h-4 w-4" />
+                                              )}
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="bottom">{queueTooltip}</TooltipContent>
+                                        </Tooltip>
+                                        {(state.running || state.queued) && (
+                                          <Tooltip>
+                                            <TooltipTrigger asChild>
+                                              <Button
+                                                type="button"
+                                                variant="destructive"
+                                                size="icon"
+                                                className="h-8 w-8"
+                                                onClick={() => stopAction(company.inn)}
+                                                disabled={stopBusy}
+                                                aria-label={`Остановить компанию ${company.short_name}`}
+                                              >
+                                                {stopBusy ? (
+                                                  <Loader2 className="h-4 w-4 animate-spin" />
+                                                ) : (
+                                                  <Square className="h-4 w-4" />
+                                                )}
+                                              </Button>
+                                            </TooltipTrigger>
+                                            <TooltipContent side="bottom">{stopTooltip}</TooltipContent>
+                                          </Tooltip>
+                                        )}
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Button
+                                              type="button"
+                                              variant="ghost"
+                                              size="icon"
+                                              className="h-8 w-8"
+                                              onClick={() => setInfoCompany(company)}
+                                              aria-label={`Подробности по компании ${company.short_name}`}
+                                            >
+                                              <Info className="h-4 w-4" />
+                                            </Button>
+                                          </TooltipTrigger>
+                                          <TooltipContent side="bottom">Подробнее</TooltipContent>
+                                        </Tooltip>
+                                      </div>
+                                      {showDebugStepButtons && (
+                                        <div className="flex flex-wrap items-center justify-end gap-1 rounded-md border border-dashed border-muted-foreground/40 bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground">
+                                          <span className="font-medium text-foreground">Шаги:</span>
+                                          {stepOptions.map((opt) => {
+                                            const loading =
+                                              debugStepLoading?.inn === company.inn && debugStepLoading.step === opt.key;
+                                            return (
+                                              <Tooltip key={`${company.inn}-debug-${opt.key}`}>
+                                                <TooltipTrigger asChild>
+                                                  <Button
+                                                    type="button"
+                                                    variant="outline"
+                                                    size="sm"
+                                                    className="h-7"
+                                                    onClick={() => handleRunDebugStep(company.inn, opt.key)}
+                                                    disabled={
+                                                      integrationOffline || !!debugStepLoading || state.running || state.queued
+                                                    }
+                                                  >
+                                                    {loading ? (
+                                                      <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                                                    ) : (
+                                                      opt.label
+                                                    )}
+                                                  </Button>
+                                                </TooltipTrigger>
+                                                <TooltipContent side="bottom">
+                                                  Запустить только шаг «{opt.label}» для компании {company.short_name}
+                                                </TooltipContent>
+                                              </Tooltip>
+                                            );
+                                          })}
+                                        </div>
+                                      )}
+                                    </div>
+                                  </td>
+                                );
+                              }
+
+                              return null;
+                            })}
                           </tr>
                         );
                       })}
@@ -2461,12 +2703,133 @@ export default function AiCompanyAnalysisTab() {
                       )}
                     </tbody>
                   </table>
-                </div>
 
               </div>
             </div>
           </CardContent>
         </Card>
+
+        <Dialog open={filtersDialogOpen} onOpenChange={setFiltersDialogOpen}>
+          <DialogContent className="max-w-4xl">
+            <DialogHeader>
+              <DialogTitle>Фильтры AI-анализа</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-1">
+                <span className="text-[11px] uppercase text-muted-foreground">Поиск</span>
+                <Input
+                  className="h-9 text-sm"
+                  placeholder="Поиск по названию или ИНН"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div className="space-y-1">
+                  <span className="text-[11px] uppercase text-muted-foreground">Отрасль</span>
+                  <div className="flex items-center gap-2">
+                    <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
+                      <SelectTrigger
+                        className="h-9 w-full text-left text-sm"
+                        disabled={industriesLoading && industries.length === 0}
+                      >
+                        <SelectValue placeholder="Все отрасли" />
+                      </SelectTrigger>
+                      <SelectContent className="min-w-full sm:min-w-[420px]">
+                        <SelectItem value="all">Все отрасли</SelectItem>
+                        {industries.map((item) => (
+                          <SelectItem key={item.id} value={String(item.id)}>
+                            {item.industry}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {industriesLoading && (
+                      <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                </div>
+                <div className="space-y-1">
+                  <span className="text-[11px] uppercase text-muted-foreground">ОКВЭД</span>
+                  <Select
+                    value={okvedSelectValue}
+                    onValueChange={(value) => setOkvedCode(value === '__all__' ? undefined : value)}
+                  >
+                    <SelectTrigger className="h-9 w-full text-left text-sm">
+                      <SelectValue placeholder="Все коды">
+                        {selectedOkved ? (
+                          <div className="flex flex-col gap-0.5 text-left">
+                            <span className="font-medium text-foreground">{selectedOkved.okved_code}</span>
+                            {selectedOkved.okved_main && (
+                              <span className="text-xs text-muted-foreground whitespace-normal break-words">
+                                {truncateText(selectedOkved.okved_main, 120)}
+                              </span>
+                            )}
+                          </div>
+                        ) : null}
+                      </SelectValue>
+                    </SelectTrigger>
+                    <SelectContent className="min-w-full sm:min-w-[480px] lg:min-w-[620px]">
+                      <SelectItem value="__all__">Все коды</SelectItem>
+                      {okvedOptions.map((item) => (
+                        <SelectItem key={item.id} value={item.okved_code} title={item.okved_main}>
+                          <div className="flex flex-col gap-0.5 text-left">
+                            <span className="font-medium text-foreground">{item.okved_code}</span>
+                            <span className="text-xs text-muted-foreground whitespace-normal break-words">
+                              {truncateText(item.okved_main, 160)}
+                            </span>
+                          </div>
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <span className="text-[11px] uppercase text-muted-foreground">Статусы</span>
+                <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+                  {statusOptions.map((option) => (
+                    <label
+                      key={option.key}
+                      className={cn(
+                        'flex items-center gap-3 rounded-md border bg-muted/50 px-3 py-2 text-sm',
+                        available?.[option.field] === false && 'opacity-60',
+                      )}
+                    >
+                      <Checkbox
+                        checked={statusFilters.includes(option.key)}
+                        disabled={available?.[option.field] === false}
+                        onCheckedChange={(checked) => {
+                          setStatusFilters((prev) => {
+                            if (checked) {
+                              if (prev.includes(option.key)) return prev;
+                              return [...prev, option.key];
+                            }
+                            return prev.filter((value) => value !== option.key);
+                          });
+                        }}
+                      />
+                      <span className="text-foreground">{option.label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div className="text-xs text-muted-foreground">
+                  {hasFilters ? 'Применены пользовательские фильтры.' : 'Фильтры не выбраны.'}
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button type="button" variant="ghost" size="sm" onClick={resetFilters}>
+                    Сбросить фильтры
+                  </Button>
+                  <Button type="button" onClick={() => setFiltersDialogOpen(false)}>
+                    Готово
+                  </Button>
+                </div>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
 
         <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>
           <DialogContent className="max-w-4xl">
