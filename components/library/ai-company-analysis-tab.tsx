@@ -61,6 +61,29 @@ const stepOptions: { key: StepKey; label: string }[] = [
   { key: 'equipment_selection', label: 'Оборудование' },
 ];
 
+const PAGE_SIZE_STORAGE_KEY = 'ai-analysis-page-size';
+const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 75, 100];
+
+type ColumnWidthKey = 'company' | 'contacts' | 'status' | 'pipeline' | 'actions';
+
+const DEFAULT_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
+  company: 340,
+  contacts: 300,
+  status: 320,
+  pipeline: 320,
+  actions: 180,
+};
+
+const MIN_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
+  company: 240,
+  contacts: 220,
+  status: 240,
+  pipeline: 240,
+  actions: 150,
+};
+
+const COLUMN_WIDTHS_KEY = 'ai-analysis-column-widths';
+
 type PipelineStep = { label: string; status?: string | null };
 
 const QUEUE_STALE_MS = 120 * 60 * 1000;
@@ -622,7 +645,12 @@ export default function AiCompanyAnalysisTab() {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
-  const [pageSize, setPageSize] = useState(20);
+  const [pageSize, setPageSize] = useState<number>(() => {
+    if (typeof window === 'undefined') return 20;
+    const stored = Number(localStorage.getItem(PAGE_SIZE_STORAGE_KEY));
+    if (Number.isFinite(stored) && PAGE_SIZE_OPTIONS.includes(stored)) return stored;
+    return 20;
+  });
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
@@ -669,6 +697,31 @@ export default function AiCompanyAnalysisTab() {
   const [filterLimit, setFilterLimit] = useState(200);
   const [filterIncludeQueued, setFilterIncludeQueued] = useState(false);
   const [filterIncludeRunning, setFilterIncludeRunning] = useState(false);
+  const [columnWidths, setColumnWidths] = useState<Record<ColumnWidthKey, number>>(() => {
+    if (typeof window === 'undefined') return DEFAULT_COLUMN_WIDTHS;
+
+    try {
+      const raw = localStorage.getItem(COLUMN_WIDTHS_KEY);
+      if (!raw) return DEFAULT_COLUMN_WIDTHS;
+      const parsed = JSON.parse(raw) as Partial<Record<ColumnWidthKey, number>>;
+
+      const sanitized = Object.entries(parsed ?? {}).reduce(
+        (acc, [key, value]) => {
+          const colKey = key as ColumnWidthKey;
+          if (typeof value === 'number' && Number.isFinite(value)) {
+            acc[colKey] = Math.max(MIN_COLUMN_WIDTHS[colKey], value);
+          }
+          return acc;
+        },
+        {} as Partial<Record<ColumnWidthKey, number>>,
+      );
+
+      return { ...DEFAULT_COLUMN_WIDTHS, ...sanitized } as Record<ColumnWidthKey, number>;
+    } catch (err) {
+      console.error('Failed to parse AI analysis column widths from storage', err);
+      return DEFAULT_COLUMN_WIDTHS;
+    }
+  });
   const analyzerInfo = useMemo(() => (infoCompany ? normalizeAnalyzerInfo(infoCompany.analysis_info) : null), [infoCompany]);
   const analyzerSites = analyzerInfo?.ai?.sites ?? [];
   const analyzerProdclass = analyzerInfo?.ai?.prodclass ?? null;
@@ -685,6 +738,16 @@ export default function AiCompanyAnalysisTab() {
       {} as Record<StepKey, boolean>,
     );
   });
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(PAGE_SIZE_STORAGE_KEY, String(pageSize));
+  }, [pageSize]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    localStorage.setItem(COLUMN_WIDTHS_KEY, JSON.stringify(columnWidths));
+  }, [columnWidths]);
 
   const debouncedSearch = useDebounce(search, 400);
   const { toast } = useToast();
@@ -707,6 +770,62 @@ export default function AiCompanyAnalysisTab() {
   );
 
   const activeOffPage = Math.max(0, activeTotal - activeCount);
+
+  const startColumnResize = useCallback(
+    (key: ColumnWidthKey, e: React.MouseEvent | React.TouchEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      const startX = 'touches' in e ? e.touches[0]?.clientX : e.clientX;
+      if (typeof startX !== 'number') return;
+
+      const baseWidth = columnWidths[key] ?? DEFAULT_COLUMN_WIDTHS[key];
+
+      const handleMove = (ev: MouseEvent | TouchEvent) => {
+        const clientX = 'touches' in ev ? ev.touches[0]?.clientX : (ev as MouseEvent).clientX;
+        if (typeof clientX !== 'number') return;
+        const delta = clientX - startX;
+
+        setColumnWidths((prev) => ({
+          ...prev,
+          [key]: Math.max(MIN_COLUMN_WIDTHS[key], baseWidth + delta),
+        }));
+      };
+
+      const handleUp = () => {
+        document.removeEventListener('mousemove', handleMove as any);
+        document.removeEventListener('touchmove', handleMove as any);
+        document.removeEventListener('mouseup', handleUp);
+        document.removeEventListener('touchend', handleUp);
+        document.body.style.cursor = '';
+      };
+
+      document.body.style.cursor = 'col-resize';
+      document.addEventListener('mousemove', handleMove as any);
+      document.addEventListener('touchmove', handleMove as any, { passive: false });
+      document.addEventListener('mouseup', handleUp);
+      document.addEventListener('touchend', handleUp);
+    },
+    [columnWidths],
+  );
+
+  const renderResizeHandle = (key: ColumnWidthKey) => (
+    <span className="hidden select-none lg:block">
+      <span
+        className="relative block w-2 cursor-col-resize"
+        onMouseDown={(e) => startColumnResize(key, e)}
+        onTouchStart={(e) => startColumnResize(key, e)}
+        role="presentation"
+      >
+        <span className="absolute right-0 top-0 h-full w-2" />
+      </span>
+    </span>
+  );
+
+  const columnStyle = useCallback(
+    (key: ColumnWidthKey) => ({ width: columnWidths[key], minWidth: MIN_COLUMN_WIDTHS[key] }),
+    [columnWidths],
+  );
 
   const isAnyActive = useMemo(
     () => {
@@ -1760,12 +1879,12 @@ export default function AiCompanyAnalysisTab() {
                     onChange={(e) => setSearch(e.target.value)}
                   />
                 </div>
-                <div className="flex min-w-[200px] flex-1 flex-col gap-1 sm:flex-[0_0_220px]">
+                <div className="flex min-w-[260px] flex-1 flex-col gap-1 sm:flex-[0_0_320px]">
                   <span className="text-xs font-medium text-muted-foreground">Отрасль</span>
                   <div className="flex items-center gap-2">
                     <Select value={industryId} onValueChange={(value) => setIndustryId(value)}>
                       <SelectTrigger
-                        className="h-9 w-full text-sm"
+                        className="h-9 w-full text-left text-sm"
                         disabled={industriesLoading && industries.length === 0}>
                         <SelectValue placeholder="Все отрасли" />
                       </SelectTrigger>
@@ -1783,7 +1902,7 @@ export default function AiCompanyAnalysisTab() {
                     )}
                   </div>
                 </div>
-                <div className="flex min-w-[240px] flex-1 flex-col gap-1 sm:flex-[0_0_260px]">
+                <div className="flex min-w-[300px] flex-1 flex-col gap-1 sm:flex-[0_0_360px]">
                   <span className="text-xs font-medium text-muted-foreground">ОКВЭД</span>
                   <Select
                     value={okvedSelectValue}
@@ -2004,7 +2123,8 @@ export default function AiCompanyAnalysisTab() {
                     value={String(pageSize)}
                     onValueChange={(value) => {
                       const num = Number(value) || 20;
-                      setPageSize(num);
+                      const nextSize = PAGE_SIZE_OPTIONS.includes(num) ? num : 20;
+                      setPageSize(nextSize);
                       setPage(1);
                     }}
                   >
@@ -2012,7 +2132,7 @@ export default function AiCompanyAnalysisTab() {
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
-                      {[10, 20, 30, 50, 75, 100].map((size) => (
+                      {PAGE_SIZE_OPTIONS.map((size) => (
                         <SelectItem key={size} value={String(size)}>
                           {size}
                         </SelectItem>
@@ -2042,7 +2162,7 @@ export default function AiCompanyAnalysisTab() {
                 </div>
               </div>
               <Separator />
-              <div className="relative rounded-lg border border-border/60 bg-background">
+              <div className="relative overflow-x-auto rounded-lg border border-border/60 bg-background">
                 {isRefreshing && (
                   <div className="pointer-events-none absolute right-4 top-3 z-10 flex items-center gap-2 rounded-full bg-background/90 px-3 py-1 text-xs text-muted-foreground shadow-sm">
                     <Loader2 className="h-3 w-3 animate-spin" />
@@ -2060,11 +2180,36 @@ export default function AiCompanyAnalysisTab() {
                             aria-label="Выбрать все"
                           />
                         </th>
-                        <th className="w-[25%] px-4 py-3 text-left">Компания</th>
-                        <th className="w-[23%] px-4 py-3 text-left">Контакты</th>
-                        <th className="w-[24%] px-4 py-3 text-left">Запуски и статус</th>
-                        <th className="w-[20%] px-4 py-3 text-left">Пайплайн</th>
-                        <th className="w-[8%] px-4 py-3 text-right">Действия</th>
+                        <th className="relative px-4 py-3 text-left" style={columnStyle('company')}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span>Компания</span>
+                            {renderResizeHandle('company')}
+                          </div>
+                        </th>
+                        <th className="relative px-4 py-3 text-left" style={columnStyle('contacts')}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span>Контакты</span>
+                            {renderResizeHandle('contacts')}
+                          </div>
+                        </th>
+                        <th className="relative px-4 py-3 text-left" style={columnStyle('status')}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span>Запуски и статус</span>
+                            {renderResizeHandle('status')}
+                          </div>
+                        </th>
+                        <th className="relative px-4 py-3 text-left" style={columnStyle('pipeline')}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span>Пайплайн</span>
+                            {renderResizeHandle('pipeline')}
+                          </div>
+                        </th>
+                        <th className="relative px-4 py-3 text-right" style={columnStyle('actions')}>
+                          <div className="flex items-center justify-end gap-2">
+                            <span>Действия</span>
+                            {renderResizeHandle('actions')}
+                          </div>
+                        </th>
                       </tr>
                     </thead>
                     <tbody>
@@ -2169,7 +2314,7 @@ export default function AiCompanyAnalysisTab() {
                                 aria-label={`Выбрать компанию ${company.short_name}`}
                               />
                             </td>
-                            <td className="px-4 py-4 align-top">
+                            <td className="px-4 py-4 align-top" style={columnStyle('company')}>
                               <div className="space-y-2">
                                 <div className="flex items-center gap-2">
                                   <outcome.icon className={cn('h-4 w-4', outcome.iconClass)} />
@@ -2201,7 +2346,7 @@ export default function AiCompanyAnalysisTab() {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-4 py-4 align-top text-xs">
+                            <td className="px-4 py-4 align-top text-xs" style={columnStyle('contacts')}>
                               <div className="space-y-4">
                                 <div>
                                   <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
@@ -2263,7 +2408,7 @@ export default function AiCompanyAnalysisTab() {
                                 </div>
                               </div>
                             </td>
-                            <td className="px-4 py-4 align-top text-xs">
+                            <td className="px-4 py-4 align-top text-xs" style={columnStyle('status')}>
                               <div className="space-y-3">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
@@ -2299,7 +2444,7 @@ export default function AiCompanyAnalysisTab() {
                                 )}
                               </div>
                             </td>
-                            <td className="px-4 py-4 align-top text-xs">
+                            <td className="px-4 py-4 align-top text-xs" style={columnStyle('pipeline')}>
                               {state.running ? (
                                 <div className="space-y-2">
                                   <Progress value={progressPercent} className="h-2" />
@@ -2309,7 +2454,7 @@ export default function AiCompanyAnalysisTab() {
                                   </div>
                                 </div>
                               ) : steps.length ? (
-                                <div className="max-w-[260px] space-y-2">
+                                <div className="space-y-2">
                                   <ul className="space-y-1 text-xs text-muted-foreground">
                                     {steps.slice(0, 4).map((step, index) => (
                                       <li key={`${company.inn}-step-${index}`} className="flex items-start gap-2">
@@ -2338,7 +2483,7 @@ export default function AiCompanyAnalysisTab() {
                                 <span className="text-muted-foreground">—</span>
                               )}
                             </td>
-                            <td className="px-4 py-4 align-top text-right">
+                            <td className="px-4 py-4 align-top text-right" style={columnStyle('actions')}>
                               <div className="flex flex-col items-end gap-2">
                                 <div className="flex items-center justify-end gap-2">
                                   <Tooltip>
