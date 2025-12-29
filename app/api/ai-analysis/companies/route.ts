@@ -424,6 +424,20 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   const site2DescriptionExpr = clientsMeta.names.has('site_2_description')
     ? 'im.site_2_description'
     : 'NULL::text AS site_2_description';
+  const goodsExpr = clientsMeta.names.has('goods')
+    ? 'im.goods'
+    : clientsMeta.names.has('goods_list')
+      ? 'im.goods_list'
+      : clientsMeta.names.has('products')
+        ? 'im.products'
+        : 'NULL::text';
+  const equipmentExpr = clientsMeta.names.has('equipment')
+    ? 'im.equipment'
+    : clientsMeta.names.has('equipment_list')
+      ? 'im.equipment_list'
+      : clientsMeta.names.has('equipments')
+        ? 'im.equipments'
+        : 'NULL::text';
 
   let parsRows: {
     inn: string;
@@ -435,36 +449,42 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
     url: any;
     site_1_description: any;
     site_2_description: any;
+    goods_manual: any;
+    equipment_manual: any;
   }[] = [];
   try {
     const { rows } = await db.query(
       `
-        WITH inn_map AS (
-          SELECT
-            inn,
-            id AS company_id,
-            ${clientsMeta.names.has('site_1_description') ? 'site_1_description' : 'NULL::text AS site_1_description'},
-            ${clientsMeta.names.has('site_2_description') ? 'site_2_description' : 'NULL::text AS site_2_description'},
-            ${clientsMeta.names.has('domain_1') ? 'domain_1' : 'NULL::text AS domain_1'},
-            ${clientsMeta.names.has('domain_2') ? 'domain_2' : 'NULL::text AS domain_2'}
-          FROM clients_requests
-          WHERE inn = ANY($1::text[])
-        )
-        SELECT DISTINCT ON (im.inn)
-          im.inn,
+          WITH inn_map AS (
+            SELECT
+              inn,
+              id AS company_id,
+              ${clientsMeta.names.has('site_1_description') ? 'site_1_description' : 'NULL::text AS site_1_description'},
+              ${clientsMeta.names.has('site_2_description') ? 'site_2_description' : 'NULL::text AS site_2_description'},
+              ${clientsMeta.names.has('domain_1') ? 'domain_1' : 'NULL::text AS domain_1'},
+              ${clientsMeta.names.has('domain_2') ? 'domain_2' : 'NULL::text AS domain_2'},
+              ${goodsExpr},
+              ${equipmentExpr}
+            FROM clients_requests
+            WHERE inn = ANY($1::text[])
+          )
+          SELECT DISTINCT ON (im.inn)
+            im.inn,
           im.company_id,
           ps.id AS pars_id,
           ${descriptionExpr} AS description,
-          COALESCE(${domain1Expr}, im.domain_1) AS domain_1,
-          COALESCE(${domain2Expr}, im.domain_2) AS domain_2,
-          ${urlExpr} AS url,
-          ${site1DescriptionExpr},
-          ${site2DescriptionExpr}
-        FROM inn_map im
-        LEFT JOIN pars_site ps ON ps.company_id = im.company_id
-        ORDER BY im.inn, ${createdExpr} ps.id DESC
-      `,
-      [inns],
+            COALESCE(${domain1Expr}, im.domain_1) AS domain_1,
+            COALESCE(${domain2Expr}, im.domain_2) AS domain_2,
+            ${urlExpr} AS url,
+            ${site1DescriptionExpr},
+            ${site2DescriptionExpr},
+            ${goodsExpr} AS goods_manual,
+            ${equipmentExpr} AS equipment_manual
+          FROM inn_map im
+          LEFT JOIN pars_site ps ON ps.company_id = im.company_id
+          ORDER BY im.inn, ${createdExpr} ps.id DESC
+        `,
+        [inns],
     );
     parsRows = rows as any;
   } catch (error) {
@@ -791,6 +811,8 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   }
 
   for (const row of parsRows) {
+    const manualGoods = parseLooseList(row.goods_manual);
+    const manualEquipment = parseLooseList(row.equipment_manual);
     const domains = [row.domain_1, row.domain_2, row.url]
       .map((d) => parseString(d))
       .filter((d): d is string => !!d);
@@ -807,6 +829,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       : [
           ...mapGoodsList((openAiRow as any).goods),
           ...mapGoodsList((openAiRow as any).goods_type),
+          ...(manualGoods ?? []).map((name) => ({ name })),
         ];
 
     const fallbackEquipment = equipmentRows.length
@@ -814,6 +837,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       : [
           ...mapEquipmentList((openAiRow as any).equipment),
           ...mapEquipmentList((openAiRow as any).equipment_site),
+          ...(manualEquipment ?? []).map((name) => ({ name })),
         ];
 
     const fallback: SiteAnalyzerFallback = {
@@ -987,6 +1011,21 @@ function parseStringArray(val: any): string[] | null {
     return parts.length ? Array.from(new Set(parts)) : null;
   }
   return null;
+}
+
+function parseLooseList(val: any): string[] | null {
+  const parsedArray = parseStringArray(val);
+  if (parsedArray?.length) return parsedArray;
+
+  const raw = parseString(val);
+  if (!raw) return null;
+
+  const tokens = raw
+    .split(/[,;\n]/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+
+  return tokens.length ? Array.from(new Set(tokens)) : null;
 }
 
 function parsePipeline(val: any): any {
