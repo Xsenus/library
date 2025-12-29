@@ -823,15 +823,20 @@ export default function AiCompanyAnalysisTab() {
   );
 
   const renderResizeHandle = (key: ColumnWidthKey) => (
-    <span className="hidden select-none lg:block">
+    <span className="group relative block h-full w-3 cursor-col-resize select-none">
       <span
-        className="relative block w-2 cursor-col-resize"
+        className="absolute right-0 top-1/2 h-7 w-0.5 -translate-y-1/2 rounded-full bg-border transition-colors group-hover:bg-primary"
+        aria-hidden
+      />
+      <span
+        className="absolute inset-y-0 right-[-4px] block w-3"
         onMouseDown={(e) => startColumnResize(key, e)}
         onTouchStart={(e) => startColumnResize(key, e)}
+        onDoubleClick={() =>
+          setColumnWidths((prev) => ({ ...prev, [key]: DEFAULT_COLUMN_WIDTHS[key] }))
+        }
         role="presentation"
-      >
-        <span className="absolute right-0 top-0 h-full w-2" />
-      </span>
+      />
     </span>
   );
 
