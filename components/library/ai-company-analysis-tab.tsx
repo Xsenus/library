@@ -389,7 +389,8 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
         return acc;
       }
       if (typeof item === 'object') {
-        const name = String(item.name ?? item.equipment ?? item.title ?? '').trim();
+        const name =
+          String(item.name ?? item.equipment ?? item.equipment_name ?? item.title ?? item.id ?? '').trim();
         const equip_group = item.equip_group ?? item.group ?? null;
         const url = item.url ?? item.link ?? null;
         const domain = item.domain ?? normalizeSite(url ?? null);
@@ -807,6 +808,7 @@ export default function AiCompanyAnalysisTab() {
   const [industriesLoading, setIndustriesLoading] = useState(false);
   const [okvedOptions, setOkvedOptions] = useState<OkvedOption[]>([]);
   const [infoCompany, setInfoCompany] = useState<AiCompany | null>(null);
+  const [infoRefreshing, setInfoRefreshing] = useState(false);
   const [logs, setLogs] = useState<AiDebugEventRecord[]>([]);
   const [logsLoading, setLogsLoading] = useState(false);
   const [logsError, setLogsError] = useState<string | null>(null);
@@ -894,6 +896,7 @@ export default function AiCompanyAnalysisTab() {
       {} as Record<StepKey, boolean>,
     );
   });
+  const lastInfoRefreshInn = useRef<string | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1100,6 +1103,40 @@ export default function AiCompanyAnalysisTab() {
 
     return parts.length ? parts.join(' · ') : null;
   }, [stepLabelMap]);
+
+  const refreshCompanyDetails = useCallback(
+    async (inn: string) => {
+      if (!inn) return;
+      lastInfoRefreshInn.current = inn;
+      setInfoRefreshing(true);
+
+      try {
+        const params = new URLSearchParams({ page: '1', pageSize: '1', q: inn });
+        const res = await fetch(`/api/ai-analysis/companies?${params.toString()}`, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`Request failed with ${res.status}`);
+
+        const data = (await res.json().catch(() => null)) as FetchResponse | null;
+        const updated = data?.items?.find((item) => String(item.inn) === String(inn)) ?? data?.items?.[0];
+
+        if (updated && lastInfoRefreshInn.current === inn) {
+          setInfoCompany((prev) =>
+            prev && prev.inn === inn ? { ...prev, ...updated } : prev ?? updated ?? prev,
+          );
+
+          setCompanies((prev) =>
+            prev.map((item) => (String(item.inn) === String(inn) ? { ...item, ...updated } : item)),
+          );
+        }
+      } catch (error) {
+        console.error('Failed to refresh company details', error);
+      } finally {
+        if (lastInfoRefreshInn.current === inn) {
+          setInfoRefreshing(false);
+        }
+      }
+    },
+    [setCompanies],
+  );
 
   const fetchCompanies = useCallback(
     async (pageParam: number, pageSizeParam: number) => {
@@ -1514,6 +1551,20 @@ export default function AiCompanyAnalysisTab() {
     const timeout = setTimeout(() => setStopSignalAt(null), 15000);
     return () => clearTimeout(timeout);
   }, [stopSignalAt]);
+
+  useEffect(() => {
+    if (!infoCompany) {
+      lastInfoRefreshInn.current = null;
+      setInfoRefreshing(false);
+      return;
+    }
+
+    const inn = String(infoCompany.inn ?? '').trim();
+    if (!inn) return;
+    if (lastInfoRefreshInn.current === inn) return;
+
+    refreshCompanyDetails(inn);
+  }, [infoCompany, refreshCompanyDetails]);
 
   useEffect(() => {
     if (!infoCompany) {
@@ -1960,10 +2011,13 @@ export default function AiCompanyAnalysisTab() {
       }
 
       if (typeof item === 'object') {
-        const name = String(item?.name ?? item?.label ?? item?.equipment ?? item?.title ?? '').trim();
+        const name = String(
+          item?.name ?? item?.label ?? item?.equipment ?? item?.equipment_name ?? item?.title ?? '',
+        ).trim();
         const id =
           item?.id ??
           item?.equipment_id ??
+          item?.equipmentId ??
           item?.equipment_ID ??
           item?.match_id ??
           item?.code ??
@@ -3162,6 +3216,12 @@ export default function AiCompanyAnalysisTab() {
                 {formatCompanyDisplayName(infoCompany?.short_name, infoCompany?.company_id ?? null)} · ИНН{' '}
                 {infoCompany?.inn ?? ''}
               </DialogTitle>
+              {infoRefreshing && (
+                <div className="mt-1 flex items-center gap-2 text-xs text-muted-foreground">
+                  <Loader2 className="h-3 w-3 animate-spin" />
+                  Обновляем данные компании…
+                </div>
+              )}
             </DialogHeader>
             {infoCompany && (
               <div className="space-y-4 text-sm">
