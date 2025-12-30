@@ -406,9 +406,10 @@ async function getEquipmentByInn(
       const inn = idColumn === 'company_id' ? companyMap.get(row.inn as number) : (row.inn as string);
       if (!inn) continue;
       const parsed = normalizeEquipment(row.equipment);
-      if (parsed.length) {
-        result.set(inn, parsed);
-      }
+      if (!parsed.length) continue;
+
+      const existing = result.get(inn) ?? [];
+      result.set(inn, [...existing, ...parsed]);
     }
   } catch (error) {
     console.warn('Failed to load equipment_all data', error);
