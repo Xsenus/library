@@ -567,7 +567,26 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
     }, []);
 
   const openAiMap = new Map<string, any>();
-  if (openAiMeta.available && (openAiMeta.names.has('text_pars_id') || openAiMeta.names.has('company_id'))) {
+  const domainValues = new Set<string>();
+  const urlValues = new Set<string>();
+  for (const row of parsRows) {
+    const domain1 = parseString(row.domain_1);
+    const domain2 = parseString(row.domain_2);
+    const url = parseString(row.url);
+
+    if (domain1) domainValues.add(domain1);
+    if (domain2) domainValues.add(domain2);
+    if (url) {
+      urlValues.add(url);
+      const normalizedUrlDomain = normalizeDomain(url);
+      if (normalizedUrlDomain) domainValues.add(normalizedUrlDomain);
+    }
+  }
+
+  if (
+    openAiMeta.available &&
+    (openAiMeta.names.has('text_pars_id') || openAiMeta.names.has('company_id') || openAiMeta.names.has('domain'))
+  ) {
     try {
       const openAiCols = [
         openAiMeta.names.has('text_pars_id') ? 'text_pars_id' : null,
@@ -583,6 +602,8 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         openAiMeta.names.has('equipment') ? 'equipment' : null,
         openAiMeta.names.has('goods') ? 'goods' : null,
         openAiMeta.names.has('goods_type') ? 'goods_type' : null,
+        openAiMeta.names.has('domain') ? 'domain' : null,
+        openAiMeta.names.has('url') ? 'url' : null,
       ].filter(Boolean) as string[];
 
       if (openAiCols.filter(Boolean).length > 0) {
@@ -607,27 +628,44 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           predicates.push(`company_id = ANY($${params.length}::int[])`);
         }
 
+        if (openAiMeta.names.has('domain') && domainValues.size) {
+          params.push(Array.from(domainValues));
+          predicates.push(`domain = ANY($${params.length}::text[])`);
+        }
+
+        if (openAiMeta.names.has('url') && urlValues.size) {
+          params.push(Array.from(urlValues));
+          predicates.push(`url = ANY($${params.length}::text[])`);
+        }
+
         if (predicates.length) {
           const { rows } = await db.query(
             `
-              SELECT DISTINCT ON (${openAiMeta.names.has('text_pars_id') ? 'text_pars_id' : 'company_id'})
-                ${openAiCols.filter(Boolean).join(',\n              ')}
+              SELECT ${openAiCols.filter(Boolean).join(',\n                     ')}
               FROM ai_site_openai_responses
-              WHERE ${predicates.join(' OR ')}
-              ORDER BY ${openAiMeta.names.has('text_pars_id') ? 'text_pars_id' : 'company_id'}, ${orderExpr}
+              WHERE ${predicates.map((p) => `(${p})`).join(' OR ')}
+              ORDER BY ${orderExpr}
             `,
             params,
           );
 
           for (const row of rows as any[]) {
-            const key =
-              row.text_pars_id != null
-                ? `p:${row.text_pars_id}`
-                : row.company_id != null
-                  ? `c:${row.company_id}`
-                  : null;
-            if (!key) continue;
-            openAiMap.set(key, row);
+            const keys: (string | null)[] = [];
+
+            if (row.text_pars_id != null) keys.push(`p:${row.text_pars_id}`);
+            if (row.company_id != null) keys.push(`c:${row.company_id}`);
+
+            const domainKey = normalizeDomain((row as any).domain);
+            if (domainKey) keys.push(`d:${domainKey}`);
+
+            const urlDomainKey = normalizeDomain((row as any).url);
+            if (urlDomainKey) keys.push(`d:${urlDomainKey}`);
+
+            for (const key of keys) {
+              if (key && !openAiMap.has(key)) {
+                openAiMap.set(key, row);
+              }
+            }
           }
         }
       }
@@ -637,11 +675,10 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   }
 
   const prodclassMap = new Map<string, any>();
-  if (prodclassMeta.available && (prodclassMeta.names.has('text_pars_id') || prodclassMeta.names.has('company_id'))) {
+  if (prodclassMeta.available && prodclassMeta.names.has('text_pars_id')) {
     try {
       const prodclassCols = [
         prodclassMeta.names.has('text_pars_id') ? 'text_pars_id' : null,
-        prodclassMeta.names.has('company_id') ? 'company_id' : null,
         prodclassMeta.names.has('prodclass') ? 'prodclass' : null,
         prodclassMeta.names.has('prodclass_score') ? 'prodclass_score' : null,
         prodclassMeta.names.has('description_score') ? 'description_score' : null,
@@ -659,30 +696,19 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           predicates.push(`text_pars_id = ANY($${params.length}::int[])`);
         }
 
-        if (prodclassMeta.names.has('company_id') && companyIds.length) {
-          params.push(companyIds);
-          predicates.push(`company_id = ANY($${params.length}::int[])`);
-        }
-
         if (predicates.length) {
           const { rows } = await db.query(
             `
-              SELECT DISTINCT ON (${prodclassMeta.names.has('text_pars_id') ? 'text_pars_id' : 'company_id'})
-                ${prodclassCols.join(',\n                ')}
+              SELECT ${prodclassCols.join(',\n                ')}
               FROM ai_site_prodclass
               WHERE ${predicates.join(' OR ')}
-              ORDER BY ${prodclassMeta.names.has('text_pars_id') ? 'text_pars_id' : 'company_id'}, id DESC
+              ORDER BY id DESC
             `,
             params,
           );
           for (const row of rows as any[]) {
-            const key =
-              row.text_pars_id != null
-                ? `p:${row.text_pars_id}`
-                : row.company_id != null
-                  ? `c:${row.company_id}`
-                  : null;
-            if (!key) continue;
+            const key = row.text_pars_id != null ? `p:${row.text_pars_id}` : null;
+            if (!key || prodclassMap.has(key)) continue;
             prodclassMap.set(key, row);
           }
         }
@@ -813,12 +839,19 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       .map((d) => parseString(d))
       .filter((d): d is string => !!d);
 
-    const prodclassRow =
-      prodclassMap.get(`p:${row.pars_id}`) ?? prodclassMap.get(`c:${row.company_id}`) ?? {};
+    const prodclassRow = prodclassMap.get(`p:${row.pars_id}`) ?? {};
     const goodsRows = goodsMap.get(`p:${row.pars_id}`) ?? goodsMap.get(`c:${row.company_id}`) ?? [];
     const equipmentRows =
       equipmentMap.get(`p:${row.pars_id}`) ?? equipmentMap.get(`c:${row.company_id}`) ?? [];
-    const openAiRow = openAiMap.get(`p:${row.pars_id}`) ?? openAiMap.get(`c:${row.company_id}`) ?? {};
+    const domainKeys = domains
+      .map((d) => normalizeDomain(d))
+      .filter((d): d is string => !!d);
+    const domainMatch = domainKeys.map((key) => openAiMap.get(`d:${key}`)).find(Boolean);
+    const openAiRow =
+      openAiMap.get(`p:${row.pars_id}`) ??
+      openAiMap.get(`c:${row.company_id}`) ??
+      domainMatch ??
+      {};
 
     const clientGoodsRaw = clientGoodsCols
       .map((col) => (row as any)[col.replace('cr.', '')])
@@ -947,6 +980,25 @@ function buildActivitySql(optionalSelect: SelectBuild, queueAvailable: boolean, 
     FROM dadata_result d${queueJoinSql}
     ${whereSql}
   `;
+}
+
+function normalizeDomain(value: any): string | null {
+  const str = parseString(value);
+  if (!str) return null;
+
+  try {
+    const url = new URL(str.includes('://') ? str : `http://${str}`);
+    const host = url.hostname.toLowerCase();
+    return host.startsWith('www.') ? host.slice(4) : host;
+  } catch (error) {
+    const normalized = str
+      .replace(/^https?:\/\//i, '')
+      .replace(/^www\./i, '')
+      .split(/[\/\?#]/)[0]
+      .trim()
+      .toLowerCase();
+    return normalized || null;
+  }
 }
 
 function parseString(val: any): string | null {
@@ -1403,12 +1455,14 @@ export async function GET(request: NextRequest) {
         parseString(row.analysis_description) ||
         (analysisInfo && parseString((analysisInfo as any)?.description)) ||
         parseString(siteFallback?.description);
+      const descriptionOkvedScoreFromTables = siteFallback?.descriptionOkvedScore ?? null;
       const descriptionScore =
         parseNumber(row.description_score) ??
         parseNumber((analysisInfo as any)?.description_score) ??
         parseNumber((analysisInfo as any)?.ai?.description_score) ??
         siteFallback?.descriptionScore ?? null;
       const descriptionOkvedScore =
+        descriptionOkvedScoreFromTables ??
         parseNumber(row.description_okved_score) ??
         parseNumber((analysisInfo as any)?.description_okved_score) ??
         parseNumber((analysisInfo as any)?.ai?.description_okved_score) ??
