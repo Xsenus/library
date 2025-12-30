@@ -325,7 +325,17 @@ async function getEquipmentByInn(
   if (!idColumn) return result;
 
   const equipmentCol =
-    ['equipment', 'equipment_list', 'equipment_ai', 'equipment_data', 'equipment_json', 'top_equipment', 'top10_equipment']
+    [
+      'equipment',
+      'equipment_list',
+      'equipment_ai',
+      'equipment_data',
+      'equipment_json',
+      'top_equipment',
+      'top10_equipment',
+      'equipment_name',
+      'equipmentId',
+    ]
       .find((c) => meta.names.has(c)) ?? null;
 
   if (!equipmentCol) return result;
@@ -570,6 +580,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           parseString((item as any).equipment) ||
           parseString((item as any).equipment_site) ||
           parseString((item as any).equipment_name) ||
+          parseString((item as any).equipmentId) ||
           parseString((item as any).name) ||
           parseString((item as any).title);
         const id =
@@ -890,7 +901,11 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
 
     const goodsFromEquipment = equipmentRows.map((row) => ({
       goods_type: (row as any).equipment,
-      goods_type_id: (row as any).equipment_id ?? (row as any).match_id ?? (row as any).id,
+      goods_type_id:
+        (row as any).equipment_id ??
+        (row as any).equipmentId ??
+        (row as any).match_id ??
+        (row as any).id,
       goods_types_score: (row as any).equipment_score ?? (row as any).score ?? (row as any).match_score,
       text_vector: (row as any).text_vector ?? null,
     }));
@@ -947,10 +962,15 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         name:
           parseString(eq.equipment) ??
           parseString((eq as any).equipment_name) ??
+          parseString((eq as any).equipmentId) ??
           parseString(eq.equipment_id) ??
           parseString(eq.match_id) ??
           parseString((eq as any).name),
-        id: parseNumber(eq.equipment_id) ?? parseNumber(eq.match_id) ?? parseNumber((eq as any).id),
+        id:
+          parseNumber(eq.equipment_id) ??
+          parseNumber((eq as any).equipmentId) ??
+          parseNumber(eq.match_id) ??
+          parseNumber((eq as any).id),
         score:
           parseNumber(eq.equipment_score) ??
           parseNumber((eq as any).score) ??
