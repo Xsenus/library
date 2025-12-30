@@ -45,6 +45,7 @@ const OPTIONAL_COLUMNS: OptionalColumnSpec[] = [
   { alias: 'emails', candidates: ['emails', 'email_list', 'contacts_email'], fallback: 'NULL::jsonb' },
   { alias: 'analysis_status', candidates: ['analysis_status', 'analysis_state', 'analysis_stage'], fallback: 'NULL::text' },
   { alias: 'analysis_outcome', candidates: ['analysis_outcome', 'analysis_result', 'analysis_summary'], fallback: 'NULL::text' },
+  { alias: 'company_id', candidates: ['company_id'], fallback: 'NULL::int' },
   { alias: 'analysis_progress', candidates: ['analysis_progress', 'analysis_percent', 'analysis_ratio'], fallback: 'NULL::numeric' },
   {
     alias: 'analysis_started_at',
@@ -303,7 +304,7 @@ function buildOptionalSelect(existing: Set<string>): SelectBuild {
   return { sql: parts.join(',\n        '), selected };
 }
 
-async function getEquipmentByInn(inns: string[]): Promise<Map<string, any[]>> {
+async function getEquipmentByInn(inns: string[], companyIds?: Map<string, number>): Promise<Map<string, any[]>> {
   const result = new Map<string, any[]>();
   if (!inns.length) return result;
 
@@ -323,33 +324,45 @@ async function getEquipmentByInn(inns: string[]): Promise<Map<string, any[]>> {
 
   const companyMap = new Map<number, string>();
   if (idColumn === 'company_id') {
-    if (!clientsMeta.available || !clientsMeta.names.has('inn') || !clientsMeta.names.has('id')) return result;
-
-    try {
-      const orderExpr = clientsMeta.names.has('ended_at')
-        ? 'COALESCE(cr.ended_at, cr.created_at) DESC NULLS LAST'
-        : clientsMeta.names.has('created_at')
-          ? 'cr.created_at DESC NULLS LAST'
-          : 'cr.id DESC';
-
-      const { rows } = await db.query<{ inn: string; company_id: number }>(
-        `
-          SELECT DISTINCT ON (cr.inn) cr.inn, cr.id AS company_id
-          FROM clients_requests cr
-          WHERE cr.inn = ANY($1::text[])
-          ORDER BY cr.inn, ${orderExpr}
-        `,
-        [inns],
-      );
-
-      for (const row of rows) {
-        if (row.company_id && row.inn) {
-          companyMap.set(row.company_id, row.inn);
+    if (companyIds?.size) {
+      for (const [inn, cid] of companyIds.entries()) {
+        if (inn && cid != null) {
+          companyMap.set(cid, inn);
         }
       }
-    } catch (error) {
-      console.warn('Failed to load company_id for equipment_all lookup', error);
-      return result;
+    }
+
+    const missingInns = inns.filter((inn) => !Array.from(companyMap.values()).includes(inn));
+
+    if (missingInns.length) {
+      if (!clientsMeta.available || !clientsMeta.names.has('inn') || !clientsMeta.names.has('id')) return result;
+
+      try {
+        const orderExpr = clientsMeta.names.has('ended_at')
+          ? 'COALESCE(cr.ended_at, cr.created_at) DESC NULLS LAST'
+          : clientsMeta.names.has('created_at')
+            ? 'cr.created_at DESC NULLS LAST'
+            : 'cr.id DESC';
+
+        const { rows } = await db.query<{ inn: string; company_id: number }>(
+          `
+            SELECT DISTINCT ON (cr.inn) cr.inn, cr.id AS company_id
+            FROM clients_requests cr
+            WHERE cr.inn = ANY($1::text[])
+            ORDER BY cr.inn, ${orderExpr}
+          `,
+          [missingInns],
+        );
+
+        for (const row of rows) {
+          if (row.company_id && row.inn && !companyMap.has(row.company_id)) {
+            companyMap.set(row.company_id, row.inn);
+          }
+        }
+      } catch (error) {
+        console.warn('Failed to load company_id for equipment_all lookup', error);
+        return result;
+      }
     }
 
     if (!companyMap.size) return result;
@@ -1379,6 +1392,16 @@ export async function GET(request: NextRequest) {
     ]);
 
     const inns = dataRes.rows.map((row: any) => row.inn).filter(Boolean);
+    const companyIds = new Map<string, number>();
+    for (const row of dataRes.rows) {
+      if (row.inn != null && row.company_id != null) {
+        const inn = String(row.inn);
+        const cid = Number(row.company_id);
+        if (Number.isFinite(cid)) {
+          companyIds.set(inn, cid);
+        }
+      }
+    }
     let contactsByInn = new Map<string, { emails?: any; webSites?: any }>();
     let equipmentByInn = new Map<string, any[]>();
     let siteAnalyzerByInn = new Map<string, SiteAnalyzerFallback>();
@@ -1402,7 +1425,7 @@ export async function GET(request: NextRequest) {
         console.error('Failed to refresh company contacts', error);
       }
 
-      equipmentByInn = await getEquipmentByInn(inns);
+      equipmentByInn = await getEquipmentByInn(inns, companyIds);
       siteAnalyzerByInn = await loadSiteAnalyzerFallbacks(inns);
     }
 
@@ -1552,6 +1575,7 @@ export async function GET(request: NextRequest) {
         emails,
         analysis_status: status,
         analysis_outcome: outcome,
+        company_id: row.company_id != null ? Number(row.company_id) : null,
         analysis_progress: progress,
         analysis_started_at: startedAt,
         analysis_finished_at: finishedAt,

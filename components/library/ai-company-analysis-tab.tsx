@@ -96,6 +96,7 @@ type AiCompany = {
   emails?: string[] | null;
   analysis_status?: string | null;
   analysis_outcome?: string | null;
+  company_id?: number | null;
   analysis_progress?: number | null;
   analysis_started_at?: string | null;
   analysis_finished_at?: string | null;
@@ -615,6 +616,14 @@ function formatMatchScore(score: number | string | null | undefined): string | n
   if (!Number.isFinite(value)) return null;
   if (value === 0) return '0%';
   if (value > 0 && value <= 1) return `${(value * 100).toFixed(1)}%`;
+  return value.toFixed(2);
+}
+
+function formatRawScore(score: number | string | null | undefined): string | null {
+  if (score == null) return null;
+  const value = Number(score);
+  if (!Number.isFinite(value)) return null;
+  if (value >= 0 && value <= 1) return value.toFixed(3);
   return value.toFixed(2);
 }
 
@@ -2007,11 +2016,30 @@ export default function AiCompanyAnalysisTab() {
     (analyzerProdclassByOkved != null ? String(analyzerProdclassByOkved) : null) ||
     infoCompany?.analysis_class ||
     null;
+  const prodclassScoreValue =
+    analyzerDescriptionOkvedScore ??
+    analyzerProdclass?.score ??
+    analyzerOkvedScore ??
+    (infoCompany?.analysis_match_level != null ? Number(infoCompany.analysis_match_level) : null);
   const prodclassScoreText =
-    formatMatchScore(analyzerDescriptionOkvedScore) ||
+    formatMatchScore(prodclassScoreValue) ||
     formatMatchScore(analyzerProdclass?.score ?? null) ||
     formatMatchScore(analyzerOkvedScore) ||
     (infoCompany?.analysis_match_level ? String(infoCompany.analysis_match_level) : null);
+  const prodclassRawScoreText =
+    formatRawScore(prodclassScoreValue) ||
+    formatRawScore(analyzerProdclass?.score ?? null) ||
+    formatRawScore(analyzerOkvedScore) ||
+    formatRawScore(infoCompany?.analysis_match_level ?? null);
+  const prodclassId =
+    (analyzerProdclass?.id as string | number | null | undefined) ??
+    analyzerProdclassByOkved ??
+    infoCompany?.prodclass_by_okved ??
+    null;
+  const prodclassDescription =
+    analyzerProdclass && analyzerProdclass.name && analyzerProdclass.label && analyzerProdclass.name !== analyzerProdclass.label
+      ? analyzerProdclass.name
+      : null;
   const okvedMatchText =
     formatMatchScore(analyzerOkvedScore ?? infoCompany?.okved_score ?? null) ||
     formatMatchScore(analyzerDescriptionOkvedScore ?? null) ||
@@ -3224,185 +3252,25 @@ export default function AiCompanyAnalysisTab() {
                   <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
                     <div className="text-xs uppercase text-muted-foreground">Данные карточки (AI-анализатор)</div>
 
-                    {analyzerInfo.company &&
-                      (analyzerInfo.company.domain1 ||
-                        analyzerInfo.company.domain2 ||
-                        analyzerInfo.company.domain1_site ||
-                        analyzerInfo.company.domain2_site) && (
-                        <div className="grid gap-2 text-sm sm:grid-cols-2">
-                          {(analyzerInfo.company.domain1 || analyzerInfo.company.domain1_site) && (
-                            <div className="space-y-1">
-                              <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 1</div>
-                              {analyzerInfo.company.domain1 && (
-                                <div className="text-foreground">{analyzerInfo.company.domain1}</div>
-                              )}
-                              {analyzerInfo.company.domain1_site && (
-                                <a
-                                  href={`https://${analyzerInfo.company.domain1_site}`}
-                                  className="inline-flex items-center gap-1 text-[13px] text-blue-600 hover:underline"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {analyzerInfo.company.domain1_site}
-                                </a>
-                              )}
-                            </div>
-                          )}
-                          {(analyzerInfo.company.domain2 || analyzerInfo.company.domain2_site) && (
-                            <div className="space-y-1">
-                              <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 2</div>
-                              {analyzerInfo.company.domain2 && (
-                                <div className="text-foreground">{analyzerInfo.company.domain2}</div>
-                              )}
-                              {analyzerInfo.company.domain2_site && (
-                                <a
-                                  href={`https://${analyzerInfo.company.domain2_site}`}
-                                  className="inline-flex items-center gap-1 text-[13px] text-blue-600 hover:underline"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {analyzerInfo.company.domain2_site}
-                                </a>
-                              )}
-                            </div>
-                          )}
+                    {analyzerInfo.ai?.sites?.length ? (
+                      <div className="rounded-md bg-background px-3 py-2 text-sm text-foreground shadow-sm">
+                        <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2 leading-snug">
+                          {analyzerInfo.ai.sites.map((site, idx) => (
+                            <a
+                              key={`${site}-${idx}`}
+                              href={site.startsWith('http') ? site : `https://${site}`}
+                              className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-1 text-blue-600 transition-colors hover:bg-muted/60 hover:underline"
+                              target="_blank"
+                              rel="noopener noreferrer"
+                            >
+                              {site}
+                            </a>
+                          ))}
                         </div>
-                      )}
-
-                    {analyzerInfo.ai && (
-                      <div className="space-y-3 text-sm">
-                        {(analyzerInfo.ai.industry || analyzerInfo.ai.prodclass) && (
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            {analyzerInfo.ai.industry && (
-                              <div>
-                                <div className="text-[11px] uppercase text-muted-foreground">Индустрия</div>
-                                <div className="text-foreground">{analyzerInfo.ai.industry}</div>
-                              </div>
-                            )}
-                            {analyzerInfo.ai.prodclass && (
-                              <div className="space-y-1">
-                                <div className="text-[11px] uppercase text-muted-foreground">Продкласс</div>
-                                <div className="text-foreground">
-                                  {prodclassLabel || analyzerInfo.ai.prodclass.label || analyzerInfo.ai.prodclass.name || '—'}
-                                  {prodclassScoreText && ` · ${prodclassScoreText}`}
-                                </div>
-                                {okvedMatchText && (
-                                  <div className="text-[12px] text-muted-foreground">
-                                    Совпадение описания с ОКВЭД: {okvedMatchText}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {(analyzerInfo.ai.utp || analyzerInfo.ai.letter) && (
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            {analyzerInfo.ai.utp && (
-                              <div>
-                                <div className="text-[11px] uppercase text-muted-foreground">UTP</div>
-                                <div className="whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-foreground">
-                                  {analyzerInfo.ai.utp}
-                                </div>
-                              </div>
-                            )}
-                            {analyzerInfo.ai.letter && (
-                              <div>
-                                <div className="text-[11px] uppercase text-muted-foreground">Письмо</div>
-                                <div className="whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-foreground">
-                                  {analyzerInfo.ai.letter}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {analyzerInfo.ai.sites && analyzerInfo.ai.sites.length > 0 && (
-                          <div>
-                            <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
-                            <div className="mt-1 flex flex-wrap gap-2">
-                              {analyzerInfo.ai.sites.map((site) => (
-                                <a
-                                  key={site}
-                                  href={site.startsWith('http') ? site : `https://${site}`}
-                                  className="truncate rounded-full bg-background px-3 py-1 text-[13px] text-blue-600 hover:underline"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {site}
-                                </a>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {analyzerInfo.ai.products && analyzerInfo.ai.products.length > 0 && (
-                          <div className="space-y-1">
-                            <div className="text-[11px] uppercase text-muted-foreground">Продукция</div>
-                            <ul className="space-y-2">
-                              {analyzerInfo.ai.products.map((product, idx) => {
-                                const site = product.domain || product.url;
-                                return (
-                                  <li key={`${product.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
-                                    <div className="font-medium text-foreground">{product.name}</div>
-                                    <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
-                                      {product.goods_group && <span>{product.goods_group}</span>}
-                                      {product.tnved_code && (
-                                        <span className="rounded-full bg-background px-2 py-0.5 text-[11px] text-foreground/80">
-                                          ТНВЭД: {product.tnved_code}
-                                        </span>
-                                      )}
-                                      {site && (
-                                        <a
-                                          href={site.startsWith('http') ? site : `https://${site}`}
-                                          className="text-blue-600 hover:underline"
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                        >
-                                          {site}
-                                        </a>
-                                      )}
-                                    </div>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        )}
-
-                        {analyzerInfo.ai.equipment && analyzerInfo.ai.equipment.length > 0 && (
-                          <div className="space-y-1">
-                            <div className="text-[11px] uppercase text-muted-foreground">Оборудование</div>
-                            <ul className="space-y-2">
-                              {analyzerInfo.ai.equipment.map((item, idx) => {
-                                const site = item.domain || item.url;
-                                return (
-                                  <li key={`${item.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
-                                    <div className="font-medium text-foreground">{item.name}</div>
-                                    <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
-                                      {item.equip_group && <span>{item.equip_group}</span>}
-                                      {site && (
-                                        <a
-                                          href={site.startsWith('http') ? site : `https://${site}`}
-                                          className="text-blue-600 hover:underline"
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                        >
-                                          {site}
-                                        </a>
-                                      )}
-                                    </div>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        )}
-
-                        {analyzerInfo.ai.note && (
-                          <div className="text-[11px] text-muted-foreground">{analyzerInfo.ai.note}</div>
-                        )}
                       </div>
+                    ) : (
+                      <div className="text-sm text-muted-foreground">Сайты не найдены в payload анализатора.</div>
                     )}
                   </div>
                 ) : (
@@ -3494,9 +3362,20 @@ export default function AiCompanyAnalysisTab() {
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>
-                    <div className="font-medium">
-                      {prodclassScoreText || '—'}
-                      {prodclassLabel ? ` · ${prodclassLabel}` : ''}
+                    <div className="space-y-1 font-medium">
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="text-base sm:text-lg">{prodclassScoreText || '—'}</span>
+                        {prodclassRawScoreText && (
+                          <span className="text-xs text-muted-foreground">(расчёт: {prodclassRawScoreText})</span>
+                        )}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {prodclassId ? `Класс ${prodclassId}` : 'Класс не определён'}
+                        {prodclassLabel ? ` · ${prodclassLabel}` : ''}
+                      </div>
+                      {prodclassDescription && (
+                        <div className="text-sm text-muted-foreground">{prodclassDescription}</div>
+                      )}
                     </div>
                   </div>
                   <div>
@@ -3540,12 +3419,16 @@ export default function AiCompanyAnalysisTab() {
                     Виды найденной продукции на сайте и ТНВЭД
                   </div>
                   {tnvedProducts(infoCompany, analyzerInfo).length ? (
-                    <ul className="space-y-1">
+                    <ul className="grid gap-2 sm:grid-cols-2">
                       {tnvedProducts(infoCompany, analyzerInfo).map((item, idx) => (
-                        <li key={`${item.name}-${idx}`} className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-                          <span>{item.name}</span>
+                        <li key={`${item.name}-${idx}`} className="rounded-md border bg-muted/30 p-3">
+                          <div className="font-medium text-foreground">{item.name}</div>
                           {item.code && (
-                            <span className="text-muted-foreground text-xs">{item.code}</span>
+                            <div className="mt-1">
+                              <Badge variant="outline" className="text-[12px]">
+                                ТНВЭД {item.code}
+                              </Badge>
+                            </div>
                           )}
                         </li>
                       ))}
