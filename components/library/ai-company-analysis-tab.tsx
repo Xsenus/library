@@ -389,7 +389,8 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
         return acc;
       }
       if (typeof item === 'object') {
-        const name = String(item.name ?? item.equipment ?? item.title ?? '').trim();
+        const name =
+          String(item.name ?? item.equipment ?? item.equipment_name ?? item.title ?? item.id ?? '').trim();
         const equip_group = item.equip_group ?? item.group ?? null;
         const url = item.url ?? item.link ?? null;
         const domain = item.domain ?? normalizeSite(url ?? null);

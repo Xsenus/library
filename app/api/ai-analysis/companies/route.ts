@@ -446,7 +446,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   const clientGoodsCols = ['goods', 'goods_list', 'goods_ai', 'products', 'products_list', 'product_list']
     .filter((col) => clientsMeta.names.has(col))
     .map((col) => `cr.${quoteIdent(col)} AS ${quoteIdent(col)}`);
-  const clientEquipmentCols = ['equipment', 'equipment_list', 'equipment_ai']
+  const clientEquipmentCols = ['equipment', 'equipment_list', 'equipment_ai', 'equipment_name', 'equipmentId']
     .filter((col) => clientsMeta.names.has(col))
     .map((col) => `cr.${quoteIdent(col)} AS ${quoteIdent(col)}`);
   const site1DescriptionExpr = clientsMeta.names.has('site_1_description')
@@ -811,7 +811,9 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
     try {
       const equipmentCols = [
         equipmentMeta.names.has('equipment') ? 'equipment' : null,
+        equipmentMeta.names.has('equipment_name') ? 'equipment_name' : null,
         equipmentMeta.names.has('equipment_id') ? 'equipment_id' : null,
+        equipmentMeta.names.has('equipmentId') ? 'equipmentId' : null,
         equipmentMeta.names.has('match_id') ? 'match_id' : null,
         equipmentMeta.names.has('equipment_score') ? 'equipment_score' : null,
         equipmentMeta.names.has('text_vector') ? 'text_vector' : null,
@@ -1233,8 +1235,53 @@ function mergeAnalyzerInfo(
 function normalizeEquipment(raw: any): any[] {
   const parsed = parseJson(raw);
   if (!parsed) return [];
-  if (Array.isArray(parsed)) return parsed;
-  return [];
+
+  const items = Array.isArray(parsed) ? parsed : [parsed];
+
+  return items.reduce<any[]>((acc, item) => {
+    if (!item) return acc;
+
+    if (typeof item === 'string') {
+      acc.push({ name: item });
+      return acc;
+    }
+
+    if (typeof item === 'object') {
+      const name =
+        parseString((item as any).name) ||
+        parseString((item as any).equipment) ||
+        parseString((item as any).equipment_site) ||
+        parseString((item as any).equipment_name) ||
+        parseString((item as any).title) ||
+        (parseNumber((item as any).equipment_id) ?? parseNumber((item as any).equipmentId))?.toString();
+      const id =
+        parseNumber((item as any).id) ??
+        parseNumber((item as any).equipment_id) ??
+        parseNumber((item as any).equipmentId) ??
+        parseNumber((item as any).match_id) ??
+        parseNumber((item as any).code) ??
+        null;
+      const score =
+        parseNumber((item as any).score) ??
+        parseNumber((item as any).equipment_score) ??
+        parseNumber((item as any).match_score) ??
+        null;
+
+      const normalized: any = { ...item };
+      if (name) normalized.name = name;
+      if (id != null) normalized.id = id;
+      if (score != null && normalized.score == null) normalized.score = score;
+      if (normalized.text_vector == null && (item as any).text_vector != null) {
+        normalized.text_vector = (item as any).text_vector;
+      }
+
+      acc.push(normalized);
+      return acc;
+    }
+
+    acc.push({ name: String(item) });
+    return acc;
+  }, []);
 }
 
 function normalizeTnved(raw: any): any[] {
