@@ -1960,10 +1960,13 @@ export default function AiCompanyAnalysisTab() {
       }
 
       if (typeof item === 'object') {
-        const name = String(item?.name ?? item?.label ?? item?.equipment ?? item?.title ?? '').trim();
+        const name = String(
+          item?.name ?? item?.label ?? item?.equipment ?? item?.equipment_name ?? item?.title ?? '',
+        ).trim();
         const id =
           item?.id ??
           item?.equipment_id ??
+          item?.equipmentId ??
           item?.equipment_ID ??
           item?.match_id ??
           item?.code ??

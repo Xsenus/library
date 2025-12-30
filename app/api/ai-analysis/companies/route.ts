@@ -569,10 +569,12 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         const name =
           parseString((item as any).equipment) ||
           parseString((item as any).equipment_site) ||
+          parseString((item as any).equipment_name) ||
           parseString((item as any).name) ||
           parseString((item as any).title);
         const id =
           parseNumber((item as any).equipment_id) ??
+          parseNumber((item as any).equipmentId) ??
           parseNumber((item as any).match_id) ??
           parseNumber((item as any).id) ??
           parseNumber((item as any).code);
@@ -942,6 +944,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       equipment: fallbackEquipment.map((eq) => ({
         name:
           parseString(eq.equipment) ??
+          parseString((eq as any).equipment_name) ??
           parseString(eq.equipment_id) ??
           parseString(eq.match_id) ??
           parseString((eq as any).name),
@@ -1250,11 +1253,13 @@ function buildItemKey(item: any): string | null {
       parseString((item as any).name) ||
       parseString((item as any).title) ||
       parseString((item as any).equipment) ||
+      parseString((item as any).equipment_name) ||
       parseString((item as any).goods_type) ||
       parseString((item as any).product);
     const id =
       parseNumber((item as any).id) ??
       parseNumber((item as any).equipment_id) ??
+      parseNumber((item as any).equipmentId) ??
       parseNumber((item as any).goods_type_id) ??
       parseNumber((item as any).match_id) ??
       parseNumber((item as any).code);
