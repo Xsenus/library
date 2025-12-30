@@ -335,14 +335,15 @@ async function getEquipmentByInn(
   const companyMap = new Map<number, string>();
   if (idColumn === 'company_id') {
     if (companyIds?.size) {
-      for (const [inn, cid] of companyIds.entries()) {
+      companyIds.forEach((cid, inn) => {
         if (inn && cid != null) {
           companyMap.set(cid, inn);
         }
-      }
+      });
     }
 
-    const missingInns = inns.filter((inn) => !Array.from(companyMap.values()).includes(inn));
+    const knownInns = new Set(companyMap.values());
+    const missingInns = inns.filter((inn) => !knownInns.has(inn));
 
     if (missingInns.length) {
       if (!clientsMeta.available || !clientsMeta.names.has('inn') || !clientsMeta.names.has('id')) return result;
