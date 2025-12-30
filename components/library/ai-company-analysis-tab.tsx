@@ -1951,6 +1951,7 @@ export default function AiCompanyAnalysisTab() {
   const topEquipment = (company: AiCompany, analyzer?: AiAnalyzerInfo | null): string[] => {
     const raw = company.analysis_equipment;
     const items: string[] = [];
+    const seen = new Set<string>();
 
     if (Array.isArray(raw)) {
       items.push(
@@ -1976,12 +1977,19 @@ export default function AiCompanyAnalysisTab() {
       );
     }
 
-    return items;
+    return items.reduce<string[]>((acc, item) => {
+      const key = item.trim().toLowerCase();
+      if (!key || seen.has(key)) return acc;
+      seen.add(key);
+      acc.push(item.trim());
+      return acc;
+    }, []);
   };
 
   const tnvedProducts = (company: AiCompany, analyzer?: AiAnalyzerInfo | null): Array<{ name: string; code?: string }> => {
     const raw = company.analysis_tnved;
     const items: Array<{ name: string; code?: string }> = [];
+    const seen = new Set<string>();
     if (raw) {
       const arr = Array.isArray(raw) ? raw : [raw];
       items.push(
@@ -2013,7 +2021,13 @@ export default function AiCompanyAnalysisTab() {
       items.push(...analyzerProducts);
     }
 
-    return items;
+    return items.reduce<Array<{ name: string; code?: string }>>((acc, item) => {
+      const key = `${item.name?.trim().toLowerCase() || ''}|${item.code?.trim().toLowerCase() || ''}`;
+      if (!item.name || seen.has(key)) return acc;
+      seen.add(key);
+      acc.push({ name: item.name.trim(), code: item.code?.trim() || undefined });
+      return acc;
+    }, []);
   };
 
   const prodclassLabel = infoCompany?.prodclass_name ?? null;
