@@ -1952,57 +1952,55 @@ export default function AiCompanyAnalysisTab() {
     company: AiCompany,
     analyzer?: AiAnalyzerInfo | null,
   ): Array<{ name: string; id?: string; score?: number }> => {
-    const raw = company.analysis_equipment;
-    const items: Array<{ name: string; id?: string; score?: number }> = [];
+    const normalizeEquipmentItem = (item: any): { name: string; id?: string; score?: number } | null => {
+      if (!item) return null;
+      if (typeof item === 'string') {
+        const name = item.trim();
+        return name ? { name } : null;
+      }
+
+      if (typeof item === 'object') {
+        const name = String(item?.name ?? item?.label ?? item?.equipment ?? item?.title ?? '').trim();
+        const id =
+          item?.id ??
+          item?.equipment_id ??
+          item?.equipment_ID ??
+          item?.match_id ??
+          item?.code ??
+          item?.goods_type_id ??
+          null;
+        const score =
+          item?.equipment_score ?? item?.score ?? item?.match_score ?? item?.goods_types_score ?? undefined;
+
+        if (!name && id == null) return null;
+        return { name: name || String(id), id: id != null ? String(id) : undefined, score: score ?? undefined };
+      }
+
+      const value = String(item).trim();
+      return value ? { name: value } : null;
+    };
+
     const seen = new Set<string>();
-
-    if (Array.isArray(raw)) {
-      items.push(
-        ...raw
-          .map((item) => {
-            if (!item) return null;
-            if (typeof item === 'string') return { name: item.trim() };
-            if (typeof item === 'object') {
-              const name = String(item?.name ?? item?.label ?? item?.equipment ?? item?.title ?? '').trim();
-              const id =
-                item?.id ??
-                item?.equipment_id ??
-                item?.match_id ??
-                item?.code ??
-                item?.goods_type_id;
-              const score =
-                item?.equipment_score ?? item?.score ?? item?.match_score ?? item?.goods_types_score ?? undefined;
-              if (!name && id == null) return null;
-              return { name: name || String(id), id: id != null ? String(id) : undefined, score: score ?? undefined };
-            }
-            const value = String(item);
-            return value ? { name: value } : null;
-          })
-          .filter((s): s is { name: string; id?: string; score?: number } => !!s && !!s.name),
-      );
-    }
-
-    if (!items.length && analyzer?.ai?.equipment?.length) {
-      items.push(
-        ...analyzer.ai.equipment
-          .map((item) => {
-            const name = item?.name ? String(item.name).trim() : '';
-            const id = item?.equipment_id ?? item?.id ?? item?.match_id;
-            const score = item?.score ?? item?.equipment_score ?? item?.match_score;
-            if (!name && id == null) return null;
-            return { name: name || String(id), id: id != null ? String(id) : undefined, score: score ?? undefined };
-          })
-          .filter((entry): entry is { name: string; id?: string; score?: number } => !!entry),
-      );
-    }
-
-    return items.reduce<Array<{ name: string; id?: string; score?: number }>>((acc, item) => {
-      const key = `${item.name?.trim().toLowerCase() || ''}|${item.id?.trim().toLowerCase() || ''}`;
-      if (!item.name || seen.has(key)) return acc;
+    const pushItem = (item: { name: string; id?: string; score?: number } | null, acc: typeof items) => {
+      if (!item?.name) return;
+      const key = `${item.name.trim().toLowerCase()}|${item.id?.trim().toLowerCase() || ''}`;
+      if (seen.has(key)) return;
       seen.add(key);
       acc.push({ name: item.name.trim(), id: item.id?.trim() || undefined, score: item.score });
-      return acc;
-    }, []);
+    };
+
+    const items: Array<{ name: string; id?: string; score?: number }> = [];
+    const raw = company.analysis_equipment;
+
+    if (Array.isArray(raw)) {
+      raw.forEach((item) => pushItem(normalizeEquipmentItem(item), items));
+    }
+
+    if (analyzer?.ai?.equipment?.length) {
+      analyzer.ai.equipment.forEach((item) => pushItem(normalizeEquipmentItem(item), items));
+    }
+
+    return items;
   };
 
   const tnvedProducts = (company: AiCompany, analyzer?: AiAnalyzerInfo | null): Array<{ name: string; code?: string }> => {
