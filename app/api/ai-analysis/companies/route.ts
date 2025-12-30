@@ -884,8 +884,15 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       .map((col) => (row as any)[col.replace('cr.', '')])
       .find((val) => val != null);
 
-    const fallbackGoods = goodsRows.length
-      ? goodsRows
+    const goodsFromEquipment = equipmentRows.map((row) => ({
+      goods_type: (row as any).equipment,
+      goods_type_id: (row as any).equipment_id ?? (row as any).match_id ?? (row as any).id,
+      goods_types_score: (row as any).equipment_score ?? (row as any).score ?? (row as any).match_score,
+      text_vector: (row as any).text_vector ?? null,
+    }));
+
+    const fallbackGoods = goodsRows.length || goodsFromEquipment.length
+      ? [...goodsRows, ...goodsFromEquipment]
       : [
           ...mapGoodsList((openAiRow as any).goods),
           ...mapGoodsList((openAiRow as any).goods_type),
@@ -1235,6 +1242,44 @@ function normalizeTnved(raw: any): any[] {
   return [];
 }
 
+function buildItemKey(item: any): string | null {
+  if (item == null) return null;
+  if (typeof item === 'string') return item.trim().toLowerCase();
+  if (typeof item === 'object') {
+    const name =
+      parseString((item as any).name) ||
+      parseString((item as any).title) ||
+      parseString((item as any).equipment) ||
+      parseString((item as any).goods_type) ||
+      parseString((item as any).product);
+    const id =
+      parseNumber((item as any).id) ??
+      parseNumber((item as any).equipment_id) ??
+      parseNumber((item as any).goods_type_id) ??
+      parseNumber((item as any).match_id) ??
+      parseNumber((item as any).code);
+
+    if (name) return name.trim().toLowerCase();
+    if (id != null) return `id:${id}`;
+  }
+
+  return String(item).trim().toLowerCase();
+}
+
+function dedupeItems<T>(items: T[]): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+
+  for (const item of items) {
+    const key = buildItemKey(item);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    result.push(item);
+  }
+
+  return result;
+}
+
 function ensureDurationMs(duration: any, started: string | null, finished: string | null): number | null {
   const direct = parseNumber(duration);
   if (direct != null) return direct;
@@ -1566,19 +1611,21 @@ export async function GET(request: NextRequest) {
         (analysisInfo && parseString((analysisInfo as any)?.domain)) ||
         (siteFallback?.domains?.[0] ?? null);
 
-      let equipment = normalizeEquipment(row.analysis_equipment);
-      if (!equipment.length) {
-        const equipmentFromAux = equipmentByInn.get(core.inn);
-        if (equipmentFromAux?.length) {
-          equipment = equipmentFromAux;
-        } else if (siteFallback?.equipment?.length) {
-          equipment = siteFallback.equipment.filter((item) => item && (item.name || item.id));
-        }
-      }
-      let tnved = normalizeTnved(row.analysis_tnved);
-      if (!tnved.length && siteFallback?.goods?.length) {
-        tnved = siteFallback.goods.filter((item) => item && (item.name || item.id));
-      } else if (!tnved.length) {
+      const equipmentCandidates = [
+        ...(equipmentByInn.get(core.inn) ?? []),
+        ...normalizeEquipment(row.analysis_equipment),
+        ...(siteFallback?.equipment?.filter((item) => item && (item.name || item.id)) ?? []),
+      ].filter(Boolean);
+      const equipment = dedupeItems(equipmentCandidates);
+
+      const tnvedCandidates = [
+        ...(siteFallback?.goods?.filter((item) => item && (item.name || item.id)) ?? []),
+        ...normalizeTnved(row.analysis_tnved),
+      ].filter(Boolean);
+
+      let tnved = dedupeItems(tnvedCandidates);
+
+      if (!tnved.length) {
         const okvedSource = okvedList && okvedList.length ? okvedList : mainOkved ? [mainOkved] : null;
         if (okvedSource?.length) {
           tnved = okvedSource.map((code) => ({ name: code, id: code }));
