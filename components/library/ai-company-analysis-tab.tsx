@@ -96,6 +96,7 @@ type AiCompany = {
   emails?: string[] | null;
   analysis_status?: string | null;
   analysis_outcome?: string | null;
+  company_id?: number | null;
   analysis_progress?: number | null;
   analysis_started_at?: string | null;
   analysis_finished_at?: string | null;
@@ -113,6 +114,7 @@ type AiCompany = {
   description_okved_score?: number | null;
   okved_score?: number | null;
   prodclass_by_okved?: number | null;
+  prodclass_name?: string | null;
   analysis_okved_match?: string | null;
   analysis_description?: string | null;
   analysis_tnved?: any;
@@ -164,6 +166,11 @@ function formatLogDate(value: string) {
     date: dt.toLocaleDateString('ru-RU'),
     time: dt.toLocaleTimeString('ru-RU', { hour: '2-digit', minute: '2-digit', second: '2-digit' }),
   };
+}
+
+function formatCompanyDisplayName(name?: string | null, companyId?: number | null) {
+  const prefix = companyId != null && Number.isFinite(companyId) ? `[${companyId}] ` : '';
+  return `${prefix}${name ?? 'Компания'}`;
 }
 
 function describeLogEvent(event: AiDebugEventRecord): string {
@@ -615,6 +622,14 @@ function formatMatchScore(score: number | string | null | undefined): string | n
   if (!Number.isFinite(value)) return null;
   if (value === 0) return '0%';
   if (value > 0 && value <= 1) return `${(value * 100).toFixed(1)}%`;
+  return value.toFixed(2);
+}
+
+function formatRawScore(score: number | string | null | undefined): string | null {
+  if (score == null) return null;
+  const value = Number(score);
+  if (!Number.isFinite(value)) return null;
+  if (value >= 0 && value <= 1) return value.toFixed(3);
   return value.toFixed(2);
 }
 
@@ -2001,17 +2016,31 @@ export default function AiCompanyAnalysisTab() {
     return items;
   };
 
-  const prodclassLabel =
-    analyzerProdclass?.label ||
-    analyzerProdclass?.name ||
-    (analyzerProdclassByOkved != null ? String(analyzerProdclassByOkved) : null) ||
-    infoCompany?.analysis_class ||
-    null;
+  const prodclassLabel = infoCompany?.prodclass_name ?? null;
+  const prodclassScoreValue =
+    analyzerDescriptionOkvedScore ??
+    analyzerProdclass?.score ??
+    analyzerOkvedScore ??
+    (infoCompany?.analysis_match_level != null ? Number(infoCompany.analysis_match_level) : null);
   const prodclassScoreText =
-    formatMatchScore(analyzerDescriptionOkvedScore) ||
+    formatMatchScore(prodclassScoreValue) ||
     formatMatchScore(analyzerProdclass?.score ?? null) ||
     formatMatchScore(analyzerOkvedScore) ||
     (infoCompany?.analysis_match_level ? String(infoCompany.analysis_match_level) : null);
+  const prodclassRawScoreText =
+    formatRawScore(prodclassScoreValue) ||
+    formatRawScore(analyzerProdclass?.score ?? null) ||
+    formatRawScore(analyzerOkvedScore) ||
+    formatRawScore(infoCompany?.analysis_match_level ?? null);
+  const prodclassId =
+    (analyzerProdclass?.id as string | number | null | undefined) ??
+    analyzerProdclassByOkved ??
+    infoCompany?.prodclass_by_okved ??
+    null;
+  const prodclassDescription =
+    analyzerProdclass && analyzerProdclass.name && analyzerProdclass.label && analyzerProdclass.name !== analyzerProdclass.label
+      ? analyzerProdclass.name
+      : null;
   const okvedMatchText =
     formatMatchScore(analyzerOkvedScore ?? infoCompany?.okved_score ?? null) ||
     formatMatchScore(analyzerDescriptionOkvedScore ?? null) ||
@@ -2371,6 +2400,10 @@ export default function AiCompanyAnalysisTab() {
                         const sites = toSiteArray(company.sites);
                         const emails = toStringArray(company.emails);
                         const revenue = formatRevenue(company.revenue);
+                        const companyLabel = formatCompanyDisplayName(
+                          company.short_name,
+                          company.company_id,
+                        );
                         const employees = formatEmployees(company.employee_count ?? null);
                         const rowTone = active ? 'bg-sky-50' : outcome.rowClass;
                         const isEmailExpanded = expandedEmails.has(company.inn);
@@ -2458,7 +2491,7 @@ export default function AiCompanyAnalysisTab() {
                               <Checkbox
                                 checked={companySelected}
                                 onCheckedChange={(value) => setSelectedValue(company.inn, value)}
-                                aria-label={`Выбрать компанию ${company.short_name}`}
+                                aria-label={`Выбрать компанию ${companyLabel}`}
                               />
                             </td>
                             <td className="px-4 py-4 align-top" style={columnStyle('company')}>
@@ -2471,7 +2504,7 @@ export default function AiCompanyAnalysisTab() {
                                       outcome.textClass ?? 'text-foreground',
                                     )}
                                   >
-                                    {company.short_name}
+                                    {companyLabel}
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -2681,7 +2714,7 @@ export default function AiCompanyAnalysisTab() {
                                           className="h-8 w-8"
                                           onClick={() => stopAction(company.inn)}
                                           disabled={stopBusy}
-                                          aria-label={`Остановить компанию ${company.short_name}`}
+                                          aria-label={`Остановить компанию ${companyLabel}`}
                                         >
                                           {stopBusy ? (
                                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -2701,7 +2734,7 @@ export default function AiCompanyAnalysisTab() {
                                         size="icon"
                                         className="h-8 w-8"
                                         onClick={() => setInfoCompany(company)}
-                                        aria-label={`Подробности по компании ${company.short_name}`}
+                                        aria-label={`Подробности по компании ${companyLabel}`}
                                       >
                                         <Info className="h-4 w-4" />
                                       </Button>
@@ -2732,7 +2765,7 @@ export default function AiCompanyAnalysisTab() {
                                             </Button>
                                           </TooltipTrigger>
                                           <TooltipContent side="bottom">
-                                            Запустить только шаг «{opt.label}» для компании {company.short_name}
+                                            Запустить только шаг «{opt.label}» для компании {companyLabel}
                                           </TooltipContent>
                                         </Tooltip>
                                       );
@@ -2920,6 +2953,7 @@ export default function AiCompanyAnalysisTab() {
                     const state = computeCompanyState(item);
                     const outcome = resolveOutcome(item, state);
                     const badge = getStatusBadge(item, outcome);
+                    const itemCompanyLabel = formatCompanyDisplayName(item.short_name, item.company_id);
                     const queuedTime = formatTime(item.queued_at ?? null);
                     const statusLabel = formatStatusLabel(item.analysis_status ?? 'queued');
                     const attempts =
@@ -2938,7 +2972,7 @@ export default function AiCompanyAnalysisTab() {
                       >
                         <div className="space-y-1">
                           <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
-                            <span>{item.short_name ?? 'Компания'}</span>
+                            <span>{itemCompanyLabel}</span>
                             <Badge variant={badge.variant}>{badge.label}</Badge>
                           </div>
                           <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
@@ -3094,7 +3128,8 @@ export default function AiCompanyAnalysisTab() {
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
-                {infoCompany?.short_name ?? 'Компания'} · ИНН {infoCompany?.inn ?? ''}
+                {formatCompanyDisplayName(infoCompany?.short_name, infoCompany?.company_id ?? null)} · ИНН{' '}
+                {infoCompany?.inn ?? ''}
               </DialogTitle>
             </DialogHeader>
             {infoCompany && (
@@ -3220,197 +3255,6 @@ export default function AiCompanyAnalysisTab() {
                   );
                 })()}
 
-                {analyzerInfo ? (
-                  <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
-                    <div className="text-xs uppercase text-muted-foreground">Данные карточки (AI-анализатор)</div>
-
-                    {analyzerInfo.company &&
-                      (analyzerInfo.company.domain1 ||
-                        analyzerInfo.company.domain2 ||
-                        analyzerInfo.company.domain1_site ||
-                        analyzerInfo.company.domain2_site) && (
-                        <div className="grid gap-2 text-sm sm:grid-cols-2">
-                          {(analyzerInfo.company.domain1 || analyzerInfo.company.domain1_site) && (
-                            <div className="space-y-1">
-                              <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 1</div>
-                              {analyzerInfo.company.domain1 && (
-                                <div className="text-foreground">{analyzerInfo.company.domain1}</div>
-                              )}
-                              {analyzerInfo.company.domain1_site && (
-                                <a
-                                  href={`https://${analyzerInfo.company.domain1_site}`}
-                                  className="inline-flex items-center gap-1 text-[13px] text-blue-600 hover:underline"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {analyzerInfo.company.domain1_site}
-                                </a>
-                              )}
-                            </div>
-                          )}
-                          {(analyzerInfo.company.domain2 || analyzerInfo.company.domain2_site) && (
-                            <div className="space-y-1">
-                              <div className="text-[11px] uppercase text-muted-foreground">Описание сайта 2</div>
-                              {analyzerInfo.company.domain2 && (
-                                <div className="text-foreground">{analyzerInfo.company.domain2}</div>
-                              )}
-                              {analyzerInfo.company.domain2_site && (
-                                <a
-                                  href={`https://${analyzerInfo.company.domain2_site}`}
-                                  className="inline-flex items-center gap-1 text-[13px] text-blue-600 hover:underline"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {analyzerInfo.company.domain2_site}
-                                </a>
-                              )}
-                            </div>
-                          )}
-                        </div>
-                      )}
-
-                    {analyzerInfo.ai && (
-                      <div className="space-y-3 text-sm">
-                        {(analyzerInfo.ai.industry || analyzerInfo.ai.prodclass) && (
-                          <div className="grid gap-2 sm:grid-cols-2">
-                            {analyzerInfo.ai.industry && (
-                              <div>
-                                <div className="text-[11px] uppercase text-muted-foreground">Индустрия</div>
-                                <div className="text-foreground">{analyzerInfo.ai.industry}</div>
-                              </div>
-                            )}
-                            {analyzerInfo.ai.prodclass && (
-                              <div className="space-y-1">
-                                <div className="text-[11px] uppercase text-muted-foreground">Продкласс</div>
-                                <div className="text-foreground">
-                                  {prodclassLabel || analyzerInfo.ai.prodclass.label || analyzerInfo.ai.prodclass.name || '—'}
-                                  {prodclassScoreText && ` · ${prodclassScoreText}`}
-                                </div>
-                                {okvedMatchText && (
-                                  <div className="text-[12px] text-muted-foreground">
-                                    Совпадение описания с ОКВЭД: {okvedMatchText}
-                                  </div>
-                                )}
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {(analyzerInfo.ai.utp || analyzerInfo.ai.letter) && (
-                          <div className="grid gap-3 sm:grid-cols-2">
-                            {analyzerInfo.ai.utp && (
-                              <div>
-                                <div className="text-[11px] uppercase text-muted-foreground">UTP</div>
-                                <div className="whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-foreground">
-                                  {analyzerInfo.ai.utp}
-                                </div>
-                              </div>
-                            )}
-                            {analyzerInfo.ai.letter && (
-                              <div>
-                                <div className="text-[11px] uppercase text-muted-foreground">Письмо</div>
-                                <div className="whitespace-pre-wrap rounded-md bg-muted/30 p-2 text-foreground">
-                                  {analyzerInfo.ai.letter}
-                                </div>
-                              </div>
-                            )}
-                          </div>
-                        )}
-
-                        {analyzerInfo.ai.sites && analyzerInfo.ai.sites.length > 0 && (
-                          <div>
-                            <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
-                            <div className="mt-1 flex flex-wrap gap-2">
-                              {analyzerInfo.ai.sites.map((site) => (
-                                <a
-                                  key={site}
-                                  href={site.startsWith('http') ? site : `https://${site}`}
-                                  className="truncate rounded-full bg-background px-3 py-1 text-[13px] text-blue-600 hover:underline"
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  {site}
-                                </a>
-                              ))}
-                            </div>
-                          </div>
-                        )}
-
-                        {analyzerInfo.ai.products && analyzerInfo.ai.products.length > 0 && (
-                          <div className="space-y-1">
-                            <div className="text-[11px] uppercase text-muted-foreground">Продукция</div>
-                            <ul className="space-y-2">
-                              {analyzerInfo.ai.products.map((product, idx) => {
-                                const site = product.domain || product.url;
-                                return (
-                                  <li key={`${product.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
-                                    <div className="font-medium text-foreground">{product.name}</div>
-                                    <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
-                                      {product.goods_group && <span>{product.goods_group}</span>}
-                                      {product.tnved_code && (
-                                        <span className="rounded-full bg-background px-2 py-0.5 text-[11px] text-foreground/80">
-                                          ТНВЭД: {product.tnved_code}
-                                        </span>
-                                      )}
-                                      {site && (
-                                        <a
-                                          href={site.startsWith('http') ? site : `https://${site}`}
-                                          className="text-blue-600 hover:underline"
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                        >
-                                          {site}
-                                        </a>
-                                      )}
-                                    </div>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        )}
-
-                        {analyzerInfo.ai.equipment && analyzerInfo.ai.equipment.length > 0 && (
-                          <div className="space-y-1">
-                            <div className="text-[11px] uppercase text-muted-foreground">Оборудование</div>
-                            <ul className="space-y-2">
-                              {analyzerInfo.ai.equipment.map((item, idx) => {
-                                const site = item.domain || item.url;
-                                return (
-                                  <li key={`${item.name}-${idx}`} className="rounded-md bg-muted/30 px-3 py-2">
-                                    <div className="font-medium text-foreground">{item.name}</div>
-                                    <div className="flex flex-wrap items-center gap-2 text-[12px] text-muted-foreground">
-                                      {item.equip_group && <span>{item.equip_group}</span>}
-                                      {site && (
-                                        <a
-                                          href={site.startsWith('http') ? site : `https://${site}`}
-                                          className="text-blue-600 hover:underline"
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                        >
-                                          {site}
-                                        </a>
-                                      )}
-                                    </div>
-                                  </li>
-                                );
-                              })}
-                            </ul>
-                          </div>
-                        )}
-
-                        {analyzerInfo.ai.note && (
-                          <div className="text-[11px] text-muted-foreground">{analyzerInfo.ai.note}</div>
-                        )}
-                      </div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-dashed bg-muted/10 p-3 text-xs text-muted-foreground">
-                    Пайплайн ещё не сохранил payload AI-анализатора для этой компании.
-                  </div>
-                )}
-
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="uppercase">Логи задачи</span>
@@ -3494,9 +3338,20 @@ export default function AiCompanyAnalysisTab() {
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>
-                    <div className="font-medium">
-                      {prodclassScoreText || '—'}
-                      {prodclassLabel ? ` · ${prodclassLabel}` : ''}
+                    <div className="space-y-1 font-medium">
+                      <div className="flex flex-wrap items-baseline gap-2">
+                        <span className="text-base sm:text-lg">{prodclassScoreText || '—'}</span>
+                        {prodclassRawScoreText && (
+                          <span className="text-xs text-muted-foreground">(расчёт: {prodclassRawScoreText})</span>
+                        )}
+                      </div>
+                      <div className="text-sm text-muted-foreground">
+                        {prodclassId ? `Класс ${prodclassId}` : 'Класс не определён'}
+                        {prodclassLabel ? ` · ${prodclassLabel}` : ''}
+                      </div>
+                      {prodclassDescription && (
+                        <div className="text-sm text-muted-foreground">{prodclassDescription}</div>
+                      )}
                     </div>
                   </div>
                   <div>
@@ -3540,12 +3395,16 @@ export default function AiCompanyAnalysisTab() {
                     Виды найденной продукции на сайте и ТНВЭД
                   </div>
                   {tnvedProducts(infoCompany, analyzerInfo).length ? (
-                    <ul className="space-y-1">
+                    <ul className="grid gap-2 sm:grid-cols-2">
                       {tnvedProducts(infoCompany, analyzerInfo).map((item, idx) => (
-                        <li key={`${item.name}-${idx}`} className="flex flex-col sm:flex-row sm:items-center sm:justify-between">
-                          <span>{item.name}</span>
+                        <li key={`${item.name}-${idx}`} className="rounded-md border bg-muted/30 p-3">
+                          <div className="font-medium text-foreground">{item.name}</div>
                           {item.code && (
-                            <span className="text-muted-foreground text-xs">{item.code}</span>
+                            <div className="mt-1">
+                              <Badge variant="outline" className="text-[12px]">
+                                ТНВЭД {item.code}
+                              </Badge>
+                            </div>
                           )}
                         </li>
                       ))}
