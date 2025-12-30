@@ -1948,9 +1948,12 @@ export default function AiCompanyAnalysisTab() {
     return 'indeterminate' as const;
   }, [companies, selected]);
 
-  const topEquipment = (company: AiCompany, analyzer?: AiAnalyzerInfo | null): string[] => {
+  const topEquipment = (
+    company: AiCompany,
+    analyzer?: AiAnalyzerInfo | null,
+  ): Array<{ name: string; id?: string; score?: number }> => {
     const raw = company.analysis_equipment;
-    const items: string[] = [];
+    const items: Array<{ name: string; id?: string; score?: number }> = [];
     const seen = new Set<string>();
 
     if (Array.isArray(raw)) {
@@ -1958,30 +1961,46 @@ export default function AiCompanyAnalysisTab() {
         ...raw
           .map((item) => {
             if (!item) return null;
-            if (typeof item === 'string') return item.trim();
+            if (typeof item === 'string') return { name: item.trim() };
             if (typeof item === 'object') {
-              const label = String(item?.name ?? item?.label ?? item?.equipment ?? item?.title ?? '').trim();
-              return label || null;
+              const name = String(item?.name ?? item?.label ?? item?.equipment ?? item?.title ?? '').trim();
+              const id =
+                item?.id ??
+                item?.equipment_id ??
+                item?.match_id ??
+                item?.code ??
+                item?.goods_type_id;
+              const score =
+                item?.equipment_score ?? item?.score ?? item?.match_score ?? item?.goods_types_score ?? undefined;
+              if (!name && id == null) return null;
+              return { name: name || String(id), id: id != null ? String(id) : undefined, score: score ?? undefined };
             }
-            return String(item);
+            const value = String(item);
+            return value ? { name: value } : null;
           })
-          .filter((s): s is string => !!s),
+          .filter((s): s is { name: string; id?: string; score?: number } => !!s && !!s.name),
       );
     }
 
     if (!items.length && analyzer?.ai?.equipment?.length) {
       items.push(
         ...analyzer.ai.equipment
-          .map((item) => (item?.name ? String(item.name).trim() : null))
-          .filter((name): name is string => !!name),
+          .map((item) => {
+            const name = item?.name ? String(item.name).trim() : '';
+            const id = item?.equipment_id ?? item?.id ?? item?.match_id;
+            const score = item?.score ?? item?.equipment_score ?? item?.match_score;
+            if (!name && id == null) return null;
+            return { name: name || String(id), id: id != null ? String(id) : undefined, score: score ?? undefined };
+          })
+          .filter((entry): entry is { name: string; id?: string; score?: number } => !!entry),
       );
     }
 
-    return items.reduce<string[]>((acc, item) => {
-      const key = item.trim().toLowerCase();
-      if (!key || seen.has(key)) return acc;
+    return items.reduce<Array<{ name: string; id?: string; score?: number }>>((acc, item) => {
+      const key = `${item.name?.trim().toLowerCase() || ''}|${item.id?.trim().toLowerCase() || ''}`;
+      if (!item.name || seen.has(key)) return acc;
       seen.add(key);
-      acc.push(item.trim());
+      acc.push({ name: item.name.trim(), id: item.id?.trim() || undefined, score: item.score });
       return acc;
     }, []);
   };
@@ -3394,11 +3413,29 @@ export default function AiCompanyAnalysisTab() {
                 <div>
                   <div className="text-xs text-muted-foreground mb-2">Топ-10 оборудования</div>
                   {topEquipment(infoCompany, analyzerInfo).length ? (
-                    <ol className="list-decimal space-y-1 pl-5">
-                      {topEquipment(infoCompany, analyzerInfo).slice(0, 10).map((item, index) => (
-                        <li key={`${item}-${index}`}>{item}</li>
-                      ))}
-                    </ol>
+                    <ul className="grid gap-2 sm:grid-cols-2">
+                      {topEquipment(infoCompany, analyzerInfo)
+                        .slice(0, 10)
+                        .map((item, idx) => (
+                          <li key={`${item.name}-${item.id ?? idx}`} className="rounded-md border bg-muted/30 p-3">
+                            <div className="font-medium text-foreground">{item.name}</div>
+                            {(item.id || item.score != null) && (
+                              <div className="mt-1 flex flex-wrap gap-2 text-[12px] text-muted-foreground">
+                                {item.id && (
+                                  <Badge variant="outline" className="text-[12px]">
+                                    ID {item.id}
+                                  </Badge>
+                                )}
+                                {item.score != null && (
+                                  <Badge variant="outline" className="text-[12px]">
+                                    score {item.score}
+                                  </Badge>
+                                )}
+                              </div>
+                            )}
+                          </li>
+                        ))}
+                    </ul>
                   ) : (
                     <div className="text-muted-foreground">Данные отсутствуют</div>
                   )}
