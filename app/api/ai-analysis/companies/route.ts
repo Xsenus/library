@@ -175,8 +175,8 @@ async function isQueueTableAvailable(): Promise<boolean> {
 }
 
 async function getEquipmentColumns({
-  connection = dbBitrix,
-}: { connection?: typeof dbBitrix } = {}): Promise<{
+  connection = db,
+}: { connection?: typeof db } = {}): Promise<{
   names: Set<string>;
   available: boolean;
   tableName: string | null;
@@ -317,7 +317,7 @@ async function getEquipmentByInn(
   const result = new Map<string, any[]>();
   if (!inns.length) return result;
 
-  const connection = dbBitrix;
+  const connection = db;
   const meta = await getEquipmentColumns({ connection });
   if (!meta.available || !meta.tableName) return result;
 
