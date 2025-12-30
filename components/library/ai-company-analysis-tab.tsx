@@ -114,6 +114,7 @@ type AiCompany = {
   description_okved_score?: number | null;
   okved_score?: number | null;
   prodclass_by_okved?: number | null;
+  prodclass_name?: string | null;
   analysis_okved_match?: string | null;
   analysis_description?: string | null;
   analysis_tnved?: any;
@@ -2010,12 +2011,7 @@ export default function AiCompanyAnalysisTab() {
     return items;
   };
 
-  const prodclassLabel =
-    analyzerProdclass?.label ||
-    analyzerProdclass?.name ||
-    (analyzerProdclassByOkved != null ? String(analyzerProdclassByOkved) : null) ||
-    infoCompany?.analysis_class ||
-    null;
+  const prodclassLabel = infoCompany?.prodclass_name ?? null;
   const prodclassScoreValue =
     analyzerDescriptionOkvedScore ??
     analyzerProdclass?.score ??
@@ -3247,37 +3243,6 @@ export default function AiCompanyAnalysisTab() {
                     </div>
                   );
                 })()}
-
-                {analyzerInfo ? (
-                  <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
-                    <div className="text-xs uppercase text-muted-foreground">Данные карточки (AI-анализатор)</div>
-
-                    {analyzerInfo.ai?.sites?.length ? (
-                      <div className="rounded-md bg-background px-3 py-2 text-sm text-foreground shadow-sm">
-                        <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
-                        <div className="mt-1 flex flex-wrap items-center gap-2 leading-snug">
-                          {analyzerInfo.ai.sites.map((site, idx) => (
-                            <a
-                              key={`${site}-${idx}`}
-                              href={site.startsWith('http') ? site : `https://${site}`}
-                              className="inline-flex items-center gap-1 rounded-full bg-muted/40 px-2 py-1 text-blue-600 transition-colors hover:bg-muted/60 hover:underline"
-                              target="_blank"
-                              rel="noopener noreferrer"
-                            >
-                              {site}
-                            </a>
-                          ))}
-                        </div>
-                      </div>
-                    ) : (
-                      <div className="text-sm text-muted-foreground">Сайты не найдены в payload анализатора.</div>
-                    )}
-                  </div>
-                ) : (
-                  <div className="rounded-lg border border-dashed bg-muted/10 p-3 text-xs text-muted-foreground">
-                    Пайплайн ещё не сохранил payload AI-анализатора для этой компании.
-                  </div>
-                )}
 
                 <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">

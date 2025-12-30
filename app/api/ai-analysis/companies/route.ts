@@ -943,6 +943,28 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   return result;
 }
 
+async function loadProdclassNames(ids: number[]): Promise<Map<number, string>> {
+  const result = new Map<number, string>();
+  if (!ids.length) return result;
+
+  try {
+    const { rows } = await db.query<{ id: number; prodclass: string }>(
+      'SELECT id, prodclass FROM ib_prodclass WHERE id = ANY($1::int[])',
+      [ids],
+    );
+
+    for (const row of rows) {
+      if (row.id != null && row.prodclass) {
+        result.set(Number(row.id), row.prodclass);
+      }
+    }
+  } catch (error) {
+    console.warn('Failed to load ib_prodclass names', error);
+  }
+
+  return result;
+}
+
 function buildActivitySql(optionalSelect: SelectBuild, queueAvailable: boolean, whereSql: string): string | null {
   const statusCol = optionalSelect.selected.get('analysis_status');
   const progressCol = optionalSelect.selected.get('analysis_progress');
@@ -1429,6 +1451,33 @@ export async function GET(request: NextRequest) {
       siteAnalyzerByInn = await loadSiteAnalyzerFallbacks(inns);
     }
 
+    const prodclassIds = new Set<number>();
+    const collectProdclassId = (value: any) => {
+      const id = parseNumber(value);
+      if (id != null) {
+        prodclassIds.add(id);
+      }
+    };
+
+    for (const row of dataRes.rows) {
+      const analysisInfo = parseJson(row.analysis_info);
+      collectProdclassId(row.prodclass_by_okved);
+      collectProdclassId((analysisInfo as any)?.prodclass_by_okved);
+      collectProdclassId((analysisInfo as any)?.ai?.prodclass_by_okved);
+
+      const analyzerProdclass = (analysisInfo as any)?.ai?.prodclass ?? (analysisInfo as any)?.prodclass;
+      if (analyzerProdclass && typeof analyzerProdclass === 'object') {
+        collectProdclassId((analyzerProdclass as any).id ?? (analyzerProdclass as any).prodclass_id);
+      }
+
+      const siteFallback = siteAnalyzerByInn.get(String(row.inn));
+      if (siteFallback) {
+        collectProdclassId(siteFallback.prodclassByOkved);
+      }
+    }
+
+    const prodclassNames = await loadProdclassNames(Array.from(prodclassIds));
+
     const total = countRes.rows?.[0]?.cnt ?? 0;
 
     const items = dataRes.rows.map((row: any) => {
@@ -1463,6 +1512,7 @@ export async function GET(request: NextRequest) {
         parseNumber((analysisInfo as any)?.prodclass_by_okved) ??
         parseNumber((analysisInfo as any)?.ai?.prodclass_by_okved) ??
         siteFallback?.prodclassByOkved ?? null;
+      const prodclassName = prodclassByOkved != null ? prodclassNames.get(prodclassByOkved) ?? null : null;
       const matchLevel =
         parseString(row.analysis_match_level) ||
         (analysisInfo && parseString((analysisInfo as any)?.match_level)) ||
@@ -1593,6 +1643,7 @@ export async function GET(request: NextRequest) {
         description_okved_score: descriptionOkvedScore,
         okved_score: okvedScore,
         prodclass_by_okved: prodclassByOkved,
+        prodclass_name: prodclassName,
         main_okved: mainOkved,
         analysis_okved_match: okvedMatch,
         analysis_description: description,
