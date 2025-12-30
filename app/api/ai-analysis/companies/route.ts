@@ -174,7 +174,13 @@ async function isQueueTableAvailable(): Promise<boolean> {
   }
 }
 
-async function getEquipmentColumns(): Promise<{ names: Set<string>; available: boolean; tableName: string | null }> {
+async function getEquipmentColumns({
+  connection = dbBitrix,
+}: { connection?: typeof dbBitrix } = {}): Promise<{
+  names: Set<string>;
+  available: boolean;
+  tableName: string | null;
+}> {
   const now = Date.now();
   if (cachedEquipmentCols && now - cachedEquipmentCols.ts < EQUIPMENT_CACHE_TTL_MS) {
     return {
@@ -185,13 +191,13 @@ async function getEquipmentColumns(): Promise<{ names: Set<string>; available: b
   }
 
   try {
-    const resolvedName = await findTableName('equipment_all');
+    const resolvedName = await findTableName('equipment_all', { connection });
     if (!resolvedName) {
       cachedEquipmentCols = { names: new Set(), available: false, tableName: null, ts: now };
       return { names: new Set(), available: false, tableName: null };
     }
 
-    const existsRes = await db.query<{ exists: boolean }>(
+    const existsRes = await connection.query<{ exists: boolean }>(
       `SELECT to_regclass($1) IS NOT NULL AS exists`,
       [`public.${quoteIdent(resolvedName)}`],
     );
@@ -201,7 +207,7 @@ async function getEquipmentColumns(): Promise<{ names: Set<string>; available: b
       return { names: new Set(), available, tableName: resolvedName };
     }
 
-    const { rows } = await db.query<{ column_name: string }>(
+    const { rows } = await connection.query<{ column_name: string }>(
       `
         SELECT column_name
         FROM information_schema.columns
@@ -304,23 +310,27 @@ function buildOptionalSelect(existing: Set<string>): SelectBuild {
   return { sql: parts.join(',\n        '), selected };
 }
 
-async function getEquipmentByInn(inns: string[], companyIds?: Map<string, number>): Promise<Map<string, any[]>> {
+async function getEquipmentByInn(
+  inns: string[],
+  companyIds?: Map<string, number>,
+): Promise<Map<string, any[]>> {
   const result = new Map<string, any[]>();
   if (!inns.length) return result;
 
-  const meta = await getEquipmentColumns();
+  const connection = dbBitrix;
+  const meta = await getEquipmentColumns({ connection });
   if (!meta.available || !meta.tableName) return result;
 
   const idColumn = meta.names.has('company_id') ? 'company_id' : meta.names.has('inn') ? 'inn' : null;
   if (!idColumn) return result;
 
-  const equipmentCol = ['equipment', 'equipment_list', 'equipment_ai', 'equipment_data', 'equipment_json'].find((c) =>
-    meta.names.has(c),
-  );
+  const equipmentCol =
+    ['equipment', 'equipment_list', 'equipment_ai', 'equipment_data', 'equipment_json', 'top_equipment', 'top10_equipment']
+      .find((c) => meta.names.has(c)) ?? null;
 
   if (!equipmentCol) return result;
 
-  const clientsMeta = await getTableColumns('clients_requests');
+  const clientsMeta = await getTableColumns('clients_requests', { connection });
 
   const companyMap = new Map<number, string>();
   if (idColumn === 'company_id') {
@@ -344,7 +354,7 @@ async function getEquipmentByInn(inns: string[], companyIds?: Map<string, number
             ? 'cr.created_at DESC NULLS LAST'
             : 'cr.id DESC';
 
-        const { rows } = await db.query<{ inn: string; company_id: number }>(
+        const { rows } = await connection.query<{ inn: string; company_id: number }>(
           `
             SELECT DISTINCT ON (cr.inn) cr.inn, cr.id AS company_id
             FROM clients_requests cr
@@ -374,7 +384,7 @@ async function getEquipmentByInn(inns: string[], companyIds?: Map<string, number
         ? [Array.from(companyMap.keys())]
         : [inns.map((inn) => (inn == null ? null : String(inn)))];
 
-    const { rows } = await db.query<{ inn: string | number; equipment: any }>(
+    const { rows } = await connection.query<{ inn: string | number; equipment: any }>(
       `SELECT ${idColumn} AS inn, ${equipmentCol} AS equipment FROM ${quoteIdent(meta.tableName)} WHERE ${idColumn} = ANY($1::${
         idColumn === 'company_id' ? 'int' : 'text'
       }[])`,
