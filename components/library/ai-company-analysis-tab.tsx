@@ -168,6 +168,11 @@ function formatLogDate(value: string) {
   };
 }
 
+function formatCompanyDisplayName(name?: string | null, companyId?: number | null) {
+  const prefix = companyId != null && Number.isFinite(companyId) ? `[${companyId}] ` : '';
+  return `${prefix}${name ?? 'Компания'}`;
+}
+
 function describeLogEvent(event: AiDebugEventRecord): string {
   if (event.event_type === 'error') return 'Ошибка';
   if (event.event_type === 'notification') return 'Уведомление';
@@ -2395,6 +2400,10 @@ export default function AiCompanyAnalysisTab() {
                         const sites = toSiteArray(company.sites);
                         const emails = toStringArray(company.emails);
                         const revenue = formatRevenue(company.revenue);
+                        const companyLabel = formatCompanyDisplayName(
+                          company.short_name,
+                          company.company_id,
+                        );
                         const employees = formatEmployees(company.employee_count ?? null);
                         const rowTone = active ? 'bg-sky-50' : outcome.rowClass;
                         const isEmailExpanded = expandedEmails.has(company.inn);
@@ -2482,7 +2491,7 @@ export default function AiCompanyAnalysisTab() {
                               <Checkbox
                                 checked={companySelected}
                                 onCheckedChange={(value) => setSelectedValue(company.inn, value)}
-                                aria-label={`Выбрать компанию ${company.short_name}`}
+                                aria-label={`Выбрать компанию ${companyLabel}`}
                               />
                             </td>
                             <td className="px-4 py-4 align-top" style={columnStyle('company')}>
@@ -2495,7 +2504,7 @@ export default function AiCompanyAnalysisTab() {
                                       outcome.textClass ?? 'text-foreground',
                                     )}
                                   >
-                                    {company.short_name}
+                                    {companyLabel}
                                   </div>
                                 </div>
                                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
@@ -2705,7 +2714,7 @@ export default function AiCompanyAnalysisTab() {
                                           className="h-8 w-8"
                                           onClick={() => stopAction(company.inn)}
                                           disabled={stopBusy}
-                                          aria-label={`Остановить компанию ${company.short_name}`}
+                                          aria-label={`Остановить компанию ${companyLabel}`}
                                         >
                                           {stopBusy ? (
                                             <Loader2 className="h-4 w-4 animate-spin" />
@@ -2725,7 +2734,7 @@ export default function AiCompanyAnalysisTab() {
                                         size="icon"
                                         className="h-8 w-8"
                                         onClick={() => setInfoCompany(company)}
-                                        aria-label={`Подробности по компании ${company.short_name}`}
+                                        aria-label={`Подробности по компании ${companyLabel}`}
                                       >
                                         <Info className="h-4 w-4" />
                                       </Button>
@@ -2756,7 +2765,7 @@ export default function AiCompanyAnalysisTab() {
                                             </Button>
                                           </TooltipTrigger>
                                           <TooltipContent side="bottom">
-                                            Запустить только шаг «{opt.label}» для компании {company.short_name}
+                                            Запустить только шаг «{opt.label}» для компании {companyLabel}
                                           </TooltipContent>
                                         </Tooltip>
                                       );
@@ -2944,6 +2953,7 @@ export default function AiCompanyAnalysisTab() {
                     const state = computeCompanyState(item);
                     const outcome = resolveOutcome(item, state);
                     const badge = getStatusBadge(item, outcome);
+                    const itemCompanyLabel = formatCompanyDisplayName(item.short_name, item.company_id);
                     const queuedTime = formatTime(item.queued_at ?? null);
                     const statusLabel = formatStatusLabel(item.analysis_status ?? 'queued');
                     const attempts =
@@ -2962,7 +2972,7 @@ export default function AiCompanyAnalysisTab() {
                       >
                         <div className="space-y-1">
                           <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
-                            <span>{item.short_name ?? 'Компания'}</span>
+                            <span>{itemCompanyLabel}</span>
                             <Badge variant={badge.variant}>{badge.label}</Badge>
                           </div>
                           <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
@@ -3118,7 +3128,8 @@ export default function AiCompanyAnalysisTab() {
           <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
             <DialogHeader>
               <DialogTitle>
-                {infoCompany?.short_name ?? 'Компания'} · ИНН {infoCompany?.inn ?? ''}
+                {formatCompanyDisplayName(infoCompany?.short_name, infoCompany?.company_id ?? null)} · ИНН{' '}
+                {infoCompany?.inn ?? ''}
               </DialogTitle>
             </DialogHeader>
             {infoCompany && (
