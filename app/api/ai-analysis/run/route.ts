@@ -304,17 +304,11 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
     },
     fallbacks: [
       {
-        path: () => '/v1/ib-match',
-        label: 'POST ib-match',
+        path: () => '/v1/ib-match/by-inn',
+        label: 'POST ib-match/by-inn',
         method: 'POST',
         body: true,
       },
-      {
-        path: () => '/v1/ib-match/by-inn',
-        label: 'POST ib-match/by-inn',
-      method: 'POST',
-      body: true,
-    },
     ],
   },
   equipment_selection: {
@@ -370,15 +364,18 @@ async function ensureIntegrationHealthy(context: {
   });
 
   const health = await callAiIntegration(path, { timeoutMs: 3000 });
-  if (!health.ok) {
+  if (!health.ok || (health.data as { ok?: boolean } | null)?.ok === false) {
+    const errorDetail = !health.ok
+      ? health.error
+      : ((health.data as { detail?: string } | null)?.detail ?? 'AI integration health check failed');
     await safeLog({
       type: 'error',
       source: 'ai-integration',
       companyId: context.inn,
-      message: `AI integration недоступна перед шагом ${context.stepLabel ?? 'pipeline'}: ${health.error} (попытка ${context.attempt}/${context.totalAttempts})`,
+      message: `AI integration недоступна перед шагом ${context.stepLabel ?? 'pipeline'}: ${errorDetail} (попытка ${context.attempt}/${context.totalAttempts})`,
       payload: { status: health.status },
     });
-    return { ok: false as const, status: health.status, error: health.error };
+    return { ok: false as const, status: health.status, error: errorDetail };
   }
   await safeLog({
     type: 'response',

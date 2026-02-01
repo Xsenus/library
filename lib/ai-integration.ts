@@ -60,10 +60,17 @@ export async function callAiIntegration<T = any>(
     const status = res.status;
     const data = (await res.json().catch(() => null)) as T | null;
     if (!res.ok) {
+      const detail = (data as any)?.detail ?? (data as any)?.error;
+      const error =
+        typeof detail === 'string'
+          ? detail
+          : detail
+            ? JSON.stringify(detail)
+            : `HTTP ${status}`;
       return {
         ok: false,
         status,
-        error: (data as any)?.detail ?? (data as any)?.error ?? `HTTP ${status}`,
+        error,
       };
     }
     return { ok: true, data: data as T, status };
