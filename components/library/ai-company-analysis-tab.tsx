@@ -651,18 +651,31 @@ type OutcomeMeta = {
 
 function computeCompanyState(company: AiCompany): CompanyState {
   const status = (company.analysis_status ?? '').toLowerCase();
+  const outcome = (company.analysis_outcome ?? '').toLowerCase();
   const progress = company.analysis_progress ?? null;
   const startedTs = toTimestamp(company.analysis_started_at);
   const finishedTs = toTimestamp(company.analysis_finished_at);
   const queuedTs = toTimestamp(company.queued_at);
+  const hasTerminalOutcome =
+    ['failed', 'completed', 'partial', 'stopped', 'cancelled', 'canceled', 'done', 'finished', 'success'].some((s) =>
+      outcome.includes(s),
+    ) ||
+    ['failed', 'error', 'partial', 'complete', 'completed', 'stopped', 'cancelled', 'canceled', 'done', 'finished', 'success'].some((s) =>
+      status.includes(s),
+    ) ||
+    company.analysis_ok === 1 ||
+    !!company.server_error ||
+    !!company.no_valid_site;
+  const hasFinished = finishedTs != null;
+  const isTerminal = hasFinished || hasTerminalOutcome;
 
   const runningByStatus = status
     ? ['running', 'processing', 'in_progress', 'starting'].some((s) => status.includes(s))
     : false;
-  const runningByProgress = progress != null && progress > 0 && progress < 0.999;
+  const runningByProgress = progress != null && progress > 0 && progress < 0.999 && !hasFinished;
   const runningByTimeline =
     startedTs != null && finishedTs == null && Date.now() - startedTs < QUEUE_STALE_MS;
-  const running = runningByStatus || runningByProgress || runningByTimeline;
+  const running = !isTerminal && (runningByStatus || runningByProgress || runningByTimeline);
 
   const queuedByStatus = status
     ? ['queued', 'waiting', 'pending', 'scheduled'].some((s) => status.includes(s))
@@ -673,6 +686,7 @@ function computeCompanyState(company: AiCompany): CompanyState {
   const queueFresh = queuedTs != null ? Date.now() - queuedTs < QUEUE_STALE_MS : false;
 
   const queued =
+    !isTerminal &&
     !running && ((queuedByStatus && queueFresh) || (queueFresh && (queuedByQueue || queuedByTimeline)));
 
   return { running, queued };
