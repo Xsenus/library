@@ -26,6 +26,7 @@ const MAX_STEP_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 2000;
 const MAX_COMPANY_ATTEMPTS = 3;
 const MAX_FAILURE_STREAK = 5;
+const STALE_QUEUE_MS = 2 * 60 * 60 * 1000;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -216,6 +217,47 @@ async function dequeueNext(): Promise<QueueItem | null> {
     `,
   );
   return res.rows?.[0] ?? null;
+}
+
+async function cleanupStaleQueueItems() {
+  await ensureQueueTable();
+  const cutoff = new Date(Date.now() - STALE_QUEUE_MS).toISOString();
+  const res = await dbBitrix.query<QueueItem>(
+    `
+      DELETE FROM ai_analysis_queue
+      WHERE
+        queued_at < $1
+        OR (
+          payload ? 'defer_count'
+          AND COALESCE(NULLIF(payload->>'defer_count', ''), '0')::int >= $2
+        )
+      RETURNING inn, payload, queued_at, queued_by
+    `,
+    [cutoff, MAX_COMPANY_ATTEMPTS],
+  );
+
+  if (!res.rows?.length) return;
+
+  const staleInns: string[] = [];
+  for (const row of res.rows) {
+    const inn = row.inn;
+    staleInns.push(inn);
+    const deferCountRaw = row.payload && typeof row.payload === 'object' ? (row.payload as any).defer_count : null;
+    const deferCount = Number.isFinite(deferCountRaw) ? Number(deferCountRaw) : 0;
+    const attempts = Math.max(1, deferCount + 1);
+    await markFinished(
+      inn,
+      { status: 'failed', durationMs: 0 },
+      { attempts, outcome: 'failed' },
+    );
+  }
+
+  await safeLog({
+    type: 'notification',
+    source: 'ai-integration',
+    message: 'Удалены зависшие элементы из очереди AI-анализа',
+    payload: { inns: staleInns, cutoff },
+  });
 }
 
 async function getCompanyNames(inns: string[]): Promise<Map<string, string>> {
@@ -775,6 +817,7 @@ async function hasQueuedItems(): Promise<boolean> {
 }
 
 async function processQueue(lockClient: PoolClient) {
+  await cleanupStaleQueueItems();
   const integrationResults: Array<{
     inn: string;
     ok: boolean;
