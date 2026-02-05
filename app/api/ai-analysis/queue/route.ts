@@ -83,16 +83,26 @@ function buildOptionalSelect(columns: Set<string>, tableAlias: string): string[]
 
 function normalizeRunningCondition(columns: Set<string>): string {
   const status = columns.has('analysis_status') ? 'd.analysis_status' : "COALESCE(d.status, '')";
+  const outcome = columns.has('analysis_outcome') ? 'd.analysis_outcome' : "''";
   const progress = columns.has('analysis_progress') ? 'COALESCE(d.analysis_progress, 0)' : '0';
   const startedAt = columns.has('analysis_started_at') ? 'd.analysis_started_at' : 'NULL';
   const finishedAt = columns.has('analysis_finished_at') ? 'd.analysis_finished_at' : 'NULL';
+  const analysisOk = columns.has('analysis_ok') ? 'COALESCE(d.analysis_ok, 0)' : '0';
+  const serverError = columns.has('server_error') ? 'COALESCE(d.server_error, 0)' : '0';
+  const noValidSite = columns.has('no_valid_site') ? 'COALESCE(d.no_valid_site, 0)' : '0';
+
+  const terminalCondition = `(${finishedAt} IS NOT NULL OR ${analysisOk} = 1 OR ${serverError} = 1 OR ${noValidSite} = 1 OR LOWER(COALESCE(${status}, '')) SIMILAR TO '%(failed|error|stopped|cancel|done|finish|success|complete|completed|partial)%' OR LOWER(COALESCE(${outcome}, '')) SIMILAR TO '%(failed|partial|completed|stopped|cancel|done|finish|success)%')`;
 
   return `(
-    LOWER(COALESCE(${status}, '')) SIMILAR TO '%(running|processing|in_progress|starting|queued)%'
-    OR (${progress} > 0 AND ${progress} < 0.999)
-    OR (${startedAt} IS NOT NULL AND ${finishedAt} IS NULL AND ${startedAt} > now() - interval '${QUEUE_STALE_INTERVAL}')
+    NOT ${terminalCondition}
+    AND (
+      LOWER(COALESCE(${status}, '')) SIMILAR TO '%(running|processing|in_progress|starting)%'
+      OR (${progress} > 0 AND ${progress} < 0.999)
+      OR (${startedAt} IS NOT NULL AND ${finishedAt} IS NULL AND ${startedAt} > now() - interval '${QUEUE_STALE_INTERVAL}')
+    )
   )`;
 }
+
 
 function normalizeStatuses(raw: unknown): string[] {
   if (!Array.isArray(raw)) return [];
@@ -192,6 +202,13 @@ export async function GET(request: NextRequest) {
     const columns = await getExistingColumns();
     const optionalSelect = buildOptionalSelect(columns, 'd');
     const runningCondition = normalizeRunningCondition(columns);
+    const queueStatus = columns.has('analysis_status') ? 'd.analysis_status' : "''";
+    const queueOutcome = columns.has('analysis_outcome') ? 'd.analysis_outcome' : "''";
+    const queueFinishedAt = columns.has('analysis_finished_at') ? 'd.analysis_finished_at' : 'NULL';
+    const queueAnalysisOk = columns.has('analysis_ok') ? 'COALESCE(d.analysis_ok, 0)' : '0';
+    const queueServerError = columns.has('server_error') ? 'COALESCE(d.server_error, 0)' : '0';
+    const queueNoValidSite = columns.has('no_valid_site') ? 'COALESCE(d.no_valid_site, 0)' : '0';
+    const queueTerminalCondition = `(${queueFinishedAt} IS NOT NULL OR ${queueAnalysisOk} = 1 OR ${queueServerError} = 1 OR ${queueNoValidSite} = 1 OR LOWER(COALESCE(${queueStatus}, '')) SIMILAR TO '%(failed|error|stopped|cancel|done|finish|success|complete|completed|partial)%' OR LOWER(COALESCE(${queueOutcome}, '')) SIMILAR TO '%(failed|partial|completed|stopped|cancel|done|finish|success)%')`;
 
     const { rows } = await dbBitrix.query(
       `
@@ -204,6 +221,9 @@ export async function GET(request: NextRequest) {
             ${optionalSelect.join(',\n            ')}
           FROM ai_analysis_queue q
           LEFT JOIN dadata_result d ON d.inn = q.inn
+          WHERE
+            q.queued_at > now() - interval '${QUEUE_STALE_INTERVAL}'
+            AND NOT ${queueTerminalCondition}
         ),
         running_items AS (
           SELECT
