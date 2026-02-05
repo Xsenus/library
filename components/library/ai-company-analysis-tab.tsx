@@ -10,6 +10,7 @@ import {
   CircleDashed,
   Clock3,
   ClipboardList,
+  ExternalLink,
   FileText,
   Filter,
   Info,
@@ -1239,6 +1240,19 @@ export default function AiCompanyAnalysisTab() {
     },
     [],
   );
+
+  const openCompanyLogs = useCallback((company: AiCompany) => {
+    if (typeof window === 'undefined') return;
+    const params = new URLSearchParams();
+    if (company.inn) params.set('inn', company.inn);
+    if (company.short_name) params.set('name', company.short_name);
+    if (company.company_id != null && Number.isFinite(company.company_id)) {
+      params.set('companyId', String(company.company_id));
+    }
+    const suffix = params.toString();
+    const url = `/library/company-logs${suffix ? `?${suffix}` : ''}`;
+    window.open(url, '_blank', 'noopener,noreferrer');
+  }, []);
 
   const fetchQueue = useCallback(async () => {
     setQueueLoading(true);
@@ -3353,6 +3367,15 @@ export default function AiCompanyAnalysisTab() {
                       type="button"
                       size="sm"
                       variant="outline"
+                      onClick={() => infoCompany && openCompanyLogs(infoCompany)}
+                    >
+                      <ExternalLink className="h-3.5 w-3.5" />
+                      <span className="ml-1">Открыть</span>
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
                       onClick={() => fetchCompanyLogs(infoCompany.inn)}
                       disabled={logsLoading}
                     >
@@ -3541,4 +3564,3 @@ export default function AiCompanyAnalysisTab() {
     </TooltipProvider>
   );
 }
-
