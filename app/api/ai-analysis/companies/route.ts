@@ -1685,9 +1685,12 @@ export async function GET(request: NextRequest) {
         (siteFallback?.domains?.[0] ?? null);
 
       const equipmentCandidates = [
-        ...(equipmentByInn.get(core.inn) ?? []),
+        // В приоритете — данные последнего анализа, сохранённые в dadata_result.
+        // equipment_all используем только как fallback, т.к. там могут оставаться
+        // более старые или нерелевантные записи.
         ...normalizeEquipment(row.analysis_equipment),
         ...(siteFallback?.equipment?.filter((item) => item && (item.name || item.id)) ?? []),
+        ...(equipmentByInn.get(core.inn) ?? []),
       ].filter(Boolean);
       const equipment = dedupeItems(equipmentCandidates);
 
