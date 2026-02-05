@@ -2071,6 +2071,34 @@ export default function AiCompanyAnalysisTab() {
     return items;
   };
 
+  const normalizeTnvedValue = (value: unknown): string => {
+    if (value == null) return '';
+    if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+      return String(value).trim();
+    }
+    if (Array.isArray(value)) {
+      return value
+        .map((entry) => normalizeTnvedValue(entry))
+        .filter(Boolean)
+        .join(', ')
+        .trim();
+    }
+    if (typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      const candidate =
+        record.name ??
+        record.title ??
+        record.product ??
+        record.goods ??
+        record.value ??
+        record.label ??
+        record.text ??
+        '';
+      return normalizeTnvedValue(candidate);
+    }
+    return '';
+  };
+
   const tnvedProducts = (company: AiCompany, analyzer?: AiAnalyzerInfo | null): Array<{ name: string; code?: string }> => {
     const raw = company.analysis_tnved;
     const items: Array<{ name: string; code?: string }> = [];
@@ -2081,14 +2109,16 @@ export default function AiCompanyAnalysisTab() {
         ...arr
           .map((item: any) => {
             if (!item) return null;
-            if (typeof item === 'string') return { name: item };
+            if (typeof item === 'string') return { name: item.trim() };
             if (typeof item === 'object') {
-              const name = String(item?.name ?? item?.title ?? item?.product ?? '').trim();
-              const code = String(item?.tnved ?? item?.code ?? item?.tn_ved ?? '').trim();
+              const name = normalizeTnvedValue(item?.name ?? item?.title ?? item?.product ?? item?.goods ?? item?.value ?? '');
+              const code = normalizeTnvedValue(
+                item?.tnved ?? item?.code ?? item?.tn_ved ?? item?.tnved_code ?? item?.tnvedCode ?? '',
+              );
               if (!name && !code) return null;
               return { name: name || code, code: code || undefined };
             }
-            return { name: String(item) };
+            return { name: normalizeTnvedValue(item) || String(item) };
           })
           .filter((item): item is { name: string; code?: string } => !!item && !!item.name),
       );
@@ -2096,8 +2126,8 @@ export default function AiCompanyAnalysisTab() {
 
     if (!items.length && analyzer?.ai?.products?.length) {
       const analyzerProducts = analyzer.ai.products.reduce<Array<{ name: string; code?: string }>>((acc, item) => {
-        const name = item?.name ? String(item.name).trim() : '';
-        const code = item?.tnved_code ? String(item.tnved_code).trim() : undefined;
+        const name = normalizeTnvedValue(item?.name);
+        const code = normalizeTnvedValue(item?.tnved_code) || undefined;
         if (!name && !code) return acc;
         acc.push({ name: name || code || '—', code });
         return acc;
