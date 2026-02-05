@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { ArrowLeft, FileText, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Download, FileText, Loader2, RefreshCw } from 'lucide-react';
 import type { AiDebugEventRecord } from '@/lib/ai-debug';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -63,6 +63,19 @@ function summarizePayload(payload: any): string[] {
 }
 
 type JsonState = { open: boolean; title: string; payload: any };
+
+function downloadJsonFile(payload: any, fileName: string) {
+  const json = JSON.stringify(payload ?? {}, null, 2);
+  const blob = new Blob([json], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
 
 export default function CompanyLogsPage() {
   const params = useSearchParams();
@@ -151,6 +164,7 @@ export default function CompanyLogsPage() {
               {logs.map((log) => {
                 const dt = formatLogDate(log.created_at);
                 const summary = summarizePayload(log.payload);
+                const fileDate = log.created_at ? log.created_at.replace(/[:.]/g, '-') : 'log';
                 return (
                   <div key={log.id} className="space-y-1 px-3 py-2">
                     <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
@@ -171,22 +185,34 @@ export default function CompanyLogsPage() {
                         )}
                       </div>
                       {log.payload ? (
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          className="h-8 gap-1 text-xs"
-                          onClick={() =>
-                            setJsonState({
-                              open: true,
-                              title: `${describeLogEvent(log)} · ${dt.date} ${dt.time}`,
-                              payload: log.payload,
-                            })
-                          }
-                        >
-                          <FileText className="h-4 w-4" />
-                          JSON
-                        </Button>
+                        <div className="flex items-center gap-1">
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 gap-1 text-xs"
+                            onClick={() =>
+                              setJsonState({
+                                open: true,
+                                title: `${describeLogEvent(log)} · ${dt.date} ${dt.time}`,
+                                payload: log.payload,
+                              })
+                            }
+                          >
+                            <FileText className="h-4 w-4" />
+                            JSON
+                          </Button>
+                          <Button
+                            type="button"
+                            variant="ghost"
+                            size="sm"
+                            className="h-8 gap-1 text-xs"
+                            onClick={() => downloadJsonFile(log.payload, `company-log-${log.id}-${fileDate}.json`)}
+                          >
+                            <Download className="h-4 w-4" />
+                            Скачать
+                          </Button>
+                        </div>
                       ) : null}
                     </div>
                   </div>
@@ -206,6 +232,18 @@ export default function CompanyLogsPage() {
           <DialogHeader>
             <DialogTitle>{jsonState.title || 'Детали лога'}</DialogTitle>
           </DialogHeader>
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              disabled={!jsonState.payload}
+              onClick={() => downloadJsonFile(jsonState.payload, `company-log-${Date.now()}.json`)}
+            >
+              <Download className="mr-1 h-4 w-4" />
+              Скачать JSON
+            </Button>
+          </div>
           <pre className="max-h-[70vh] overflow-auto rounded-md bg-muted/50 p-3 text-xs">
             {jsonState.payload ? JSON.stringify(jsonState.payload, null, 2) : 'Нет данных'}
           </pre>
