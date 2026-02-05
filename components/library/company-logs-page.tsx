@@ -190,7 +190,9 @@ export default function CompanyLogsPage() {
                             type="button"
                             variant="ghost"
                             size="sm"
-                            className="h-8 gap-1 text-xs"
+                            className="h-8 w-8 p-0"
+                            aria-label="Открыть JSON"
+                            title="Открыть JSON"
                             onClick={() =>
                               setJsonState({
                                 open: true,
@@ -200,17 +202,17 @@ export default function CompanyLogsPage() {
                             }
                           >
                             <FileText className="h-4 w-4" />
-                            JSON
                           </Button>
                           <Button
                             type="button"
                             variant="ghost"
                             size="sm"
-                            className="h-8 gap-1 text-xs"
+                            className="h-8 w-8 p-0"
+                            aria-label="Скачать JSON"
+                            title="Скачать JSON"
                             onClick={() => downloadJsonFile(log.payload, `company-log-${log.id}-${fileDate}.json`)}
                           >
                             <Download className="h-4 w-4" />
-                            Скачать
                           </Button>
                         </div>
                       ) : null}
