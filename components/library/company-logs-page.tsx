@@ -91,6 +91,26 @@ export default function CompanyLogsPage() {
 
   const displayName = useMemo(() => formatCompanyDisplayName(name, companyId), [name, companyId]);
 
+  const downloadAllLogs = useCallback(() => {
+    if (!logs.length) return;
+    const now = new Date();
+    const datePart = now.toISOString().replace(/[:.]/g, '-');
+    downloadJsonFile(
+      {
+        exportedAt: now.toISOString(),
+        company: {
+          name: name || null,
+          displayName,
+          inn: inn || null,
+          companyId,
+        },
+        total: logs.length,
+        items: logs,
+      },
+      `company-logs-${inn || 'unknown'}-${datePart}.json`
+    );
+  }, [companyId, displayName, inn, logs, name]);
+
   const fetchLogs = useCallback(async () => {
     if (!inn) return;
     setLoading(true);
@@ -132,6 +152,16 @@ export default function CompanyLogsPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={downloadAllLogs}
+            disabled={!logs.length}
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span className="ml-1">Скачать все логи</span>
+          </Button>
           <Button type="button" variant="outline" size="sm" onClick={fetchLogs} disabled={!inn || loading}>
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
             <span className="ml-1">Обновить</span>
