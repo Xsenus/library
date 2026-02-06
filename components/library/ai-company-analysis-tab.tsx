@@ -222,6 +222,38 @@ function formatDuration(ms: number | null | undefined): string {
   return parts.join(':');
 }
 
+function getActiveElapsedMs(company: AiCompany, nowMs: number): number | null {
+  const startedTs = toTimestamp(company.analysis_started_at);
+  const queuedTs = toTimestamp(company.queued_at);
+  const baseTs = startedTs ?? queuedTs;
+  if (baseTs == null) return null;
+  return Math.max(0, nowMs - baseTs);
+}
+
+
+type DurationSyncPoint = {
+  baseDurationMs: number;
+  syncedAtMs: number;
+};
+
+function getSyncedDurationMs(
+  company: AiCompany,
+  isActive: boolean,
+  nowMs: number,
+  syncPoint?: DurationSyncPoint,
+): number | null {
+  if (!isActive) return company.analysis_duration_ms ?? null;
+
+  const elapsedByTimeline = getActiveElapsedMs(company, nowMs);
+  const elapsedBySync = syncPoint ? syncPoint.baseDurationMs + Math.max(0, nowMs - syncPoint.syncedAtMs) : null;
+
+  if (elapsedBySync != null && elapsedByTimeline != null) {
+    return Math.max(elapsedBySync, elapsedByTimeline);
+  }
+
+  return elapsedBySync ?? elapsedByTimeline ?? company.analysis_duration_ms ?? null;
+}
+
 function truncateText(value: string | null | undefined, max = 120): string {
   if (!value) return '';
   const text = value.trim();
@@ -1052,6 +1084,18 @@ export default function AiCompanyAnalysisTab() {
     [activeTotal, companies],
   );
 
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  const [durationSyncByInn, setDurationSyncByInn] = useState<Record<string, DurationSyncPoint>>({});
+  const [lastFetchErrorAt, setLastFetchErrorAt] = useState<number | null>(null);
+  const fetchErrorNotifiedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isAnyActive) return undefined;
+    setNowMs(Date.now());
+    const timer = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(timer);
+  }, [isAnyActive]);
+
   const integrationHost = useMemo(() => {
     if (!integrationHealth?.base) return null;
     try {
@@ -1186,17 +1230,48 @@ export default function AiCompanyAnalysisTab() {
             const state = computeCompanyState(item);
             return state.running || state.queued;
           });
+        const syncNowMs = Date.now();
 
         startTransition(() => {
           setActiveSummary(
             activeFromApi ? { ...activeFromApi, total: activeTotalFromApi } : null,
           );
           setCompanies(items);
+          setDurationSyncByInn((prev) => {
+            const next: Record<string, DurationSyncPoint> = {};
+            for (const item of items) {
+              const state = computeCompanyState(item);
+              if (!state.running && !state.queued) continue;
+
+              const durationRaw = Number(item.analysis_duration_ms);
+              const apiDurationMs =
+                Number.isFinite(durationRaw) && durationRaw >= 0 ? Math.floor(durationRaw) : null;
+
+              if (apiDurationMs != null) {
+                next[item.inn] = { baseDurationMs: apiDurationMs, syncedAtMs: syncNowMs };
+                continue;
+              }
+
+              const prevSync = prev[item.inn];
+              if (prevSync) {
+                next[item.inn] = prevSync;
+                continue;
+              }
+
+              const timelineElapsed = getActiveElapsedMs(item, syncNowMs);
+              if (timelineElapsed != null) {
+                next[item.inn] = { baseDurationMs: timelineElapsed, syncedAtMs: syncNowMs };
+              }
+            }
+            return next;
+          });
           setTotal(typeof data.total === 'number' ? data.total : 0);
           setAvailable(data.available ?? {});
           setIntegrationHealth(data.integration ?? null);
-          setLastLoadedAt(new Date().toISOString());
+          setLastLoadedAt(new Date(syncNowMs).toISOString());
         });
+        setLastFetchErrorAt(null);
+        fetchErrorNotifiedRef.current = false;
 
         if (!hasActive) {
           autoRefreshDeadlineRef.current = 0;
@@ -1205,22 +1280,16 @@ export default function AiCompanyAnalysisTab() {
         }
       } catch (error) {
         console.error('Failed to load AI analysis companies:', error);
-        toast({
-          title: 'Не удалось загрузить компании',
-          description: 'Попробуйте обновить страницу или повторите попытку позже.',
-          variant: 'destructive',
-        });
-        startTransition(() => {
-          setActiveSummary(null);
-          setCompanies([]);
-          setTotal(0);
-          setAvailable({});
-          setIntegrationHealth(null);
-          setLastLoadedAt(null);
-        });
-        autoRefreshDeadlineRef.current = 0;
-        setAutoRefresh(false);
-        setAutoRefreshRemaining(null);
+        setLastFetchErrorAt(Date.now());
+        if (!fetchErrorNotifiedRef.current) {
+          toast({
+            title: 'API временно недоступен',
+            description:
+              'Показываем последние полученные данные. При восстановлении API таблица синхронизируется автоматически.',
+            variant: 'destructive',
+          });
+          fetchErrorNotifiedRef.current = true;
+        }
       } finally {
         setLoading(false);
       }
@@ -1231,6 +1300,17 @@ export default function AiCompanyAnalysisTab() {
   useEffect(() => {
     fetchCompanies(page, pageSize);
   }, [fetchCompanies, page, pageSize]);
+
+  useEffect(() => {
+    if (lastFetchErrorAt == null) return undefined;
+    if (loading) return undefined;
+
+    const retryTimer = setTimeout(() => {
+      fetchCompanies(page, pageSize);
+    }, 10000);
+
+    return () => clearTimeout(retryTimer);
+  }, [lastFetchErrorAt, loading, fetchCompanies, page, pageSize]);
 
   const fetchCompanyLogs = useCallback(
     async (inn?: string | null) => {
@@ -1452,7 +1532,8 @@ export default function AiCompanyAnalysisTab() {
 
   const markQueued = useCallback((inns: string[]) => {
     if (!inns.length) return;
-    const timestamp = new Date().toISOString();
+    const now = Date.now();
+    const timestamp = new Date(now).toISOString();
     const innSet = new Set(inns);
     setCompanies((prev) =>
       prev.map((company) => {
@@ -1463,7 +1544,7 @@ export default function AiCompanyAnalysisTab() {
           analysis_progress: 0,
           analysis_started_at: null,
           analysis_finished_at: null,
-          analysis_duration_ms: null,
+          analysis_duration_ms: 0,
           analysis_ok: null,
           server_error: null,
           no_valid_site: null,
@@ -1471,11 +1552,19 @@ export default function AiCompanyAnalysisTab() {
         };
       }),
     );
+    setDurationSyncByInn((prev) => {
+      const next = { ...prev };
+      inns.forEach((inn) => {
+        next[inn] = { baseDurationMs: 0, syncedAtMs: now };
+      });
+      return next;
+    });
   }, []);
 
   const markRunning = useCallback((inns: string[]) => {
     if (!inns.length) return;
-    const timestamp = new Date().toISOString();
+    const now = Date.now();
+    const timestamp = new Date(now).toISOString();
     const innSet = new Set(inns);
     setCompanies((prev) =>
       prev.map((company) => {
@@ -1486,7 +1575,7 @@ export default function AiCompanyAnalysisTab() {
           analysis_progress: company.analysis_progress ?? 0,
           analysis_started_at: timestamp,
           analysis_finished_at: null,
-          analysis_duration_ms: null,
+          analysis_duration_ms: 0,
           analysis_ok: null,
           server_error: null,
           no_valid_site: null,
@@ -1494,6 +1583,13 @@ export default function AiCompanyAnalysisTab() {
         };
       }),
     );
+    setDurationSyncByInn((prev) => {
+      const next = { ...prev };
+      inns.forEach((inn) => {
+        next[inn] = { baseDurationMs: 0, syncedAtMs: now };
+      });
+      return next;
+    });
   }, []);
 
   const markStopped = useCallback((inns: string[]) => {
@@ -1514,6 +1610,13 @@ export default function AiCompanyAnalysisTab() {
         };
       }),
     );
+    setDurationSyncByInn((prev) => {
+      const next = { ...prev };
+      inns.forEach((inn) => {
+        delete next[inn];
+      });
+      return next;
+    });
   }, []);
 
   useEffect(() => {
@@ -2599,9 +2702,9 @@ export default function AiCompanyAnalysisTab() {
                               ? `${finishedDate} · ${finishedTime}`
                               : finishedDate
                             : null;
-                        const duration = state.running
-                          ? '—'
-                          : formatDuration(company.analysis_duration_ms ?? null);
+                        const duration = formatDuration(
+                          getSyncedDurationMs(company, active, nowMs, durationSyncByInn[company.inn]),
+                        );
                         const attempts = company.analysis_attempts != null ? company.analysis_attempts : '—';
                         const score =
                           company.analysis_score != null && Number.isFinite(company.analysis_score)
@@ -3342,9 +3445,14 @@ export default function AiCompanyAnalysisTab() {
                         ? `${queuedDate} · ${queuedTime}`
                         : queuedDate
                       : '—';
-                  const duration = state.running
-                    ? '—'
-                    : formatDuration(infoCompany.analysis_duration_ms ?? null);
+                  const duration = formatDuration(
+                    getSyncedDurationMs(
+                      infoCompany,
+                      state.running || state.queued,
+                      nowMs,
+                      durationSyncByInn[infoCompany.inn],
+                    ),
+                  );
                   const attempts =
                     infoCompany.analysis_attempts != null ? infoCompany.analysis_attempts : undefined;
                   const score =
