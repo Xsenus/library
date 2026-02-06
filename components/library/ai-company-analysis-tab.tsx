@@ -777,6 +777,13 @@ function getStatusBadge(company: AiCompany, outcome: OutcomeMeta): {
   return { label: outcome.label, variant: outcome.badgeVariant };
 }
 
+function isOkvedFallbackUsed(company: AiCompany, sites: string[]): boolean {
+  if (sites.length > 0) return false;
+  if (company.no_valid_site) return true;
+  if (company.main_okved && company.main_okved.trim().length > 0) return true;
+  return false;
+}
+
 function formatStatusLabel(status?: string | null): string {
   if (!status) return '—';
   const normalized = status.toLowerCase();
@@ -2567,6 +2574,7 @@ export default function AiCompanyAnalysisTab() {
                         const statusBadge = getStatusBadge(company, outcome);
                         const companySelected = selected.has(company.inn);
                         const sites = toSiteArray(company.sites);
+                        const okvedFallbackUsed = isOkvedFallbackUsed(company, sites);
                         const emails = toStringArray(company.emails);
                         const revenue = formatRevenue(company.revenue);
                         const companyLabel = formatCompanyDisplayName(
@@ -2723,7 +2731,12 @@ export default function AiCompanyAnalysisTab() {
                                       )}
                                     </div>
                                   ) : (
-                                    <span className="text-muted-foreground">—</span>
+                                    <div className="mt-1 space-y-1">
+                                      <span className="text-muted-foreground">—</span>
+                                      {okvedFallbackUsed && (
+                                        <div className="text-[11px] text-amber-700">Нет сайта · подбор по ОКВЭД</div>
+                                      )}
+                                    </div>
                                   )}
                                 </div>
                                 <div>
@@ -2789,6 +2802,11 @@ export default function AiCompanyAnalysisTab() {
                                 {finishedAt && (
                                   <div className="text-[11px] text-muted-foreground">
                                     Завершено: <span className="text-foreground">{finishedAt}</span>
+                                  </div>
+                                )}
+                                {okvedFallbackUsed && (
+                                  <div className="text-[11px] text-amber-700">
+                                    Сайт не найден — выполнена попытка подбора по ОКВЭД
                                   </div>
                                 )}
                               </div>
@@ -3347,6 +3365,8 @@ export default function AiCompanyAnalysisTab() {
                     : formatDuration(infoCompany.analysis_duration_ms ?? null);
                   const attempts =
                     infoCompany.analysis_attempts != null ? infoCompany.analysis_attempts : undefined;
+                  const infoSites = toSiteArray(infoCompany.sites);
+                  const okvedFallbackUsed = isOkvedFallbackUsed(infoCompany, infoSites);
                   const score =
                     infoCompany.analysis_score != null && Number.isFinite(infoCompany.analysis_score)
                       ? infoCompany.analysis_score.toFixed(2)
@@ -3356,6 +3376,11 @@ export default function AiCompanyAnalysisTab() {
                     <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant={status.variant}>{status.label}</Badge>
+                        {okvedFallbackUsed && (
+                          <Badge variant="outline" className="border-amber-300 text-amber-700">
+                            Подбор по ОКВЭД
+                          </Badge>
+                        )}
                         <span className="text-xs text-muted-foreground">
                           {state.running
                             ? 'Анализ выполняется прямо сейчас'
