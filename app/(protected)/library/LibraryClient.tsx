@@ -921,13 +921,13 @@ export default function LibraryPage() {
               router.replace(`/library?${qp.toString()}`);
             }}
             className="w-full">
-            <div className="-mx-4 overflow-x-auto px-4 pb-1 md:mx-0 md:px-0 md:pb-0">
-              <div className="grid min-w-max grid-flow-col auto-cols-[minmax(148px,1fr)] gap-1 rounded-lg bg-muted p-1 md:min-w-0 md:grid-flow-row md:grid-cols-6">
+            <div className="pb-1 md:pb-0">
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1 sm:grid-cols-3 md:grid-cols-6">
               <TabsList className="contents">
                 <TabsTrigger
                   value="library"
                   className="
-                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
+                    h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
@@ -941,7 +941,7 @@ export default function LibraryPage() {
                   disabled={!isWorker}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
-                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
+                    h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
@@ -956,7 +956,7 @@ export default function LibraryPage() {
                   disabled={!isWorker}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
-                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
+                    h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
@@ -971,7 +971,7 @@ export default function LibraryPage() {
                   disabled={!isWorker}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
-                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
+                    h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
@@ -987,7 +987,7 @@ export default function LibraryPage() {
                   disabled={!isWorker}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
-                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
+                    h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
@@ -1001,7 +1001,7 @@ export default function LibraryPage() {
                 <TabsTrigger
                   value="aisearch"
                   className="
-                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
+                    h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
