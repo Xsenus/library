@@ -872,8 +872,8 @@ export default function LibraryPage() {
       {/* ===== HEADER ===== */}
       <div className="border-b bg-background">
         <div className="container mx-auto px-4">
-          <div className="flex flex-wrap items-center justify-between gap-2 py-3 sm:py-4">
-            <div className="flex min-w-[240px] items-center gap-3">
+          <div className="flex flex-col gap-3 py-3 sm:py-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
               <h1 className="text-xl sm:text-2xl lg:text-3xl font-semibold leading-tight">
                 Отраслевой навигатор криобластинга от ИРБИСТЕХ
               </h1>
@@ -887,7 +887,7 @@ export default function LibraryPage() {
               )}
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-3">
+            <div className="flex items-center gap-2 sm:gap-3 lg:self-start">
               <Image
                 src="/logo.png"
                 alt="ИрбисТех"
@@ -921,12 +921,13 @@ export default function LibraryPage() {
               router.replace(`/library?${qp.toString()}`);
             }}
             className="w-full">
-            <div className="grid w-full grid-cols-6 gap-1 rounded-lg bg-muted p-1">
+            <div className="-mx-4 overflow-x-auto px-4 pb-1 md:mx-0 md:px-0 md:pb-0">
+              <div className="grid min-w-max grid-flow-col auto-cols-[minmax(148px,1fr)] gap-1 rounded-lg bg-muted p-1 md:min-w-0 md:grid-flow-row md:grid-cols-6">
               <TabsList className="contents">
                 <TabsTrigger
                   value="library"
                   className="
-                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
@@ -940,7 +941,7 @@ export default function LibraryPage() {
                   disabled={!isWorker}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
-                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
@@ -955,7 +956,7 @@ export default function LibraryPage() {
                   disabled={!isWorker}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
-                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
@@ -970,7 +971,7 @@ export default function LibraryPage() {
                   disabled={!isWorker}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
-                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
@@ -986,7 +987,7 @@ export default function LibraryPage() {
                   disabled={!isWorker}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
-                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
@@ -1000,7 +1001,7 @@ export default function LibraryPage() {
                 <TabsTrigger
                   value="aisearch"
                   className="
-                    h-10 w-full justify-center rounded-md px-4 text-sm
+                    h-10 w-full justify-center whitespace-nowrap rounded-md px-4 text-sm
                     border border-transparent
                     data-[state=active]:bg-background data-[state=active]:border-border
                     data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
@@ -1009,6 +1010,7 @@ export default function LibraryPage() {
                   AI-поиск
                 </TabsTrigger>
               </TabsList>
+            </div>
             </div>
 
             {/* ===== LIBRARY TAB ===== */}
