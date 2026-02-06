@@ -675,6 +675,7 @@ type OutcomeMeta = {
   key: OutcomeKey;
   label: string;
   rowClass: string;
+  rowHoverBorderClass: string;
   textClass?: string;
   icon: typeof CheckCircle2;
   iconClass: string;
@@ -726,19 +727,28 @@ function computeCompanyState(company: AiCompany): CompanyState {
 
 function resolveOutcome(company: AiCompany, state: CompanyState): OutcomeMeta {
   const rawOutcome = (company.analysis_outcome ?? '').toLowerCase();
+  const status = (company.analysis_status ?? '').toLowerCase();
+  const hasOutcomeToken = (tokens: string[]) => tokens.some((token) => rawOutcome.includes(token));
+  const hasStatusToken = (tokens: string[]) => tokens.some((token) => status.includes(token));
   let key: OutcomeKey = 'not_started';
 
   if (state.running || state.queued) {
     key = 'pending';
-  } else if (rawOutcome === 'completed') {
+  } else if (hasOutcomeToken(['completed', 'success', 'ok', 'успеш', 'прошел'])) {
     key = 'completed';
-  } else if (rawOutcome === 'partial') {
+  } else if (hasOutcomeToken(['partial', 'частич'])) {
     key = 'partial';
-  } else if (rawOutcome === 'failed') {
+  } else if (hasOutcomeToken(['failed', 'error', 'не уда', 'ошиб'])) {
     key = 'failed';
   } else if (company.analysis_ok === 1) {
     key = 'completed';
   } else if (company.server_error || company.no_valid_site) {
+    key = 'failed';
+  } else if (hasStatusToken(['done', 'finish', 'complete', 'success', 'успеш'])) {
+    key = 'completed';
+  } else if (hasStatusToken(['partial', 'частич'])) {
+    key = 'partial';
+  } else if (hasStatusToken(['fail', 'error', 'не уда', 'ошиб'])) {
     key = 'failed';
   } else if (company.analysis_finished_at) {
     key = 'partial';
@@ -749,6 +759,7 @@ function resolveOutcome(company: AiCompany, state: CompanyState): OutcomeMeta {
       key: 'completed',
       label: 'Проанализирован',
       rowClass: 'bg-emerald-50',
+      rowHoverBorderClass: 'hover:outline-emerald-500/70',
       textClass: 'text-emerald-900',
       icon: CheckCircle2,
       iconClass: 'text-emerald-600',
@@ -758,6 +769,7 @@ function resolveOutcome(company: AiCompany, state: CompanyState): OutcomeMeta {
       key: 'partial',
       label: 'Выполнен частично',
       rowClass: 'bg-amber-50',
+      rowHoverBorderClass: 'hover:outline-amber-500/70',
       textClass: 'text-amber-900',
       icon: AlertTriangle,
       iconClass: 'text-amber-600',
@@ -767,6 +779,7 @@ function resolveOutcome(company: AiCompany, state: CompanyState): OutcomeMeta {
       key: 'failed',
       label: 'Не выполнен',
       rowClass: 'bg-rose-50',
+      rowHoverBorderClass: 'hover:outline-rose-500/70',
       textClass: 'text-rose-900',
       icon: XCircle,
       iconClass: 'text-rose-600',
@@ -776,6 +789,7 @@ function resolveOutcome(company: AiCompany, state: CompanyState): OutcomeMeta {
       key: 'not_started',
       label: 'Не запускался',
       rowClass: 'bg-white',
+      rowHoverBorderClass: 'hover:outline-slate-300',
       textClass: 'text-muted-foreground',
       icon: CircleDashed,
       iconClass: 'text-muted-foreground',
@@ -785,6 +799,7 @@ function resolveOutcome(company: AiCompany, state: CompanyState): OutcomeMeta {
       key: 'pending',
       label: 'Ожидает запуска',
       rowClass: 'bg-sky-50',
+      rowHoverBorderClass: 'hover:outline-sky-500/70',
       textClass: 'text-sky-900',
       icon: Clock3,
       iconClass: 'text-sky-600',
@@ -2723,6 +2738,10 @@ export default function AiCompanyAnalysisTab() {
                           100,
                           Math.max(0, Math.round((company.analysis_progress ?? 0) * 100)),
                         );
+                        const liveProgress = state.running || state.queued;
+                        const liveStageLabel = state.queued
+                          ? 'В очереди…'
+                          : currentStage || 'Выполняется…';
                         const runDisabled =
                           runInn === company.inn ||
                           bulkLoading ||
@@ -2762,9 +2781,10 @@ export default function AiCompanyAnalysisTab() {
                           <tr
                             key={company.inn}
                             className={cn(
-                              'border-b border-border/60 align-top transition-colors hover:bg-muted/20',
+                              'border-b border-border/60 align-top outline outline-0 -outline-offset-1 transition-[outline-color,box-shadow]',
                               companySelected && 'ring-1 ring-primary/40',
                               rowTone,
+                              outcome.rowHoverBorderClass,
                             )}
                           >
                             <td className="px-4 py-4 align-top">
@@ -2877,7 +2897,7 @@ export default function AiCompanyAnalysisTab() {
                               <div className="space-y-3">
                                 <div className="flex flex-wrap items-center gap-2">
                                   <Badge variant={statusBadge.variant}>{statusBadge.label}</Badge>
-                                  {state.running && (
+                                  {liveProgress && (
                                     <span className="text-[11px] text-muted-foreground">{progressPercent}%</span>
                                   )}
                                   {state.queued && queuedTime && (
@@ -2915,11 +2935,11 @@ export default function AiCompanyAnalysisTab() {
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top text-xs" style={columnStyle('pipeline')}>
-                              {state.running ? (
+                              {liveProgress ? (
                                 <div className="space-y-2">
                                   <Progress value={progressPercent} className="h-2" />
                                   <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                                    <span>{currentStage || 'Выполняется…'}</span>
+                                    <span>{liveStageLabel}</span>
                                     <span>{progressPercent}%</span>
                                   </div>
                                 </div>
