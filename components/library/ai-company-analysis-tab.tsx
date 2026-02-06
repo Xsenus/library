@@ -743,7 +743,7 @@ function resolveOutcome(company: AiCompany, state: CompanyState): OutcomeMeta {
     not_started: {
       key: 'not_started',
       label: 'Не запускался',
-      rowClass: 'bg-rose-50',
+      rowClass: 'bg-white',
       textClass: 'text-muted-foreground',
       icon: CircleDashed,
       iconClass: 'text-muted-foreground',
@@ -1473,6 +1473,29 @@ export default function AiCompanyAnalysisTab() {
     );
   }, []);
 
+  const markRunning = useCallback((inns: string[]) => {
+    if (!inns.length) return;
+    const timestamp = new Date().toISOString();
+    const innSet = new Set(inns);
+    setCompanies((prev) =>
+      prev.map((company) => {
+        if (!innSet.has(company.inn)) return company;
+        return {
+          ...company,
+          analysis_status: 'running',
+          analysis_progress: company.analysis_progress ?? 0,
+          analysis_started_at: timestamp,
+          analysis_finished_at: null,
+          analysis_duration_ms: null,
+          analysis_ok: null,
+          server_error: null,
+          no_valid_site: null,
+          queued_at: timestamp,
+        };
+      }),
+    );
+  }, []);
+
   const markStopped = useCallback((inns: string[]) => {
     if (!inns.length) return;
     const timestamp = new Date().toISOString();
@@ -1724,6 +1747,7 @@ export default function AiCompanyAnalysisTab() {
         return;
       }
       setRunInn(inn);
+      markRunning([inn]);
       try {
         const res = await fetch('/api/ai-analysis/run', {
           method: 'POST',
@@ -1748,6 +1772,7 @@ export default function AiCompanyAnalysisTab() {
         scheduleAutoRefresh();
       } catch (error) {
         console.error('Failed to run analysis', error);
+        fetchCompanies(page, pageSize);
         toast({
           title: 'Ошибка запуска',
           description:
@@ -1766,6 +1791,7 @@ export default function AiCompanyAnalysisTab() {
       page,
       pageSize,
       scheduleAutoRefresh,
+      markRunning,
       integrationSummaryText,
       launchMode,
       selectedSteps,
