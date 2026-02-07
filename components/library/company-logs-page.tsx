@@ -81,6 +81,12 @@ function isNumericVector(value: any): boolean {
   return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === 'number' && Number.isFinite(item));
 }
 
+function hasNumericValuesVector(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const maybeValues = (value as { values?: unknown }).values;
+  return isNumericVector(maybeValues);
+}
+
 function stripVectorFields(payload: any): any {
   if (Array.isArray(payload)) return payload.map(stripVectorFields);
   if (!payload || typeof payload !== 'object') return payload;
@@ -88,7 +94,7 @@ function stripVectorFields(payload: any): any {
   return Object.entries(payload).reduce<Record<string, any>>((acc, [key, value]) => {
     const normalizedKey = key.toLowerCase();
     const isVectorKey = normalizedKey.includes('vector');
-    const isEmbeddingVector = normalizedKey.includes('embedding') && (isNumericVector(value) || isNumericVector(value?.values));
+    const isEmbeddingVector = normalizedKey.includes('embedding') && (isNumericVector(value) || hasNumericValuesVector(value));
 
     if (isVectorKey || isEmbeddingVector) {
       return acc;
