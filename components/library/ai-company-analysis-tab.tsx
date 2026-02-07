@@ -33,6 +33,7 @@ import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Separator } from '@/components/ui/separator';
+import SquareImgButton from '@/components/library/square-img-button';
 import { cn } from '@/lib/utils';
 import type { Industry } from '@/lib/validators';
 import type { AiIntegrationHealth } from '@/lib/ai-integration';
@@ -2806,6 +2807,19 @@ export default function AiCompanyAnalysisTab() {
                                   >
                                     {companyLabel}
                                   </div>
+                                  <SquareImgButton
+                                    icon="bitrix"
+                                    title="Открыть компанию в Bitrix24 по ИНН"
+                                    onClick={() =>
+                                      window.open(
+                                        `/api/b24/resolve-company?inn=${encodeURIComponent(company.inn)}&mode=pick`,
+                                        '_blank',
+                                        'noopener',
+                                      )
+                                    }
+                                    className="mt-[1px] shrink-0"
+                                    sizeClassName="h-7 w-7"
+                                  />
                                 </div>
                                 <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-muted-foreground">
                                   <span>ИНН {company.inn}</span>
