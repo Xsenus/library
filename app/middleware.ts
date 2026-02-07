@@ -22,6 +22,14 @@ function isPublic(pathname: string) {
 export function middleware(req: NextRequest) {
   const { pathname } = req.nextUrl;
 
+  const nextActionId = req.headers.get('next-action');
+  if (nextActionId) {
+    const looksValidServerActionId = /^[A-Za-z0-9_-]{12,}$/.test(nextActionId);
+    if (!looksValidServerActionId) {
+      return NextResponse.json({ error: 'Invalid Server Action id' }, { status: 400 });
+    }
+  }
+
   // пропускаем публичные пути
   if (isPublic(pathname)) return NextResponse.next();
 
