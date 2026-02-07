@@ -77,6 +77,28 @@ function downloadJsonFile(payload: any, fileName: string) {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
+function isNumericVector(value: any): boolean {
+  return Array.isArray(value) && value.length > 0 && value.every((item) => typeof item === 'number' && Number.isFinite(item));
+}
+
+function stripVectorFields(payload: any): any {
+  if (Array.isArray(payload)) return payload.map(stripVectorFields);
+  if (!payload || typeof payload !== 'object') return payload;
+
+  return Object.entries(payload).reduce<Record<string, any>>((acc, [key, value]) => {
+    const normalizedKey = key.toLowerCase();
+    const isVectorKey = normalizedKey.includes('vector');
+    const isEmbeddingVector = normalizedKey.includes('embedding') && (isNumericVector(value) || isNumericVector(value?.values));
+
+    if (isVectorKey || isEmbeddingVector) {
+      return acc;
+    }
+
+    acc[key] = stripVectorFields(value);
+    return acc;
+  }, {});
+}
+
 export default function CompanyLogsPage() {
   const params = useSearchParams();
   const inn = params.get('inn') ?? '';
@@ -91,25 +113,44 @@ export default function CompanyLogsPage() {
 
   const displayName = useMemo(() => formatCompanyDisplayName(name, companyId), [name, companyId]);
 
+  const createExportPayload = useCallback(
+    (items: AiDebugEventRecord[]) => {
+      const now = new Date();
+      return {
+        now,
+        payload: {
+          exportedAt: now.toISOString(),
+          company: {
+            name: name || null,
+            displayName,
+            inn: inn || null,
+            companyId,
+          },
+          total: items.length,
+          items,
+        },
+      };
+    },
+    [companyId, displayName, inn, name]
+  );
+
   const downloadAllLogs = useCallback(() => {
     if (!logs.length) return;
-    const now = new Date();
+    const { now, payload } = createExportPayload(logs);
     const datePart = now.toISOString().replace(/[:.]/g, '-');
-    downloadJsonFile(
-      {
-        exportedAt: now.toISOString(),
-        company: {
-          name: name || null,
-          displayName,
-          inn: inn || null,
-          companyId,
-        },
-        total: logs.length,
-        items: logs,
-      },
-      `company-logs-${inn || 'unknown'}-${datePart}.json`
-    );
-  }, [companyId, displayName, inn, logs, name]);
+    downloadJsonFile(payload, `company-logs-${inn || 'unknown'}-${datePart}.json`);
+  }, [createExportPayload, inn, logs]);
+
+  const downloadAllLogsWithoutVectors = useCallback(() => {
+    if (!logs.length) return;
+    const sanitizedLogs = logs.map((log) => ({
+      ...log,
+      payload: stripVectorFields(log.payload),
+    }));
+    const { now, payload } = createExportPayload(sanitizedLogs);
+    const datePart = now.toISOString().replace(/[:.]/g, '-');
+    downloadJsonFile(payload, `company-logs-${inn || 'unknown'}-${datePart}-without-vectors.json`);
+  }, [createExportPayload, inn, logs]);
 
   const fetchLogs = useCallback(async () => {
     if (!inn) return;
@@ -161,6 +202,16 @@ export default function CompanyLogsPage() {
           >
             <Download className="h-3.5 w-3.5" />
             <span className="ml-1">Скачать все логи</span>
+          </Button>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={downloadAllLogsWithoutVectors}
+            disabled={!logs.length}
+          >
+            <Download className="h-3.5 w-3.5" />
+            <span className="ml-1">Скачать все логи без векторов</span>
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={fetchLogs} disabled={!inn || loading}>
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
