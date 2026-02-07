@@ -224,10 +224,8 @@ function formatDuration(ms: number | null | undefined): string {
 
 function getActiveElapsedMs(company: AiCompany, nowMs: number): number | null {
   const startedTs = toTimestamp(company.analysis_started_at);
-  const queuedTs = toTimestamp(company.queued_at);
-  const baseTs = startedTs ?? queuedTs;
-  if (baseTs == null) return null;
-  return Math.max(0, nowMs - baseTs);
+  if (startedTs == null) return null;
+  return Math.max(0, nowMs - startedTs);
 }
 
 
@@ -238,11 +236,11 @@ type DurationSyncPoint = {
 
 function getSyncedDurationMs(
   company: AiCompany,
-  isActive: boolean,
+  isRunning: boolean,
   nowMs: number,
   syncPoint?: DurationSyncPoint,
 ): number | null {
-  if (!isActive) return company.analysis_duration_ms ?? null;
+  if (!isRunning) return company.analysis_duration_ms ?? null;
 
   const elapsedByTimeline = getActiveElapsedMs(company, nowMs);
   const elapsedBySync = syncPoint ? syncPoint.baseDurationMs + Math.max(0, nowMs - syncPoint.syncedAtMs) : null;
@@ -1263,7 +1261,7 @@ export default function AiCompanyAnalysisTab() {
             const next: Record<string, DurationSyncPoint> = {};
             for (const item of items) {
               const state = computeCompanyState(item);
-              if (!state.running && !state.queued) continue;
+              if (!state.running) continue;
 
               const durationRaw = Number(item.analysis_duration_ms);
               const apiDurationMs =
@@ -1577,7 +1575,7 @@ export default function AiCompanyAnalysisTab() {
     setDurationSyncByInn((prev) => {
       const next = { ...prev };
       inns.forEach((inn) => {
-        next[inn] = { baseDurationMs: 0, syncedAtMs: now };
+        delete next[inn];
       });
       return next;
     });
@@ -2726,7 +2724,7 @@ export default function AiCompanyAnalysisTab() {
                               : finishedDate
                             : null;
                         const duration = formatDuration(
-                          getSyncedDurationMs(company, active, nowMs, durationSyncByInn[company.inn]),
+                          getSyncedDurationMs(company, state.running, nowMs, durationSyncByInn[company.inn]),
                         );
                         const attempts = company.analysis_attempts != null ? company.analysis_attempts : '—';
                         const score =
@@ -3486,7 +3484,7 @@ export default function AiCompanyAnalysisTab() {
                   const duration = formatDuration(
                     getSyncedDurationMs(
                       infoCompany,
-                      state.running || state.queued,
+                      state.running,
                       nowMs,
                       durationSyncByInn[infoCompany.inn],
                     ),
