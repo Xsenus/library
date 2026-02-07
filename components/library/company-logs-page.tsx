@@ -3,12 +3,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { ArrowLeft, Download, FileText, Loader2, RefreshCw } from 'lucide-react';
+import { ArrowLeft, Download, FileText, Loader2, RefreshCw, Settings2 } from 'lucide-react';
 import type { AiDebugEventRecord } from '@/lib/ai-debug';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
+import { Switch } from '@/components/ui/switch';
 
 function formatLogDate(value: string) {
   const dt = new Date(value);
@@ -63,6 +65,8 @@ function summarizePayload(payload: any): string[] {
 }
 
 type JsonState = { open: boolean; title: string; payload: any };
+type FileSplitMode = 'single' | 'separate';
+type ArchiveMode = 'none' | 'single' | 'per-file';
 
 function downloadJsonFile(payload: any, fileName: string) {
   const json = JSON.stringify(payload ?? {}, null, 2);
@@ -75,6 +79,70 @@ function downloadJsonFile(payload: any, fileName: string) {
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function downloadBlob(blob: Blob, fileName: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = fileName;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+
+function encodeTarString(value: string, length: number) {
+  const bytes = new Uint8Array(length);
+  const encoded = new TextEncoder().encode(value);
+  bytes.set(encoded.slice(0, length - 1), 0);
+  return bytes;
+}
+
+function encodeTarOctal(value: number, length: number, withTrailingSpace = false) {
+  const contentLength = withTrailingSpace ? length - 2 : length - 1;
+  const octal = Math.max(0, value).toString(8);
+  const normalized = octal.slice(-contentLength).padStart(contentLength, '0');
+  return withTrailingSpace ? `${normalized}\0 ` : `${normalized}\0`;
+}
+
+function createTarArchive(files: Array<{ name: string; content: string }>): Blob {
+  const encoder = new TextEncoder();
+  const chunks: Uint8Array[] = [];
+
+  files.forEach((file) => {
+    const contentBytes = encoder.encode(file.content);
+    const header = new Uint8Array(512);
+
+    header.set(encodeTarString(file.name, 100), 0);
+    header.set(encodeTarString(encodeTarOctal(0o644, 8), 8), 100);
+    header.set(encodeTarString(encodeTarOctal(0, 8), 8), 108);
+    header.set(encodeTarString(encodeTarOctal(0, 8), 8), 116);
+    header.set(encodeTarString(encodeTarOctal(contentBytes.length, 12), 12), 124);
+    header.set(encodeTarString(encodeTarOctal(Math.floor(Date.now() / 1000), 12), 12), 136);
+
+    for (let i = 148; i < 156; i += 1) {
+      header[i] = 0x20;
+    }
+
+    header[156] = '0'.charCodeAt(0);
+    header.set(encodeTarString('ustar', 6), 257);
+    header.set(encodeTarString('00', 2), 263);
+
+    let checksum = 0;
+    for (let i = 0; i < 512; i += 1) checksum += header[i];
+    header.set(encodeTarString(encodeTarOctal(checksum, 8, true), 8), 148);
+
+    chunks.push(header, contentBytes);
+
+    const remainder = contentBytes.length % 512;
+    if (remainder !== 0) {
+      chunks.push(new Uint8Array(512 - remainder));
+    }
+  });
+
+  chunks.push(new Uint8Array(1024));
+  return new Blob(chunks, { type: 'application/x-tar' });
 }
 
 function isNumericVector(value: any): boolean {
@@ -116,6 +184,11 @@ export default function CompanyLogsPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jsonState, setJsonState] = useState<JsonState>({ open: false, title: '', payload: null });
+  const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
+  const [includeVectors, setIncludeVectors] = useState(true);
+  const [fileSplitMode, setFileSplitMode] = useState<FileSplitMode>('single');
+  const [archiveMode, setArchiveMode] = useState<ArchiveMode>('none');
+  const [exporting, setExporting] = useState(false);
 
   const displayName = useMemo(() => formatCompanyDisplayName(name, companyId), [name, companyId]);
 
@@ -140,23 +213,57 @@ export default function CompanyLogsPage() {
     [companyId, displayName, inn, name]
   );
 
-  const downloadAllLogs = useCallback(() => {
-    if (!logs.length) return;
-    const { now, payload } = createExportPayload(logs);
-    const datePart = now.toISOString().replace(/[:.]/g, '-');
-    downloadJsonFile(payload, `company-logs-${inn || 'unknown'}-${datePart}.json`);
-  }, [createExportPayload, inn, logs]);
+  const exportLogs = useCallback(async () => {
+    if (!logs.length || exporting) return;
 
-  const downloadAllLogsWithoutVectors = useCallback(() => {
-    if (!logs.length) return;
-    const sanitizedLogs = logs.map((log) => ({
-      ...log,
-      payload: stripVectorFields(log.payload),
-    }));
-    const { now, payload } = createExportPayload(sanitizedLogs);
-    const datePart = now.toISOString().replace(/[:.]/g, '-');
-    downloadJsonFile(payload, `company-logs-${inn || 'unknown'}-${datePart}-without-vectors.json`);
-  }, [createExportPayload, inn, logs]);
+    setExporting(true);
+    try {
+      const preparedLogs = includeVectors
+        ? logs
+        : logs.map((log) => ({
+            ...log,
+            payload: stripVectorFields(log.payload),
+          }));
+
+      const now = new Date();
+      const datePart = now.toISOString().replace(/[:.]/g, '-');
+      const vectorSuffix = includeVectors ? '' : '-without-vectors';
+      const baseName = `company-logs-${inn || 'unknown'}-${datePart}${vectorSuffix}`;
+
+      const files =
+        fileSplitMode === 'single'
+          ? [{ name: `${baseName}.json`, payload: createExportPayload(preparedLogs).payload }]
+          : preparedLogs.map((log, index) => {
+              const logDate = log.created_at ? log.created_at.replace(/[:.]/g, '-') : `${index + 1}`;
+              return {
+                name: `${baseName}-${index + 1}-${logDate}.json`,
+                payload: {
+                  exportedAt: now.toISOString(),
+                  company: { name: name || null, displayName, inn: inn || null, companyId },
+                  index: index + 1,
+                  total: preparedLogs.length,
+                  item: log,
+                },
+              };
+            });
+
+      if (archiveMode === 'none') {
+        files.forEach((file) => downloadJsonFile(file.payload, file.name));
+      } else if (archiveMode === 'single') {
+        const tarBlob = createTarArchive(files.map((file) => ({ name: file.name, content: JSON.stringify(file.payload, null, 2) })));
+        downloadBlob(tarBlob, `${baseName}.tar`);
+      } else {
+        files.forEach((file) => {
+          const tarBlob = createTarArchive([{ name: file.name, content: JSON.stringify(file.payload, null, 2) }]);
+          downloadBlob(tarBlob, file.name.replace(/\.json$/, '.tar'));
+        });
+      }
+
+      setDownloadDialogOpen(false);
+    } finally {
+      setExporting(false);
+    }
+  }, [archiveMode, companyId, createExportPayload, displayName, exporting, fileSplitMode, includeVectors, inn, logs, name]);
 
   const fetchLogs = useCallback(async () => {
     if (!inn) return;
@@ -199,25 +306,9 @@ export default function CompanyLogsPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={downloadAllLogs}
-            disabled={!logs.length}
-          >
-            <Download className="h-3.5 w-3.5" />
-            <span className="ml-1">Скачать все логи</span>
-          </Button>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            onClick={downloadAllLogsWithoutVectors}
-            disabled={!logs.length}
-          >
-            <Download className="h-3.5 w-3.5" />
-            <span className="ml-1">Скачать все логи без векторов</span>
+          <Button type="button" variant="outline" size="sm" onClick={() => setDownloadDialogOpen(true)} disabled={!logs.length}>
+            <Settings2 className="h-3.5 w-3.5" />
+            <span className="ml-1">Настройки скачивания</span>
           </Button>
           <Button type="button" variant="outline" size="sm" onClick={fetchLogs} disabled={!inn || loading}>
             {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <RefreshCw className="h-3.5 w-3.5" />}
@@ -336,6 +427,80 @@ export default function CompanyLogsPage() {
           <pre className="max-h-[70vh] overflow-auto rounded-md bg-muted/50 p-3 text-xs">
             {jsonState.payload ? JSON.stringify(jsonState.payload, null, 2) : 'Нет данных'}
           </pre>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={downloadDialogOpen} onOpenChange={(open) => !exporting && setDownloadDialogOpen(open)}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Настройки скачивания логов</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-5 text-sm">
+            <div className="rounded-lg border p-4">
+              <div className="mb-2 font-medium">Содержимое</div>
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div>Включить векторы</div>
+                  <div className="text-xs text-muted-foreground">Отключите, чтобы исключить vector/embedding поля из выгрузки.</div>
+                </div>
+                <Switch checked={includeVectors} onCheckedChange={setIncludeVectors} />
+              </div>
+            </div>
+
+            <div className="rounded-lg border p-4">
+              <div className="mb-2 font-medium">Формат файлов</div>
+              <RadioGroup value={fileSplitMode} onValueChange={(value) => setFileSplitMode(value as FileSplitMode)} className="gap-3">
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-2">
+                  <RadioGroupItem value="single" className="mt-0.5" />
+                  <span>
+                    Один JSON файл
+                    <div className="text-xs text-muted-foreground">Все логи собираются в единый файл.</div>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-2">
+                  <RadioGroupItem value="separate" className="mt-0.5" />
+                  <span>
+                    Разные JSON файлы
+                    <div className="text-xs text-muted-foreground">Каждый лог выгружается в отдельный файл.</div>
+                  </span>
+                </label>
+              </RadioGroup>
+            </div>
+
+            <div className="rounded-lg border p-4">
+              <div className="mb-2 font-medium">Архивация</div>
+              <RadioGroup value={archiveMode} onValueChange={(value) => setArchiveMode(value as ArchiveMode)} className="gap-3">
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-2">
+                  <RadioGroupItem value="none" className="mt-0.5" />
+                  <span>
+                    Без архива
+                    <div className="text-xs text-muted-foreground">Скачивание сразу JSON файлов.</div>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-2">
+                  <RadioGroupItem value="single" className="mt-0.5" />
+                  <span>
+                    Один архив (.tar)
+                    <div className="text-xs text-muted-foreground">Все JSON файлы попадут в общий архив.</div>
+                  </span>
+                </label>
+                <label className="flex cursor-pointer items-start gap-2 rounded-md border p-2">
+                  <RadioGroupItem value="per-file" className="mt-0.5" />
+                  <span>
+                    Каждый файл в отдельный архив (.tar)
+                    <div className="text-xs text-muted-foreground">Для каждого JSON создается свой архив.</div>
+                  </span>
+                </label>
+              </RadioGroup>
+            </div>
+
+            <div className="flex justify-end">
+              <Button type="button" onClick={() => void exportLogs()} disabled={!logs.length || exporting}>
+                {exporting ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Download className="mr-2 h-4 w-4" />}
+                Скачать с выбранными настройками
+              </Button>
+            </div>
+          </div>
         </DialogContent>
       </Dialog>
     </div>
