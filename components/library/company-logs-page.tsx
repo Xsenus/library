@@ -8,6 +8,7 @@ import type { AiDebugEventRecord } from '@/lib/ai-debug';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group';
 import { Switch } from '@/components/ui/switch';
@@ -185,6 +186,7 @@ export default function CompanyLogsPage() {
   const [error, setError] = useState<string | null>(null);
   const [jsonState, setJsonState] = useState<JsonState>({ open: false, title: '', payload: null });
   const [downloadDialogOpen, setDownloadDialogOpen] = useState(false);
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [includeVectors, setIncludeVectors] = useState(true);
   const [fileSplitMode, setFileSplitMode] = useState<FileSplitMode>('single');
   const [archiveMode, setArchiveMode] = useState<ArchiveMode>('none');
@@ -292,7 +294,6 @@ export default function CompanyLogsPage() {
 
   const handleClearLogs = useCallback(async () => {
     if (!logs.length || clearing) return;
-    if (!window.confirm('Удалить все логи AI-отладки?')) return;
 
     setClearing(true);
     setError(null);
@@ -307,6 +308,7 @@ export default function CompanyLogsPage() {
       setError(err?.message ?? 'Не удалось удалить логи компании');
     } finally {
       setClearing(false);
+      setClearConfirmOpen(false);
     }
   }, [clearing, fetchLogs, logs.length]);
 
@@ -327,7 +329,7 @@ export default function CompanyLogsPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Button type="button" variant="destructive" size="sm" onClick={() => void handleClearLogs()} disabled={!logs.length || clearing}>
+          <Button type="button" variant="destructive" size="sm" onClick={() => setClearConfirmOpen(true)} disabled={!logs.length || clearing}>
             {clearing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
             <span className="ml-1">Удалить логи</span>
           </Button>
@@ -528,6 +530,19 @@ export default function CompanyLogsPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={clearConfirmOpen}
+        onOpenChange={setClearConfirmOpen}
+        title="Удалить все логи AI-отладки?"
+        description="Это действие нельзя отменить."
+        confirmLabel="Удалить"
+        cancelLabel="Отмена"
+        destructive
+        loading={clearing}
+        onConfirm={() => void handleClearLogs()}
+      />
+
     </div>
   );
 }
