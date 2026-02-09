@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -55,15 +55,11 @@ type CleanScoreRowEx = CleanScoreRow & {
 export default function LibraryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  type LibraryTab = 'library' | 'cleanscore' | 'okved' | 'aisearch' | 'aianalysis' | 'aidebug';
   const initialTab = (searchParams.get('tab') ?? 'library') as
-    | 'library'
-    | 'cleanscore'
-    | 'okved'
-    | 'aisearch'
-    | 'aianalysis'
-    | 'aidebug';
+    | LibraryTab;
 
-  const [tab, setTab] = useState<'library' | 'cleanscore' | 'okved' | 'aisearch' | 'aianalysis' | 'aidebug'>(
+  const [tab, setTab] = useState<LibraryTab>(
     initialTab === 'cleanscore' || initialTab === 'okved' || initialTab === 'aianalysis' || initialTab === 'aidebug'
       ? 'library'
       : initialTab,
@@ -108,12 +104,7 @@ export default function LibraryPage() {
   // держим таб в синхроне с URL (?tab=...)
   useEffect(() => {
     const tSafe = (searchParams.get('tab') ?? 'library') as
-      | 'library'
-      | 'cleanscore'
-      | 'okved'
-      | 'aisearch'
-      | 'aianalysis'
-      | 'aidebug';
+      | LibraryTab;
 
     setTab(
       !isWorker && (tSafe === 'cleanscore' || tSafe === 'okved' || tSafe === 'aianalysis' || tSafe === 'aidebug')
@@ -867,6 +858,31 @@ export default function LibraryPage() {
   );
 
   // ========================= RENDER =========================
+  const getTabHref = useCallback(
+    (nextTab: LibraryTab) => {
+      const qp = new URLSearchParams(searchParams.toString());
+      qp.set('tab', nextTab);
+      return `/library?${qp.toString()}`;
+    },
+    [searchParams],
+  );
+
+  const handleOpenTabInNewPage = useCallback(
+    (event: MouseEvent<HTMLButtonElement>, nextTab: LibraryTab, disabled = false) => {
+      if (disabled) return;
+
+      const isMiddleClick = event.button === 1;
+      const isModifiedLeftClick = event.button === 0 && (event.metaKey || event.ctrlKey);
+
+      if (!isMiddleClick && !isModifiedLeftClick) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+      window.open(getTabHref(nextTab), '_blank', 'noopener,noreferrer');
+    },
+    [getTabHref],
+  );
+
   return (
     <div className="h-screen flex flex-col">
       {/* ===== HEADER ===== */}
@@ -916,9 +932,7 @@ export default function LibraryPage() {
             onValueChange={(v) => {
               if ((v === 'cleanscore' || v === 'okved' || v === 'aianalysis' || v === 'aidebug') && !isWorker) return;
               setTab(v as any);
-              const qp = new URLSearchParams(searchParams);
-              qp.set('tab', v);
-              router.replace(`/library?${qp.toString()}`);
+              router.replace(getTabHref(v as LibraryTab));
             }}
             className="w-full">
             <div className="pb-1 md:pb-0">
@@ -926,6 +940,8 @@ export default function LibraryPage() {
               <TabsList className="contents">
                 <TabsTrigger
                   value="library"
+                  onClick={(event) => handleOpenTabInNewPage(event, 'library')}
+                  onAuxClick={(event) => handleOpenTabInNewPage(event, 'library')}
                   className="
                     h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
                     border border-transparent
@@ -939,6 +955,8 @@ export default function LibraryPage() {
                 <TabsTrigger
                   value="cleanscore"
                   disabled={!isWorker}
+                  onClick={(event) => handleOpenTabInNewPage(event, 'cleanscore', !isWorker)}
+                  onAuxClick={(event) => handleOpenTabInNewPage(event, 'cleanscore', !isWorker)}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
                     h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
@@ -954,6 +972,8 @@ export default function LibraryPage() {
                 <TabsTrigger
                   value="okved"
                   disabled={!isWorker}
+                  onClick={(event) => handleOpenTabInNewPage(event, 'okved', !isWorker)}
+                  onAuxClick={(event) => handleOpenTabInNewPage(event, 'okved', !isWorker)}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
                     h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
@@ -969,6 +989,8 @@ export default function LibraryPage() {
                 <TabsTrigger
                   value="aianalysis"
                   disabled={!isWorker}
+                  onClick={(event) => handleOpenTabInNewPage(event, 'aianalysis', !isWorker)}
+                  onAuxClick={(event) => handleOpenTabInNewPage(event, 'aianalysis', !isWorker)}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
                     h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
@@ -985,6 +1007,8 @@ export default function LibraryPage() {
                 <TabsTrigger
                   value="aidebug"
                   disabled={!isWorker}
+                  onClick={(event) => handleOpenTabInNewPage(event, 'aidebug', !isWorker)}
+                  onAuxClick={(event) => handleOpenTabInNewPage(event, 'aidebug', !isWorker)}
                   title={!isWorker ? 'Доступно только сотрудникам' : undefined}
                   className="
                     h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
@@ -1000,6 +1024,8 @@ export default function LibraryPage() {
 
                 <TabsTrigger
                   value="aisearch"
+                  onClick={(event) => handleOpenTabInNewPage(event, 'aisearch')}
+                  onAuxClick={(event) => handleOpenTabInNewPage(event, 'aisearch')}
                   className="
                     h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
                     border border-transparent
