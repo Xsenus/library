@@ -346,6 +346,12 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
     },
     fallbacks: [
       {
+        path: () => '/v1/ib-match',
+        label: 'POST ib-match',
+        method: 'POST',
+        body: true,
+      },
+      {
         path: () => '/v1/ib-match/by-inn',
         label: 'POST ib-match/by-inn',
         method: 'POST',
@@ -361,6 +367,7 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
     },
   },
 };
+
 
 function normalizeSteps(raw: unknown, fallback: StepKey[] = DEFAULT_STEPS): StepKey[] {
   if (!Array.isArray(raw)) return fallback;
