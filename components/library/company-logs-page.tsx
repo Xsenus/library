@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
-import { ArrowLeft, Download, FileText, Loader2, RefreshCw, Settings2 } from 'lucide-react';
+import { ArrowLeft, Download, FileText, Loader2, RefreshCw, Settings2, Trash2 } from 'lucide-react';
 import type { AiDebugEventRecord } from '@/lib/ai-debug';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -189,6 +189,7 @@ export default function CompanyLogsPage() {
   const [fileSplitMode, setFileSplitMode] = useState<FileSplitMode>('single');
   const [archiveMode, setArchiveMode] = useState<ArchiveMode>('none');
   const [exporting, setExporting] = useState(false);
+  const [clearing, setClearing] = useState(false);
 
   const displayName = useMemo(() => formatCompanyDisplayName(name, companyId), [name, companyId]);
 
@@ -289,6 +290,26 @@ export default function CompanyLogsPage() {
     }
   }, [fetchLogs, inn]);
 
+  const handleClearLogs = useCallback(async () => {
+    if (!logs.length || clearing) return;
+    if (!window.confirm('Удалить все логи AI-отладки?')) return;
+
+    setClearing(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/ai-debug/events', { method: 'DELETE' });
+      if (!res.ok) {
+        if (res.status === 403) throw new Error('Недостаточно прав для удаления логов');
+        throw new Error('Не удалось удалить логи компании');
+      }
+      await fetchLogs();
+    } catch (err: any) {
+      setError(err?.message ?? 'Не удалось удалить логи компании');
+    } finally {
+      setClearing(false);
+    }
+  }, [clearing, fetchLogs, logs.length]);
+
   return (
     <div className="mx-auto flex w-full max-w-5xl flex-col gap-4 p-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -306,6 +327,10 @@ export default function CompanyLogsPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center gap-2">
+          <Button type="button" variant="destructive" size="sm" onClick={() => void handleClearLogs()} disabled={!logs.length || clearing}>
+            {clearing ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Trash2 className="h-3.5 w-3.5" />}
+            <span className="ml-1">Удалить логи</span>
+          </Button>
           <Button type="button" variant="outline" size="sm" onClick={() => setDownloadDialogOpen(true)} disabled={!logs.length}>
             <Settings2 className="h-3.5 w-3.5" />
             <span className="ml-1">Настройки скачивания</span>
