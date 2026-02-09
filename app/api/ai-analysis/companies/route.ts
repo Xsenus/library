@@ -1011,10 +1011,21 @@ async function loadProdclassNames(ids: number[]): Promise<Map<number, string>> {
 
 function buildActivitySql(optionalSelect: SelectBuild, queueAvailable: boolean, whereSql: string): string | null {
   const statusCol = optionalSelect.selected.get('analysis_status');
+  const outcomeCol = optionalSelect.selected.get('analysis_outcome');
   const progressCol = optionalSelect.selected.get('analysis_progress');
   const startedCol = optionalSelect.selected.get('analysis_started_at');
   const finishedCol = optionalSelect.selected.get('analysis_finished_at');
+  const analysisOkCol = optionalSelect.selected.get('analysis_ok');
+  const serverErrorCol = optionalSelect.selected.get('server_error');
+  const noValidSiteCol = optionalSelect.selected.get('no_valid_site');
   const queuedCol = queueAvailable ? 'q.queued_at' : null;
+
+  const statusExpr = statusCol ? `LOWER(COALESCE(d.${statusCol}, ''))` : "''";
+  const outcomeExpr = outcomeCol ? `LOWER(COALESCE(d.${outcomeCol}, ''))` : "''";
+  const finishedExpr = finishedCol ? `d.${finishedCol}` : 'NULL';
+  const analysisOkExpr = analysisOkCol ? `COALESCE(d.${analysisOkCol}, 0)` : '0';
+  const serverErrorExpr = serverErrorCol ? `COALESCE(d.${serverErrorCol}, 0)` : '0';
+  const noValidSiteExpr = noValidSiteCol ? `COALESCE(d.${noValidSiteCol}, 0)` : '0';
 
   const runningParts: string[] = [];
   if (statusCol) {
@@ -1048,14 +1059,23 @@ function buildActivitySql(optionalSelect: SelectBuild, queueAvailable: boolean, 
 
   if (!runningParts.length && !queuedParts.length) return null;
 
+  const terminalCondition = `(
+    ${finishedExpr} IS NOT NULL
+    OR ${analysisOkExpr} = 1
+    OR ${serverErrorExpr} = 1
+    OR ${noValidSiteExpr} = 1
+    OR ${statusExpr} SIMILAR TO '%(failed|error|stopped|cancel|done|finish|success|complete|completed|partial)%'
+    OR ${outcomeExpr} SIMILAR TO '%(failed|partial|completed|stopped|cancel|done|finish|success)%'
+  )`;
+
   const runningSql = runningParts.length ? runningParts.map((part) => `(${part})`).join(' OR ') : 'FALSE';
   const queuedSql = queuedParts.length ? queuedParts.map((part) => `(${part})`).join(' OR ') : 'FALSE';
   const queueJoinSql = queueAvailable ? `\n      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn` : '';
 
   return `
     SELECT
-      COUNT(*) FILTER (WHERE ${runningSql})::int AS running,
-      COUNT(*) FILTER (WHERE ${queuedSql})::int AS queued
+      COUNT(*) FILTER (WHERE NOT ${terminalCondition} AND (${runningSql}))::int AS running,
+      COUNT(*) FILTER (WHERE NOT ${terminalCondition} AND (${queuedSql}))::int AS queued
     FROM dadata_result d${queueJoinSql}
     ${whereSql}
   `;
