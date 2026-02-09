@@ -281,7 +281,7 @@ type StepAttempt = {
   path: (inn: string) => string;
   label: string;
   method: 'GET' | 'POST';
-  body?: boolean;
+  body?: (inn: string) => Record<string, unknown>;
 };
 
 type StepDefinition = {
@@ -309,12 +309,17 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
         path: () => '/v1/lookup/card',
         label: 'POST lookup/card',
         method: 'POST',
-        body: true,
+        body: (inn) => ({ inn }),
       },
     ],
   },
   parse_site: {
-    primary: { path: () => '/v1/parse-site', label: 'Парсинг сайта', method: 'POST', body: true },
+    primary: {
+      path: () => '/v1/parse-site',
+      label: 'Парсинг сайта',
+      method: 'POST',
+      body: (inn) => ({ inn }),
+    },
     fallbacks: [
       {
         path: (inn) => `/v1/parse-site/${encodeURIComponent(inn)}`,
@@ -334,7 +339,7 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
         path: () => '/v1/analyze-json',
         label: 'POST analyze-json',
         method: 'POST',
-        body: true,
+        body: (inn) => ({ inn }),
       },
     ],
   },
@@ -349,13 +354,13 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
         path: () => '/v1/ib-match',
         label: 'POST ib-match',
         method: 'POST',
-        body: true,
+        body: (inn) => ({ inn, client_id: inn }),
       },
       {
         path: () => '/v1/ib-match/by-inn',
         label: 'POST ib-match/by-inn',
         method: 'POST',
-        body: true,
+        body: (inn) => ({ inn }),
       },
     ],
   },
@@ -436,6 +441,57 @@ async function ensureIntegrationHealthy(context: {
   return { ok: true as const };
 }
 
+function hasOkvedFallbackSignal(data: unknown): boolean {
+  if (!data || typeof data !== 'object') return false;
+
+  const root = data as {
+    okved_fallback_used?: boolean;
+    site_unavailable?: unknown;
+    external_response?: { site_unavailable?: unknown };
+    external_response_raw?: { site_unavailable?: unknown };
+    runs?: Array<{
+      okved_fallback_used?: boolean;
+      site_unavailable?: unknown;
+      external_response?: { site_unavailable?: unknown };
+      external_response_raw?: { site_unavailable?: unknown };
+    }>;
+  };
+
+  if (root.okved_fallback_used === true) return true;
+  if (root.site_unavailable) return true;
+  if (root.external_response?.site_unavailable) return true;
+  if (root.external_response_raw?.site_unavailable) return true;
+
+  return Boolean(
+    root.runs?.some(
+      (run) =>
+        run?.okved_fallback_used === true ||
+        Boolean(run?.site_unavailable) ||
+        Boolean(run?.external_response?.site_unavailable) ||
+        Boolean(run?.external_response_raw?.site_unavailable),
+    ),
+  );
+}
+
+async function shouldUseOkvedFallbackForIbMatch(inn: string, timeoutMs: number): Promise<boolean> {
+  const getRes = await callAiIntegration(`/v1/analyze-json/${encodeURIComponent(inn)}`, {
+    method: 'GET',
+    timeoutMs,
+  });
+
+  if (getRes.ok && hasOkvedFallbackSignal(getRes.data)) {
+    return true;
+  }
+
+  const postRes = await callAiIntegration('/v1/analyze-json', {
+    method: 'POST',
+    body: JSON.stringify({ inn }),
+    timeoutMs,
+  });
+
+  return postRes.ok && hasOkvedFallbackSignal(postRes.data);
+}
+
 async function runStep(inn: string, step: StepKey, timeoutMs: number) {
   const definition = STEP_DEFINITIONS[step];
   const attempts: StepAttempt[] = [definition.primary, ...(definition.fallbacks ?? [])];
@@ -458,8 +514,9 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
         const path = attempt.path(inn);
         const init: RequestInit & { timeoutMs?: number } = { method: attempt.method };
 
-        if (attempt.body) {
-          init.body = JSON.stringify({ inn });
+        const requestBody = attempt.body?.(inn);
+        if (requestBody) {
+          init.body = JSON.stringify(requestBody);
         }
 
         await safeLog({
@@ -468,7 +525,7 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
           requestId,
           companyId: inn,
           message: `Старт шага: ${definition.primary.label} (${attempt.label}), попытка ${attemptNo}/${MAX_STEP_ATTEMPTS}`,
-          payload: { path, method: attempt.method, body: attempt.body ? { inn } : undefined },
+          payload: { path, method: attempt.method, body: requestBody },
         });
 
         const res = await callAiIntegration(path, { ...init, timeoutMs });
@@ -507,6 +564,20 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
         payload: { lastStatus, lastError },
       });
       await sleep(RETRY_DELAY_MS);
+    }
+  }
+
+  if (step === 'ib_match') {
+    const okvedFallback = await shouldUseOkvedFallbackForIbMatch(inn, timeoutMs);
+    if (okvedFallback) {
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        message: 'Сопоставление продклассов пропущено: используется fallback по ОКВЭД',
+        payload: { lastStatus, lastError },
+      });
+      return { step, ok: true as const, status: lastStatus || 200 };
     }
   }
 
@@ -1454,12 +1525,12 @@ export async function POST(request: NextRequest) {
               request: {
                 method: def.primary.method,
                 path: def.primary.path(sampleInn),
-                body: def.primary.body ? { inn: sampleInn } : undefined,
+                body: def.primary.body?.(sampleInn),
               },
               fallbacks: (def.fallbacks ?? []).map((fb) => ({
                 method: fb.method,
                 path: fb.path(sampleInn),
-                body: fb.body ? { inn: sampleInn } : undefined,
+                body: fb.body?.(sampleInn),
               })),
             };
           });
