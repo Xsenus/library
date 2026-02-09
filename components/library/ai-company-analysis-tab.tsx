@@ -2311,10 +2311,19 @@ export default function AiCompanyAnalysisTab() {
     return items;
   };
 
+  const isObjectObjectPlaceholder = (value: string): boolean => value.trim().toLowerCase() === '[object object]';
+
+  const isMeaningfulTnvedName = (value: string): boolean => {
+    const normalized = value.trim();
+    if (!normalized) return false;
+    return !/^\d+(?:[.,]\d+)?$/.test(normalized);
+  };
+
   const normalizeTnvedValue = (value: unknown): string => {
     if (value == null) return '';
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
-      return String(value).trim();
+      const normalized = String(value).trim();
+      return isObjectObjectPlaceholder(normalized) ? '' : normalized;
     }
     if (Array.isArray(value)) {
       return value
@@ -2334,7 +2343,12 @@ export default function AiCompanyAnalysisTab() {
         record.label ??
         record.text ??
         '';
-      return normalizeTnvedValue(candidate);
+      const fromCandidate = normalizeTnvedValue(candidate);
+      if (fromCandidate) return fromCandidate;
+
+      return Object.values(record)
+        .map((entry) => normalizeTnvedValue(entry))
+        .find(Boolean) || '';
     }
     return '';
   };
@@ -2352,21 +2366,33 @@ export default function AiCompanyAnalysisTab() {
         if (!item) return [];
 
         if (typeof item === 'string') {
-          const name = item.trim();
-          return name ? [{ name }] : [];
+          const name = normalizeTnvedValue(item);
+          return isMeaningfulTnvedName(name) ? [{ name }] : [];
         }
 
         if (typeof item === 'object') {
-          const name = normalizeTnvedValue(item?.name ?? item?.title ?? item?.product ?? item?.goods ?? item?.value ?? '');
+          const name = normalizeTnvedValue(
+            item?.name ??
+              item?.title ??
+              item?.product ??
+              item?.goods ??
+              item?.value ??
+              item?.product_name ??
+              item?.goods_name ??
+              item?.description ??
+              item?.text ??
+              item,
+          );
           const code = normalizeTnvedValue(item?.tnved ?? item?.code ?? item?.tn_ved ?? item?.tnved_code ?? item?.tnvedCode ?? '');
           const score = Number(
             item?.bigdata_similarity ?? item?.big_data_similarity ?? item?.vector_similarity ?? item?.score ?? item?.goods_types_score,
           );
-          if (!name && !code) return [];
-          return [{ name: name || code, code: code || undefined, score: Number.isFinite(score) ? score : undefined }];
+          const hasName = isMeaningfulTnvedName(name);
+          if (!hasName && !code) return [];
+          return [{ name: hasName ? name : code, code: code || undefined, score: Number.isFinite(score) ? score : undefined }];
         }
 
-        const name = normalizeTnvedValue(item) || String(item);
+        const name = normalizeTnvedValue(item);
         return name ? [{ name }] : [];
       });
 
