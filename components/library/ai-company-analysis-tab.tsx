@@ -328,8 +328,15 @@ type AiAnalyzerInfo = {
       url?: string | null;
       domain?: string | null;
       tnved_code?: string | null;
+      score?: number | null;
     }>;
-    equipment?: Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }>;
+    equipment?: Array<{
+      name: string;
+      equip_group?: string | null;
+      url?: string | null;
+      domain?: string | null;
+      score?: number | null;
+    }>;
     description_okved_score?: number | null;
     prodclass?: {
       id?: string | number | null;
@@ -377,10 +384,45 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
 
   const aiSites = ai ? toSiteArray(ai.sites ?? ai.domains ?? ai.site_list) : [];
 
+  const parseSimilarity = (item: any): number | null => {
+    const candidates = [
+      item?.bigdata_similarity,
+      item?.big_data_similarity,
+      item?.bigdata_score,
+      item?.vector_similarity,
+      item?.similarity,
+      item?.score,
+      item?.match_score,
+      item?.goods_types_score,
+      item?.equipment_score,
+    ];
+    for (const candidate of candidates) {
+      const value = Number(candidate);
+      if (Number.isFinite(value)) return value;
+    }
+    return null;
+  };
+
   const mapProducts = (
     items: any[],
-  ): Array<{ name: string; goods_group?: string | null; url?: string | null; domain?: string | null; tnved_code?: string | null }> =>
-    items.reduce<Array<{ name: string; goods_group?: string | null; url?: string | null; domain?: string | null; tnved_code?: string | null }>>(
+  ): Array<{
+    name: string;
+    goods_group?: string | null;
+    url?: string | null;
+    domain?: string | null;
+    tnved_code?: string | null;
+    score?: number | null;
+  }> =>
+    items.reduce<
+      Array<{
+        name: string;
+        goods_group?: string | null;
+        url?: string | null;
+        domain?: string | null;
+        tnved_code?: string | null;
+        score?: number | null;
+      }>
+    >(
       (acc, item) => {
         if (!item) return acc;
         if (typeof item === 'string') {
@@ -392,6 +434,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
           const goods_group = item.goods_group ?? item.goods_type ?? null;
           const url = item.url ?? item.link ?? null;
           const domain = item.domain ?? normalizeSite(url ?? null);
+          const score = parseSimilarity(item);
           const tnved_code =
             item.tnved_code ??
             item.goods_type_id ??
@@ -401,7 +444,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
             item.code ??
             null;
           if (!name && !goods_group && !url) return acc;
-          acc.push({ name: name || goods_group || url || '—', goods_group, url, domain, tnved_code });
+          acc.push({ name: name || goods_group || url || '—', goods_group, url, domain, tnved_code, score });
           return acc;
         }
 
@@ -413,8 +456,8 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
 
   const mapEquipment = (
     items: any[],
-  ): Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }> =>
-    items.reduce<Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null }>>((acc, item) => {
+  ): Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null; score?: number | null }> =>
+    items.reduce<Array<{ name: string; equip_group?: string | null; url?: string | null; domain?: string | null; score?: number | null }>>((acc, item) => {
       if (!item) return acc;
       if (typeof item === 'string') {
         acc.push({ name: item });
@@ -426,10 +469,11 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
         const equip_group = item.equip_group ?? item.group ?? null;
         const url = item.url ?? item.link ?? null;
         const domain = item.domain ?? normalizeSite(url ?? null);
+        const score = parseSimilarity(item);
 
         if (!name && !equip_group && !url) return acc;
 
-        acc.push({ name: name || equip_group || url || '—', equip_group, url, domain });
+        acc.push({ name: name || equip_group || url || '—', equip_group, url, domain, score });
         return acc;
       }
 
@@ -2180,8 +2224,8 @@ export default function AiCompanyAnalysisTab() {
   const topEquipment = (
     company: AiCompany,
     analyzer?: AiAnalyzerInfo | null,
-  ): Array<{ name: string; id?: string; score?: number }> => {
-    const normalizeEquipmentItem = (item: any): { name: string; id?: string; score?: number } | null => {
+  ): Array<{ name: string; id?: string; score?: number | null }> => {
+    const normalizeEquipmentItem = (item: any): { name: string; id?: string; score?: number | null } | null => {
       if (!item) return null;
       if (typeof item === 'string') {
         const name = item.trim();
@@ -2213,7 +2257,7 @@ export default function AiCompanyAnalysisTab() {
     };
 
     const seen = new Set<string>();
-    const pushItem = (item: { name: string; id?: string; score?: number } | null, acc: typeof items) => {
+    const pushItem = (item: { name: string; id?: string; score?: number | null } | null, acc: typeof items) => {
       if (!item?.name) return;
       const key = `${item.name.trim().toLowerCase()}|${item.id?.trim().toLowerCase() || ''}`;
       if (seen.has(key)) return;
@@ -2221,7 +2265,7 @@ export default function AiCompanyAnalysisTab() {
       acc.push({ name: item.name.trim(), id: item.id?.trim() || undefined, score: item.score });
     };
 
-    const items: Array<{ name: string; id?: string; score?: number }> = [];
+    const items: Array<{ name: string; id?: string; score?: number | null }> = [];
     const raw = company.analysis_equipment;
 
     if (Array.isArray(raw)) {
@@ -2263,9 +2307,12 @@ export default function AiCompanyAnalysisTab() {
     return '';
   };
 
-  const tnvedProducts = (company: AiCompany, analyzer?: AiAnalyzerInfo | null): Array<{ name: string; code?: string }> => {
+  const tnvedProducts = (
+    company: AiCompany,
+    analyzer?: AiAnalyzerInfo | null,
+  ): Array<{ name: string; code?: string; score?: number | null }> => {
     const raw = company.analysis_tnved;
-    const items: Array<{ name: string; code?: string }> = [];
+    const items: Array<{ name: string; code?: string; score?: number | null }> = [];
     const seen = new Set<string>();
     if (raw) {
       const arr = Array.isArray(raw) ? raw : [raw];
@@ -2279,32 +2326,35 @@ export default function AiCompanyAnalysisTab() {
               const code = normalizeTnvedValue(
                 item?.tnved ?? item?.code ?? item?.tn_ved ?? item?.tnved_code ?? item?.tnvedCode ?? '',
               );
+              const score =
+                Number(item?.bigdata_similarity ?? item?.big_data_similarity ?? item?.vector_similarity ?? item?.score ?? item?.goods_types_score);
               if (!name && !code) return null;
-              return { name: name || code, code: code || undefined };
+              return { name: name || code, code: code || undefined, score: Number.isFinite(score) ? score : undefined };
             }
             return { name: normalizeTnvedValue(item) || String(item) };
           })
-          .filter((item): item is { name: string; code?: string } => !!item && !!item.name),
+          .filter((item): item is { name: string; code?: string; score?: number | null } => !!item && !!item.name),
       );
     }
 
     if (!items.length && analyzer?.ai?.products?.length) {
-      const analyzerProducts = analyzer.ai.products.reduce<Array<{ name: string; code?: string }>>((acc, item) => {
+      const analyzerProducts = analyzer.ai.products.reduce<Array<{ name: string; code?: string; score?: number | null }>>((acc, item) => {
         const name = normalizeTnvedValue(item?.name);
         const code = normalizeTnvedValue(item?.tnved_code) || undefined;
+        const score = Number(item?.score);
         if (!name && !code) return acc;
-        acc.push({ name: name || code || '—', code });
+        acc.push({ name: name || code || '—', code, score: Number.isFinite(score) ? score : undefined });
         return acc;
       }, []);
 
       items.push(...analyzerProducts);
     }
 
-    return items.reduce<Array<{ name: string; code?: string }>>((acc, item) => {
+    return items.reduce<Array<{ name: string; code?: string; score?: number | null }>>((acc, item) => {
       const key = `${item.name?.trim().toLowerCase() || ''}|${item.code?.trim().toLowerCase() || ''}`;
       if (!item.name || seen.has(key)) return acc;
       seen.add(key);
-      acc.push({ name: item.name.trim(), code: item.code?.trim() || undefined });
+      acc.push({ name: item.name.trim(), code: item.code?.trim() || undefined, score: item.score ?? undefined });
       return acc;
     }, []);
   };
@@ -3744,7 +3794,7 @@ export default function AiCompanyAnalysisTab() {
                                 )}
                                 {item.score != null && (
                                   <Badge variant="outline" className="text-[12px]">
-                                    score {item.score}
+                                    BigData similarity {item.score}
                                   </Badge>
                                 )}
                               </div>
@@ -3766,11 +3816,18 @@ export default function AiCompanyAnalysisTab() {
                       {tnvedProducts(infoCompany, analyzerInfo).map((item, idx) => (
                         <li key={`${item.name}-${idx}`} className="rounded-md border bg-muted/30 p-3">
                           <div className="font-medium text-foreground">{item.name}</div>
-                          {item.code && (
-                            <div className="mt-1">
-                              <Badge variant="outline" className="text-[12px]">
-                                ТНВЭД {item.code}
-                              </Badge>
+                          {(item.code || item.score != null) && (
+                            <div className="mt-1 flex flex-wrap gap-2">
+                              {item.code && (
+                                <Badge variant="outline" className="text-[12px]">
+                                  ТНВЭД {item.code}
+                                </Badge>
+                              )}
+                              {item.score != null && (
+                                <Badge variant="outline" className="text-[12px]">
+                                  BigData similarity {item.score}
+                                </Badge>
+                              )}
                             </div>
                           )}
                         </li>
