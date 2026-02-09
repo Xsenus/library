@@ -19,6 +19,7 @@ import type { AiDebugEventRecord } from '@/lib/ai-debug';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
@@ -193,6 +194,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
   const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [jsonState, setJsonState] = useState<JsonState>({ open: false, payload: null, title: '' });
+  const [clearConfirmOpen, setClearConfirmOpen] = useState(false);
   const [source, setSource] = useState('');
   const [direction, setDirection] = useState<string>('all');
   const [type, setType] = useState<string>('all');
@@ -330,7 +332,6 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
 
   const handleClear = useCallback(async () => {
     if (!isAdmin) return;
-    if (!window.confirm('Удалить все логи AI-отладки?')) return;
     setClearing(true);
     setError(null);
     try {
@@ -341,6 +342,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
       setError(e?.message ?? 'Не удалось удалить логи');
     } finally {
       setClearing(false);
+      setClearConfirmOpen(false);
     }
   }, [fetchData, isAdmin]);
 
@@ -410,7 +412,7 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
               <Button
                 variant="destructive"
                 size="sm"
-                onClick={handleClear}
+                onClick={() => setClearConfirmOpen(true)}
                 disabled={loading || clearing}
                 title="Доступно только администратору">
                 {clearing ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
@@ -888,6 +890,19 @@ export default function AiDebugTab({ isAdmin = false }: AiDebugTabProps) {
           </pre>
         </DialogContent>
       </Dialog>
+
+      <ConfirmDialog
+        open={clearConfirmOpen}
+        onOpenChange={setClearConfirmOpen}
+        title="Удалить все логи AI-отладки?"
+        description="Это действие нельзя отменить."
+        confirmLabel="Удалить"
+        cancelLabel="Отмена"
+        destructive
+        loading={clearing}
+        onConfirm={() => void handleClear()}
+      />
+
     </div>
   );
 }
