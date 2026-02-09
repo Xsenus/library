@@ -2348,25 +2348,29 @@ export default function AiCompanyAnalysisTab() {
     const seen = new Set<string>();
     if (raw) {
       const arr = Array.isArray(raw) ? raw : [raw];
-      items.push(
-        ...arr
-          .map((item: any) => {
-            if (!item) return null;
-            if (typeof item === 'string') return { name: item.trim() };
-            if (typeof item === 'object') {
-              const name = normalizeTnvedValue(item?.name ?? item?.title ?? item?.product ?? item?.goods ?? item?.value ?? '');
-              const code = normalizeTnvedValue(
-                item?.tnved ?? item?.code ?? item?.tn_ved ?? item?.tnved_code ?? item?.tnvedCode ?? '',
-              );
-              const score =
-                Number(item?.bigdata_similarity ?? item?.big_data_similarity ?? item?.vector_similarity ?? item?.score ?? item?.goods_types_score);
-              if (!name && !code) return null;
-              return { name: name || code, code: code || undefined, score: Number.isFinite(score) ? score : undefined };
-            }
-            return { name: normalizeTnvedValue(item) || String(item) };
-          })
-          .filter((item): item is { name: string; code?: string; score?: number | null } => !!item && !!item.name),
-      );
+      const normalizedRawItems = arr.flatMap((item: any): Array<{ name: string; code?: string; score?: number | null }> => {
+        if (!item) return [];
+
+        if (typeof item === 'string') {
+          const name = item.trim();
+          return name ? [{ name }] : [];
+        }
+
+        if (typeof item === 'object') {
+          const name = normalizeTnvedValue(item?.name ?? item?.title ?? item?.product ?? item?.goods ?? item?.value ?? '');
+          const code = normalizeTnvedValue(item?.tnved ?? item?.code ?? item?.tn_ved ?? item?.tnved_code ?? item?.tnvedCode ?? '');
+          const score = Number(
+            item?.bigdata_similarity ?? item?.big_data_similarity ?? item?.vector_similarity ?? item?.score ?? item?.goods_types_score,
+          );
+          if (!name && !code) return [];
+          return [{ name: name || code, code: code || undefined, score: Number.isFinite(score) ? score : undefined }];
+        }
+
+        const name = normalizeTnvedValue(item) || String(item);
+        return name ? [{ name }] : [];
+      });
+
+      items.push(...normalizedRawItems);
     }
 
     if (!items.length && analyzer?.ai?.products?.length) {
