@@ -859,6 +859,7 @@ export default function AiCompanyAnalysisTab() {
   const [activeSummary, setActiveSummary] = useState<{ running: number; queued: number; total: number } | null>(null);
   const [integrationHealth, setIntegrationHealth] = useState<AiIntegrationHealth | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const selectionAnchorInnRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [page, setPage] = useState(1);
   const [pageSize, setPageSize] = useState<number>(() => {
@@ -1500,7 +1501,38 @@ export default function AiCompanyAnalysisTab() {
       else next.delete(inn);
       return next;
     });
+    selectionAnchorInnRef.current = inn;
   }, []);
+
+  const setSelectedRangeValue = useCallback(
+    (inn: string, value: boolean | 'indeterminate', withShift: boolean) => {
+      const shouldSelect = value === 'indeterminate' ? true : Boolean(value);
+      const anchorInn = selectionAnchorInnRef.current;
+      const currentIndex = companies.findIndex((c) => c.inn === inn);
+      const anchorIndex = anchorInn ? companies.findIndex((c) => c.inn === anchorInn) : -1;
+
+      if (!withShift || currentIndex < 0 || anchorIndex < 0) {
+        setSelectedValue(inn, value);
+        return;
+      }
+
+      const [start, end] = currentIndex > anchorIndex ? [anchorIndex, currentIndex] : [currentIndex, anchorIndex];
+
+      setSelected((prev) => {
+        const next = new Set(prev);
+        for (let idx = start; idx <= end; idx += 1) {
+          const rangeInn = companies[idx]?.inn;
+          if (!rangeInn) continue;
+          if (shouldSelect) next.add(rangeInn);
+          else next.delete(rangeInn);
+        }
+        return next;
+      });
+
+      selectionAnchorInnRef.current = inn;
+    },
+    [companies, setSelectedValue],
+  );
 
   const toggleSelectAll = useCallback((checked: boolean) => {
     setSelected((prev) => {
@@ -2789,7 +2821,12 @@ export default function AiCompanyAnalysisTab() {
                             <td className="px-4 py-4 align-top">
                               <Checkbox
                                 checked={companySelected}
-                                onCheckedChange={(value) => setSelectedValue(company.inn, value)}
+                                onCheckedChange={(value) => setSelectedRangeValue(company.inn, value, false)}
+                                onClick={(event) => {
+                                  if (!event.shiftKey) return;
+                                  event.preventDefault();
+                                  setSelectedRangeValue(company.inn, !companySelected, true);
+                                }}
                                 aria-label={`Выбрать компанию ${companyLabel}`}
                               />
                             </td>
