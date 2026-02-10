@@ -163,6 +163,22 @@
 5. `equipment_selection`
    - primary: `GET /v1/equipment-selection/by-inn/{inn}`
 
+Дополнительно для fallback-кейсов (когда сайт недоступен):
+- После `analyze_json` код нормализует ответ и пытается извлечь `prodclass_by_okved`
+  из нескольких возможных форматов контракта:
+  - прямые поля: `prodclass_by_okved`, `prodclass`;
+  - вложенный объект: `parsed.PRODCLASS` / `parsed.prodclass`;
+  - текстовые поля: `answer`, `raw_response`, `response` (с извлечением числового id).
+- Если `prodclass_by_okved` найден, значение сохраняется в `dadata_result`
+  (в одну из доступных колонок: `prodclass_by_okved`,
+  `analysis_prodclass_by_okved`, `prodclass_by_okved_score`).
+- При наличии текстовой колонки класса (`analysis_class` или
+  `analysis_found_class`) туда также пишется fallback-id как строка,
+  чтобы UI мог отобразить найденный класс даже при отсутствии `pars_site`.
+- Для шага `ib_match` fallback определяется тем же нормализатором ответа:
+  если зафиксирован `site_unavailable`/`okved_fallback_used`, шаг может быть
+  помечен как успешно пропущенный (без hard-fail пайплайна).
+
 Перед каждой попыткой шага обязательно делается `/health`.
 
 ## 5) Что происходит, если что-то не найдено

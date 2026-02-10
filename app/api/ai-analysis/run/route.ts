@@ -442,6 +442,9 @@ async function ensureIntegrationHealthy(context: {
 }
 
 function hasOkvedFallbackSignal(data: unknown): boolean {
+  const extracted = extractAnalyzeJsonFallback(data);
+  if (extracted.used) return true;
+
   if (!data || typeof data !== 'object') return false;
 
   const root = data as {
@@ -473,13 +476,144 @@ function hasOkvedFallbackSignal(data: unknown): boolean {
   );
 }
 
+function parseProdclassIdFromValue(value: unknown): number | null {
+  if (typeof value === 'number' && Number.isFinite(value)) {
+    return Math.trunc(value);
+  }
+
+  if (typeof value === 'string') {
+    const direct = Number(value.trim());
+    if (Number.isFinite(direct)) {
+      return Math.trunc(direct);
+    }
+
+    const match = value.match(/\d+/);
+    if (match) {
+      const parsed = Number(match[0]);
+      if (Number.isFinite(parsed)) {
+        return Math.trunc(parsed);
+      }
+    }
+  }
+
+  return null;
+}
+
+function extractProdclassByOkved(payload: Record<string, unknown>): number | null {
+  const direct = parseProdclassIdFromValue(payload.prodclass_by_okved ?? payload.prodclass);
+  if (direct != null) return direct;
+
+  const parsed = payload.parsed;
+  if (parsed && typeof parsed === 'object') {
+    const value = parseProdclassIdFromValue((parsed as Record<string, unknown>).PRODCLASS);
+    if (value != null) return value;
+    return parseProdclassIdFromValue((parsed as Record<string, unknown>).prodclass);
+  }
+
+  return parseProdclassIdFromValue(payload.answer ?? payload.raw_response ?? payload.response);
+}
+
+function extractAnalyzeJsonFallback(data: unknown): { used: boolean; prodclassByOkved: number | null } {
+  if (!data || typeof data !== 'object') {
+    return { used: false, prodclassByOkved: null };
+  }
+
+  const root = data as Record<string, unknown>;
+  const candidates: Record<string, unknown>[] = [root];
+
+  const siteUnavailable = root.site_unavailable;
+  if (siteUnavailable && typeof siteUnavailable === 'object') {
+    candidates.push(siteUnavailable as Record<string, unknown>);
+  }
+
+  const externalResponse = root.external_response;
+  if (externalResponse && typeof externalResponse === 'object') {
+    candidates.push(externalResponse as Record<string, unknown>);
+    const nested = (externalResponse as Record<string, unknown>).site_unavailable;
+    if (nested && typeof nested === 'object') {
+      candidates.push(nested as Record<string, unknown>);
+    }
+  }
+
+  const externalResponseRaw = root.external_response_raw;
+  if (externalResponseRaw && typeof externalResponseRaw === 'object') {
+    candidates.push(externalResponseRaw as Record<string, unknown>);
+    const nested = (externalResponseRaw as Record<string, unknown>).site_unavailable;
+    if (nested && typeof nested === 'object') {
+      candidates.push(nested as Record<string, unknown>);
+    }
+  }
+
+  const runs = Array.isArray(root.runs) ? root.runs : [];
+  for (const run of runs) {
+    if (run && typeof run === 'object') {
+      candidates.push(run as Record<string, unknown>);
+      const nested = (run as Record<string, unknown>).site_unavailable;
+      if (nested && typeof nested === 'object') {
+        candidates.push(nested as Record<string, unknown>);
+      }
+    }
+  }
+
+  let used = false;
+  let prodclassByOkved: number | null = null;
+
+  for (const item of candidates) {
+    if (item.okved_fallback_used === true || Boolean(item.site_unavailable)) {
+      used = true;
+    }
+
+    if (prodclassByOkved == null) {
+      prodclassByOkved = extractProdclassByOkved(item);
+    }
+  }
+
+  return { used, prodclassByOkved };
+}
+
+async function saveOkvedFallbackToDadata(inn: string, prodclassByOkved: number): Promise<void> {
+  const { rows } = await dbBitrix.query<{ column_name: string }>(
+    `SELECT column_name FROM information_schema.columns WHERE table_schema = 'public' AND table_name = 'dadata_result'`,
+  );
+  const names = new Set((rows ?? []).map((row) => row.column_name));
+
+  const prodclassColumn = ['prodclass_by_okved', 'analysis_prodclass_by_okved', 'prodclass_by_okved_score'].find((name) =>
+    names.has(name),
+  );
+  const analysisClassColumn = ['analysis_class', 'analysis_found_class'].find((name) => names.has(name));
+
+  const setters: string[] = [];
+  const values: any[] = [inn];
+
+  if (prodclassColumn) {
+    values.push(prodclassByOkved);
+    setters.push(`"${prodclassColumn}" = COALESCE("${prodclassColumn}", $${values.length})`);
+  }
+
+  if (analysisClassColumn) {
+    values.push(String(prodclassByOkved));
+    setters.push(`"${analysisClassColumn}" = COALESCE("${analysisClassColumn}", $${values.length})`);
+  }
+
+  if (!setters.length) return;
+
+  await dbBitrix.query(`UPDATE dadata_result SET ${setters.join(', ')} WHERE inn = $1`, values);
+}
+
 async function shouldUseOkvedFallbackForIbMatch(inn: string, timeoutMs: number): Promise<boolean> {
   const getRes = await callAiIntegration(`/v1/analyze-json/${encodeURIComponent(inn)}`, {
     method: 'GET',
     timeoutMs,
   });
 
-  if (getRes.ok && hasOkvedFallbackSignal(getRes.data)) {
+  const getExtracted = extractAnalyzeJsonFallback(getRes.ok ? getRes.data : null);
+  if (getRes.ok && getExtracted.prodclassByOkved != null) {
+    await saveOkvedFallbackToDadata(inn, getExtracted.prodclassByOkved).catch((error) =>
+      console.warn('failed to persist prodclass_by_okved fallback', error),
+    );
+  }
+
+  if (getRes.ok && getExtracted.used) {
     return true;
   }
 
@@ -489,7 +623,14 @@ async function shouldUseOkvedFallbackForIbMatch(inn: string, timeoutMs: number):
     timeoutMs,
   });
 
-  return postRes.ok && hasOkvedFallbackSignal(postRes.data);
+  const postExtracted = extractAnalyzeJsonFallback(postRes.ok ? postRes.data : null);
+  if (postRes.ok && postExtracted.prodclassByOkved != null) {
+    await saveOkvedFallbackToDadata(inn, postExtracted.prodclassByOkved).catch((error) =>
+      console.warn('failed to persist prodclass_by_okved fallback', error),
+    );
+  }
+
+  return postRes.ok && postExtracted.used;
 }
 
 async function runStep(inn: string, step: StepKey, timeoutMs: number) {
@@ -532,6 +673,15 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
         lastStatus = res.status;
 
         if (res.ok) {
+        if (step === 'analyze_json') {
+          const extracted = extractAnalyzeJsonFallback(res.data);
+          if (extracted.prodclassByOkved != null) {
+            await saveOkvedFallbackToDadata(inn, extracted.prodclassByOkved).catch((error) =>
+              console.warn('failed to persist prodclass_by_okved fallback', error),
+            );
+          }
+        }
+
         await safeLog({
           type: 'response',
           source: 'ai-integration',
