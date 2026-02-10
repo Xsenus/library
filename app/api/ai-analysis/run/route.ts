@@ -351,14 +351,14 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
     },
     fallbacks: [
       {
-        path: () => '/v1/ib-match',
-        label: 'POST ib-match',
-        method: 'POST',
-        body: (inn) => ({ inn, client_id: inn }),
-      },
-      {
         path: () => '/v1/ib-match/by-inn',
         label: 'POST ib-match/by-inn',
+        method: 'POST',
+        body: (inn) => ({ inn }),
+      },
+      {
+        path: () => '/v1/ib-match',
+        label: 'POST ib-match',
         method: 'POST',
         body: (inn) => ({ inn }),
       },
