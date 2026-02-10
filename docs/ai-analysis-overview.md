@@ -169,6 +169,11 @@
    источнику.
 
 2. **Оценка и уровень соответствия / найденный класс.**
+   - В UI блока «Уровень соответствия и найденный класс предприятия» приоритет
+     источников должен быть таким: `prodclass_score` ->
+     `description_okved_score` -> `okved_score` -> `analysis_match_level`.
+     Это предотвращает подмену «соответствия класса» метрикой
+     «описание сайта vs ОКВЭД».
    - Primary: `public.ai_site_prodclass` (schema `parsing_data`).
      ```sql
      SELECT prodclass, prodclass_score, description_score, okved_score,
@@ -195,6 +200,10 @@
    - Fallback 2: `public.dadata_result` (`bitrix_data` → `postgres`).
      Ищем `main_okved` по ИНН, конвертируем в `prodclass_by_okved` (оценка =
      `NULL`).
+     Для кейсов `site_unavailable` пайплайн дополнительно пытается
+     сохранить извлечённый `prodclass_by_okved` в `dadata_result`, чтобы
+     downstream-слои (UI/подбор оборудования) не оставались пустыми при
+     отсутствии `pars_site`.
 
 3. **Соответствие ИИ-описания сайта и ОКВЭД.**
    Сначала берём `description_score` или `okved_score` из последнего

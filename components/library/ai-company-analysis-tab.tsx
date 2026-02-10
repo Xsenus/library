@@ -2423,8 +2423,8 @@ export default function AiCompanyAnalysisTab() {
 
   const prodclassLabel = infoCompany?.prodclass_name ?? null;
   const prodclassScoreValue =
-    analyzerDescriptionOkvedScore ??
     analyzerProdclass?.score ??
+    analyzerDescriptionOkvedScore ??
     analyzerOkvedScore ??
     (infoCompany?.analysis_match_level != null ? Number(infoCompany.analysis_match_level) : null);
   const prodclassScoreText =
