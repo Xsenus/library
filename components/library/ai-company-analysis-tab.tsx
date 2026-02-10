@@ -34,6 +34,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Separator } from '@/components/ui/separator';
 import SquareImgButton from '@/components/library/square-img-button';
+import InlineRevenueBars from '@/components/library/inline-revenue-bar';
 import { cn } from '@/lib/utils';
 import type { Industry } from '@/lib/validators';
 import type { AiIntegrationHealth } from '@/lib/ai-integration';
@@ -93,6 +94,12 @@ type AiCompany = {
   branch_count: number | null;
   year: number | null;
   revenue: number | null;
+  revenue_1?: number | null;
+  revenue_2?: number | null;
+  revenue_3?: number | null;
+  income_1?: number | null;
+  income_2?: number | null;
+  income_3?: number | null;
   employee_count?: number | null;
   sites?: string[] | null;
   emails?: string[] | null;
@@ -125,6 +132,7 @@ type AiCompany = {
   main_okved?: string | null;
   queued_at?: string | null;
   queued_by?: string | null;
+  responsible?: string | null;
 };
 
 type FetchResponse = {
@@ -915,6 +923,7 @@ export default function AiCompanyAnalysisTab() {
   const [total, setTotal] = useState(0);
   const [search, setSearch] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
+  const [responsibleFilter, setResponsibleFilter] = useState('');
   const [industryId, setIndustryId] = useState<string>('all');
   const [okvedCode, setOkvedCode] = useState<string | undefined>(undefined);
   const [industries, setIndustries] = useState<Industry[]>([]);
@@ -1030,16 +1039,18 @@ export default function AiCompanyAnalysisTab() {
     let count = 0;
     if (search.trim()) count += 1;
     if (industryId !== 'all') count += 1;
+    if (responsibleFilter.trim()) count += 1;
     if (okvedCode) count += 1;
     count += statusFilters.length;
     return count;
-  }, [industryId, okvedCode, search, statusFilters]);
+  }, [industryId, okvedCode, responsibleFilter, search, statusFilters]);
 
   const hasFilters = activeFilterCount > 0;
 
   const resetFilters = useCallback(() => {
     setSearch('');
     setIndustryId('all');
+    setResponsibleFilter('');
     setOkvedCode(undefined);
     setStatusFilters([]);
     setPage(1);
@@ -1273,6 +1284,7 @@ export default function AiCompanyAnalysisTab() {
         if (debouncedSearch) params.set('q', debouncedSearch);
         if (okvedCode) params.set('okved', okvedCode);
         if (industryId !== 'all') params.set('industryId', industryId);
+        if (responsibleFilter.trim()) params.set('responsible', responsibleFilter.trim());
         statusFilters.forEach((status) => params.append('status', status));
 
         const res = await fetch(`/api/ai-analysis/companies?${params.toString()}`, { cache: 'no-store' });
@@ -1360,7 +1372,7 @@ export default function AiCompanyAnalysisTab() {
         setLoading(false);
       }
     },
-    [debouncedSearch, okvedCode, industryId, statusFilters, toast, startTransition],
+    [debouncedSearch, okvedCode, industryId, responsibleFilter, statusFilters, toast, startTransition],
   );
 
   useEffect(() => {
@@ -2845,6 +2857,8 @@ export default function AiCompanyAnalysisTab() {
                             ? company.analysis_score.toFixed(2)
                             : '—';
                         const revenueLabel = revenue !== '—' ? `${revenue} млн ₽` : '—';
+                        const reportYear = company.year != null && Number.isFinite(company.year) ? String(company.year) : '—';
+                        const responsibleLabel = company.responsible?.trim() || '—';
                         const progressPercent = Math.min(
                           100,
                           Math.max(0, Math.round((company.analysis_progress ?? 0) * 100)),
@@ -2950,8 +2964,22 @@ export default function AiCompanyAnalysisTab() {
                                     Выручка: <span className="text-foreground">{revenueLabel}</span>
                                   </span>
                                   <span>
+                                    Год отчета: <span className="text-foreground">{reportYear}</span>
+                                  </span>
+                                  <span>
+                                    Ответственный: <span className="text-foreground">{responsibleLabel}</span>
+                                  </span>
+                                  <span>
                                     Оценка: <span className="text-foreground">{score}</span>
                                   </span>
+                                </div>
+                                <div className="w-[150px] h-[48px]">
+                                  <InlineRevenueBars
+                                    mode="stack"
+                                    revenue={[company.revenue_3, company.revenue_2, company.revenue_1, company.revenue]}
+                                    income={[company.income_3, company.income_2, company.income_1, null]}
+                                    year={company.year}
+                                  />
                                 </div>
                               </div>
                             </td>
@@ -3244,6 +3272,15 @@ export default function AiCompanyAnalysisTab() {
                   placeholder="Поиск по названию или ИНН"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              <div className="space-y-1">
+                <span className="text-[11px] uppercase text-muted-foreground">Ответственный</span>
+                <Input
+                  className="h-9 text-sm"
+                  placeholder="Поиск по ответственному"
+                  value={responsibleFilter}
+                  onChange={(e) => setResponsibleFilter(e.target.value)}
                 />
               </div>
               <div className="grid gap-4 md:grid-cols-2">
