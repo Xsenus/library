@@ -14,6 +14,8 @@ export const revalidate = 0;
 
 const rootsCache = new Map<number, { roots: string[]; ts: number }>();
 const ROOTS_TTL_MS = 10 * 60 * 1000;
+let b24MetaAvailableCache: { value: boolean; ts: number } | null = null;
+const B24_META_CHECK_TTL_MS = 5 * 60 * 1000;
 
 async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
   const now = Date.now();
@@ -32,6 +34,26 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
   const roots = rows.map((r) => r.root).filter(Boolean);
   rootsCache.set(industryId, { roots, ts: now });
   return roots;
+}
+
+async function isB24MetaAvailable(): Promise<boolean> {
+  const now = Date.now();
+  if (b24MetaAvailableCache && now - b24MetaAvailableCache.ts < B24_META_CHECK_TTL_MS) {
+    return b24MetaAvailableCache.value;
+  }
+
+  try {
+    const { rows } = await db.query<{ regclass: string | null }>(
+      `SELECT to_regclass('public.b24_company_meta') AS regclass`,
+    );
+    const value = !!rows[0]?.regclass;
+    b24MetaAvailableCache = { value, ts: now };
+    return value;
+  } catch (error) {
+    console.warn('Failed to check b24_company_meta existence', error);
+    b24MetaAvailableCache = { value: false, ts: now };
+    return false;
+  }
 }
 
 type OptionalColumnSpec = {
@@ -1397,6 +1419,7 @@ export async function GET(request: NextRequest) {
       industryId: searchParams.get('industryId') ?? undefined,
       q: searchParams.get('q') ?? undefined,
       sort: searchParams.get('sort') ?? undefined,
+      responsible: searchParams.get('responsible') ?? undefined,
     });
 
     const statusFilters = Array.from(
@@ -1407,6 +1430,7 @@ export async function GET(request: NextRequest) {
     const includeParent = searchParams.get('parent') === '1';
 
     const q = (base.q ?? '').trim();
+    const responsible = (base.responsible ?? '').trim();
     const offset = (base.page - 1) * base.pageSize;
 
     const existingColumns = await getExistingColumns();
@@ -1510,6 +1534,34 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    if (responsible) {
+      const b24MetaAvailable = await isB24MetaAvailable();
+      if (!b24MetaAvailable) {
+        return NextResponse.json({ items: [], total: 0, page: base.page, pageSize: base.pageSize });
+      }
+
+      const { rows: responsibleRows } = await db.query<{ inn: string }>(
+        `
+          SELECT inn
+          FROM b24_company_meta
+          WHERE COALESCE(assigned_name, '') ILIKE $1
+        `,
+        [`%${responsible}%`],
+      );
+
+      const responsibleInns = responsibleRows
+        .map((row) => String(row.inn ?? '').trim())
+        .filter(Boolean);
+
+      if (!responsibleInns.length) {
+        return NextResponse.json({ items: [], total: 0, page: base.page, pageSize: base.pageSize });
+      }
+
+      where.push(`d.inn = ANY($${i}::text[])`);
+      args.push(responsibleInns);
+      i++;
+    }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const orderSql =
@@ -1574,6 +1626,7 @@ export async function GET(request: NextRequest) {
       }
     }
     let contactsByInn = new Map<string, { emails?: any; webSites?: any }>();
+    let responsiblesByInn = new Map<string, string>();
     let equipmentByInn = new Map<string, any[]>();
     let siteAnalyzerByInn = new Map<string, SiteAnalyzerFallback>();
 
@@ -1598,6 +1651,26 @@ export async function GET(request: NextRequest) {
 
       equipmentByInn = await getEquipmentByInn(inns, companyIds);
       siteAnalyzerByInn = await loadSiteAnalyzerFallbacks(inns);
+
+      if (await isB24MetaAvailable()) {
+        try {
+          const { rows: responsibleRows } = await db.query<{ inn: string; assigned_name: string | null }>(
+            `
+              SELECT inn, assigned_name
+              FROM b24_company_meta
+              WHERE inn = ANY($1::text[])
+            `,
+            [inns],
+          );
+          responsiblesByInn = new Map(
+            responsibleRows
+              .map((row) => [String(row.inn ?? '').trim(), String(row.assigned_name ?? '').trim()] as const)
+              .filter(([inn, assignedName]) => !!inn && !!assignedName),
+          );
+        } catch (error) {
+          console.warn('Failed to load responsibles for AI analysis companies', error);
+        }
+      }
     }
 
     const prodclassIds = new Set<number>();
@@ -1806,6 +1879,7 @@ export async function GET(request: NextRequest) {
         analysis_pipeline: pipeline,
         queued_at: queuedAt,
         queued_by: queuedBy,
+        responsible: responsiblesByInn.get(core.inn) ?? null,
       };
     });
 
