@@ -31,6 +31,7 @@ type Props = {
   labelTone?: Partial<Record<Key, string>>;
   onStatusChange?: (status: StatusMap) => void;
   prefetchedUrls?: Partial<Record<Key, string | null>>;
+  publicProxy?: boolean;
 };
 
 export function GptImagePair({
@@ -40,6 +41,7 @@ export function GptImagePair({
   labelTone,
   onStatusChange,
   prefetchedUrls,
+  publicProxy = false,
 }: Props) {
   const hasEquipment = equipmentId != null;
   const [exists, setExists] = useState<Record<Key, boolean | null>>({ old: null, cryo: null });
@@ -59,13 +61,14 @@ export function GptImagePair({
       if (absolute.origin !== window.location.origin) {
         const proxy = new URL('/api/images/proxy', window.location.origin);
         proxy.searchParams.set('url', absolute.toString());
+        if (publicProxy) proxy.searchParams.set('embed', '1');
         return proxy.toString();
       }
       return absolute.toString();
     } catch {
       return url;
     }
-  }, []);
+  }, [publicProxy]);
 
   useEffect(() => {
     let cancelled = false;

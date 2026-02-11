@@ -1,6 +1,7 @@
 // app/api/okved/company/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
+import { requireApiAuth } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -8,6 +9,9 @@ export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireApiAuth();
+    if (!auth.ok) return auth.response;
+
     const { searchParams } = new URL(request.url);
     const inn = (searchParams.get('inn') ?? '').trim();
     if (!inn) return NextResponse.json({ ok: false, error: 'inn required' });

@@ -44,7 +44,15 @@ class Database {
   }
 }
 
-export const db = new Database();
+declare global {
+  var __libraryMainDb: Database | undefined;
+}
+
+export const db = globalThis.__libraryMainDb ?? new Database();
+
+if (process.env.NODE_ENV !== 'production') {
+  globalThis.__libraryMainDb = db;
+}
 
 // Health check function
 export async function checkDatabaseConnection(): Promise<boolean> {

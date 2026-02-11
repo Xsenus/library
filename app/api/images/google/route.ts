@@ -1,6 +1,24 @@
 // app/api/images/google/route.ts
 import { NextRequest } from 'next/server';
+import { requireApiAuth } from '@/lib/api-auth';
+
 export const runtime = 'nodejs';
+
+const RATE_LIMIT_WINDOW_MS = 60_000;
+const RATE_LIMIT_MAX_REQUESTS = 30;
+
+type RateEntry = { count: number; resetAt: number };
+
+declare global {
+  var __libraryMainGoogleImageRateLimit: Map<string, RateEntry> | undefined;
+}
+
+const rateLimitStore =
+  globalThis.__libraryMainGoogleImageRateLimit ?? new Map<string, RateEntry>();
+
+if (process.env.NODE_ENV !== 'production') {
+  globalThis.__libraryMainGoogleImageRateLimit = rateLimitStore;
+}
 
 type GoogleItem = {
   link: string;
@@ -14,8 +32,44 @@ type GoogleItem = {
   };
 };
 
+function buildRateKey(req: NextRequest, userId: number): string {
+  const forwardedFor = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim();
+  const ip = forwardedFor || req.headers.get('x-real-ip') || 'unknown';
+  return `u:${userId}|ip:${ip}`;
+}
+
+function checkRateLimit(key: string): { ok: true } | { ok: false; retryAfterSec: number } {
+  const now = Date.now();
+  const current = rateLimitStore.get(key);
+
+  if (!current || now >= current.resetAt) {
+    rateLimitStore.set(key, { count: 1, resetAt: now + RATE_LIMIT_WINDOW_MS });
+    return { ok: true };
+  }
+
+  if (current.count >= RATE_LIMIT_MAX_REQUESTS) {
+    return { ok: false, retryAfterSec: Math.max(1, Math.ceil((current.resetAt - now) / 1000)) };
+  }
+
+  current.count += 1;
+  rateLimitStore.set(key, current);
+  return { ok: true };
+}
+
 export async function GET(req: NextRequest) {
   try {
+    const auth = await requireApiAuth();
+    if (!auth.ok) return auth.response;
+
+    const rateKey = buildRateKey(req, auth.session.id);
+    const limited = checkRateLimit(rateKey);
+    if (!limited.ok) {
+      return Response.json(
+        { error: 'Too many requests' },
+        { status: 429, headers: { 'Retry-After': String(limited.retryAfterSec) } },
+      );
+    }
+
     const { searchParams } = new URL(req.url);
     const q = searchParams.get('q')?.trim() ?? '';
     const num = Math.min(Number(searchParams.get('num') ?? 10), 10);

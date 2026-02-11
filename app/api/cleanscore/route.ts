@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { cleanScoreQuerySchema, cleanScoreRowSchema } from '@/lib/validators';
+import { requireApiAuth } from '@/lib/api-auth';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -9,6 +10,9 @@ export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
   try {
+    const auth = await requireApiAuth();
+    if (!auth.ok) return auth.response;
+
     const { searchParams } = new URL(req.url);
 
     // cleanScoreQuerySchema должен включать okvedId, okvedCode (оба optional)

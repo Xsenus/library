@@ -62,6 +62,7 @@ export function EmbedImagesSection({ equipmentId, imagesFromDb }: Props) {
                 equipmentId={equipmentId}
                 labelTone={TONES}
                 className="md:grid-cols-2"
+                publicProxy
                 onStatusChange={(status) => {
                   const available = status.old || status.cryo;
                   setGptAvailable(available);
