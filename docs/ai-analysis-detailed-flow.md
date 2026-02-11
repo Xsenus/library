@@ -159,7 +159,7 @@
    - fallback: `POST /v1/analyze-json` (`{inn}`)
 4. `ib_match`
    - primary: `GET /v1/ib-match/by-inn?inn=...`
-   - fallback: `POST /v1/ib-match` (`{inn, client_id}`), затем `POST /v1/ib-match/by-inn` (`{inn}`)
+   - fallback: при наличии `client_id` в локальной таблице `clients_requests` добавляется `POST /v1/ib-match` (`{inn, client_id}`), затем `POST /v1/ib-match/by-inn` (`{inn}`)
 5. `equipment_selection`
    - primary: `GET /v1/equipment-selection/by-inn/{inn}`
 
