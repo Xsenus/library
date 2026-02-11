@@ -1,244 +1,224 @@
-# Library (Next.js 14) — Навигатор по оборудованию
+# Library (Next.js 14) — навигатор оборудования
 
-Внутренняя панель на **Next.js 14 (App Router)** для поиска оборудования и смежных сущностей по иерархии БД. Страницы защищены авторизацией по cookie‑сессии, а данные берутся из PostgreSQL (pgvector) c дополнительными интеграциями Bitrix24, Google Custom Search и AI‑поиском. UI построен на **Tailwind CSS + shadcn/ui**.
-
----
-
-## 🚀 Ключевые возможности
-
-- **Защищённый доступ**: middleware проверяет cookie `cin_session`, layout валидирует статус пользователя в БД и выполняет редирект на `/login` при отсутствии сессии.
-- **Иерархический браузер**: вкладка «Библиотека» позволяет проходить цепочку *Отрасль → Класс → Цех → Оборудование* с дебаунсом, бесконечным скроллом и автоподбором выбранных элементов.
-- **CleanScore & модерация**: отдельная вкладка показывает таблицу лучших CleanScore, позволяет подтверждать значение `equipment_score_real` и синхронизирует состояние между вкладками.
-- **AI‑поиск**: вкладка «AI Search» вызывает `/api/ai-search`, комбинируя быстрые SQL‑запросы, pgvector kNN и внешнее API с эмбеддингами OpenAI.
-- **ОКВЭД‑аналитика**: вкладка «ОКВЭД» позволяет фильтровать компании, сортировать по выручке, управлять шириной колонок и переходить к карточкам оборудования.
-- **Резолвер товаров**: endpoint `/api/goods/[id]/resolve` ищет подходящее оборудование по связям, векторной близости и строковому совпадению, чтобы открыть цепочку в библиотеке.
-- **Bitrix24 интеграция**: API `/api/b24/*` дергают веб‑хуки Bitrix24, вытаскивают ответственных и цветовые статусы по ИНН с локальным кэшем, сборкой batch‑запросов и вспомогательными утилитами.
-- **Google Images и галерея**: `/api/images/google` оборачивает Google Custom Search и возвращает нормализованный список превью для карточки оборудования.
-- **Дневные квоты**: `/api/user/quota` считает уникальные просмотры карточек за день (Europe/Amsterdam), применяет персональные лимиты и сохраняет прогресс в интерфейсе через хук `useDailyQuota`.
+Внутреннее веб‑приложение для команды продаж/аналитики: помогает находить оборудование по иерархии (отрасль → класс → цех → оборудование), смотреть расширенную карточку, работать с CleanScore, ОКВЭД, AI‑поиском и AI‑анализом компаний.
 
 ---
 
-## 🧩 Технологический стек
+## 1) Что это за проект
 
-- **Next.js 14 (App Router)** + TypeScript strict.
-- **Tailwind CSS** и **shadcn/ui** для компонентов и темизации.
-- **PostgreSQL + pg** (два пула: основной и Bitrix), поддержка pgvector и параметризованные запросы.
-- **Zod** для схем входящих и исходящих данных API.
-- **bcryptjs**, **jose** для аутентификации и JWT‑сессий.
-- **OpenAI / Custom AI сервис** для векторного поиска и рекомендаций.
+Приложение построено на **Next.js 14 (App Router)** и работает как единый full‑stack:
 
----
+- UI на React + Tailwind + shadcn/ui.
+- Backend на API‑роутах Next.js (`app/api/**`).
+- Основная БД PostgreSQL (`lib/db.ts`) + отдельный пул для Bitrix‑реплики (`lib/db-bitrix.ts`).
+- Авторизация через JWT cookie (`cin_session`).
 
-## 📦 Структура проекта (ключевые узлы)
-
-```
-app/
-├── (protected)/            # Все защищённые страницы
-│   ├── layout.tsx          # Проверка сессии и статуса пользователя
-│   ├── page.tsx            # Дашборд с ссылками на вкладки
-│   └── library/            # Вкладки Library / CleanScore / OKВЭД / AI
-├── login/                  # Страница входа
-├── api/                    # Next.js API routes
-│   ├── auth/               # Логин / логаут / статус
-│   ├── industries/, …      # Иерархические списки
-│   ├── ai-search/          # AI подсказки по оборудованию
-│   ├── goods/[id]/resolve  # Резолвер цепочек для товаров
-│   ├── okved/              # ОКВЭД + Bitrix24 аналитика
-│   ├── b24/                # Прокси для Bitrix24 webhook
-│   └── user/quota          # Дневные лимиты
-├── middleware.ts           # Защита маршрутов по cookie
-└── globals.css             # Tailwind baseline
-
-components/
-├── library/                # Карточки, списки, вкладки
-└── ui/                     # shadcn/ui
-
-lib/
-├── db.ts                   # Основной пул PostgreSQL
-├── db-bitrix.ts            # Подключение к Bitrix реплике
-├── auth.ts                 # JWT cookie-сессии
-├── quota.ts                # Подсчёт лимитов
-├── b24.ts                  # Помощники для Bitrix24 API
-└── validators.ts           # Zod-схемы
-```
+Ключевая идея: пользователь работает в одном интерфейсе, а API внутри этого же приложения агрегирует данные из локальной БД, Bitrix24, Google Custom Search и внешней AI‑интеграции.
 
 ---
 
-## 🔌 Основные API-роуты
+## 2) Главные возможности
 
-| Группа | Endpoint | Назначение |
-| --- | --- | --- |
-| Auth | `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` | Cookie‑сессия, статус пользователя, выход. |
-| Library | `/api/industries`, `/api/industries/[id]/prodclasses`, `/api/prodclasses/[id]/workshops`, `/api/workshops/[id]/equipment`, `/api/equipment/[id]` | Иерархические списки и карточки оборудования. |
-| CleanScore | `GET /api/cleanscore` | Таблица агрегированных CleanScore с пагинацией и фильтрами. |
-| Goods | `GET /api/goods/[id]/resolve` | Поиск цепочки для товара по связям, вектору или названию. |
-| AI Search | `POST /api/ai-search` | Комбинированный SQL + AI‑поиск по оборудованию/продукции. |
-| OKВЭД | `GET /api/okved`, `/api/okved/main`, `/api/okved/companies`, `/api/okved/company` | Данные по ОКВЭД, компаниям, ответственным и цветам из Bitrix24. |
-| Bitrix24 | `POST /api/b24/responsibles`, `POST /api/b24/resolve-company` | Интеграция с CRM, получение ответственных по ИНН, резолв компании. |
-| Utility | `GET /api/images/google`, `GET /api/user/quota` | Поиск изображений в Google, расчёт дневного лимита просмотров. |
+1. **Защищённый кабинет**
+   - middleware пропускает только публичные пути (`/login`, `/embed/*`, статика), остальные страницы требуют cookie сессии.
+   - защищённый layout дополнительно проверяет актуальный статус пользователя в БД (`activated`).
 
----
+2. **Библиотека оборудования**
+   - вкладка с иерархией: `Отрасль → Класс → Цех → Оборудование`.
+   - поиск по каждому уровню, пагинация, бесконечный скролл, автодовыбор связанных сущностей.
 
-## 🔐 Аутентификация и лимиты
+3. **Карточка оборудования + дневные лимиты**
+   - подробные поля оборудования (описания, проблемы, преимущества, ссылки, изображения).
+   - учёт уникальных просмотров в `users_activity` и персональные лимиты/безлимит для сотрудников.
 
-- Логин принимает bcrypt/plaintext пароли, сверяет с таблицей `users_irbis`, создаёт JWT (HS256) и выставляет httpOnly‑куку `cin_session`. Флаг `remember` переводит cookie в «длинный» (7 дней).
-- Middleware блокирует все страницы кроме `/login`, `_next/*`, `/static/*`, `/api/*`, перенаправляя незалогиненных пользователей на форму входа и сохраняя `next` в query string.
-- Layout для защищённых маршрутов дополнительно проверяет актуальное состояние пользователя (активация, `irbis_worker`) через `getLiveUserState`. Если запись неактивна — делает redirect обратно на `/login`.
-- Endpoint `/api/user/quota` использует `resolveUserLimit` и `countUsedToday`, чтобы вернуть дневной лимит, остаток и HTTP‑заголовки `X-Views-Limit/X-Views-Remaining`. Клиентский хук `useDailyQuota` оборачивает его в React‑состояние и оптимистично обновляет остаток.
+4. **CleanScore и модерация**
+   - отдельный таб с лучшими позициями по clean_score, фильтрами и подтверждением `equipment_score_real`.
 
----
+5. **ОКВЭД‑аналитика**
+   - подбор компаний по ОКВЭД, сортировка и навигация обратно к оборудованию.
 
-## 🌐 Интеграции и внешние сервисы
+6. **AI Search**
+   - комбинированный поиск: быстрый SQL, fallback на vector/AI‑сервис, логирование запросов в debug‑журнал.
 
-- **Google Custom Search**: API‑роут подставляет ключ/ID из переменных окружения, ограничивает ответ полями `link`, `thumbnail`, `context`. Ошибки возвращаются в JSON с кодом Google API.
-- **AI search backend**: `AI_SEARCH_BASE` задаёт URL собственного сервиса, `OPENAI_API_KEY` и `OPENAI_EMBED_MODEL` пробрасываются дальше для генерации эмбеддингов. При неудаче используется локальный SQL/pgvector фолбэк.
-- **Bitrix24**: вспомогательный модуль `lib/b24.ts` строит batch‑запросы (`b24BatchJson`), нормализует URL портала и кидает ошибки, если веб‑хук не настроен. Endpoint `/api/b24/responsibles` кэширует ИНН и имена ответственных в памяти с TTL.
+7. **AI Analysis (очередь анализа компаний по ИНН)**
+   - постановка задач в очередь, воркер с advisory lock, пошаговый/полный режим, ретраи/таймауты, stop‑команды.
 
----
+8. **Интеграция с Bitrix24**
+   - API‑роуты для резолва компании по ИНН, ответственных и контактных данных.
 
-## ⚙️ Переменные окружения
-
-Скопируйте `.env.example` в `.env.local` и заполните значениями. Ключевые переменные:
-
-| Переменная | Назначение |
-| --- | --- |
-| `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD` | Подключение основного пула PostgreSQL для всех иерархических запросов. |
-| `JWT_SECRET` | Секрет для подписи JWT‑сессии, обязателен для логина. |
-| `USE_HTTPS` | Включает secure‑флаг cookie в продакшене (`true` при работе за HTTPS). |
-| `NEXT_PUBLIC_GPT_IMAGES_BASE` | Путь для локальных изображений карточки оборудования (используется на клиенте). |
-| `GOOGLE_CSE_KEY`, `GOOGLE_CSE_CX` | Ключ и идентификатор движка Google Custom Search для `/api/images/google`. |
-| `AI_SEARCH_BASE`, `OPENAI_API_KEY`, `OPENAI_EMBED_MODEL` | Бэкенд AI‑поиска, ключ OpenAI и модель эмбеддингов для комбинированного поиска. |
-| `B24_WEBHOOK_URL`, `B24_PORTAL_ORIGIN`, `B24_UF_INN_FIELDS`, `B24_UF_INN_FIELD`, `B24_COLOR_UF_FIELD` | Настройки доступа к Bitrix24, список UF‑полей ИНН и поле цвета статусного маркера. |
-| `BITRIX_DB_HOST`, `BITRIX_DB_PORT`, `BITRIX_DB_NAME`, `BITRIX_DB_USER`, `BITRIX_DB_PASSWORD`, `BITRIX_DB_SSL` | Отдельное подключение к реплике Bitrix (таблица `dadata_result`). |
-
-> `.env` и `.env.*` игнорируются Git. Не храните реальные секреты в репозитории — оставляйте только `.env.example` с плейсхолдерами.
+9. **Встраиваемая карточка**
+   - публичная страница `/embed/equipment` открывает карточку только по безопасному `hash_equipment`.
 
 ---
 
-## 🛠️ Локальный запуск
+## 3) Архитектура
+
+### Frontend
+
+- `app/login/page.tsx` — вход.
+- `app/(protected)/layout.tsx` — защита приватных страниц.
+- `app/(protected)/library/LibraryClient.tsx` — основной клиентский экран с табами.
+- `components/library/*` — табы и специализированные блоки (AI Search, AI Analysis, OKVED, карточки и т.д.).
+- `components/ui/*` — базовые UI‑компоненты shadcn/ui.
+
+### Backend (Next API)
+
+- `app/api/auth/*` — логин/логаут/проверка сессии.
+- `app/api/industries/*`, `prodclasses/*`, `workshops/*`, `equipment/*` — иерархия и карточки.
+- `app/api/ai-search/route.ts` — AI поиск.
+- `app/api/ai-analysis/*` — очередь/запуск/остановка/список компаний для анализа.
+- `app/api/ai-debug/events/route.ts` — журнал AI‑событий.
+- `app/api/b24/*`, `app/api/okved/*` — Bitrix24 и ОКВЭД.
+- `app/api/images/*` — картинки Google/proxy.
+- `app/api/goods/[id]/resolve/route.ts` — резолв товара в цепочку библиотеки.
+- `app/api/user/quota/route.ts` — лимиты просмотров за день.
+
+### Слой библиотек (`lib/*`)
+
+- `auth.ts` — JWT cookie сессии.
+- `db.ts`, `db-bitrix.ts` — подключения к БД.
+- `quota.ts` — лимиты и подсчёт просмотров.
+- `equipment.ts` — получение карточки оборудования.
+- `ai-integration.ts`, `ai-analysis-config.ts`, `ai-analysis-types.ts` — интеграция AI‑анализа.
+- `b24.ts`, `b24-meta.ts`, `company-contacts.ts` — интеграция Bitrix24/контакты.
+- `validators.ts` — входные и выходные схемы (Zod).
+- `ai-debug.ts` — запись/чтение debug‑событий.
+
+---
+
+## 4) Поток запроса (как приложение работает по шагам)
+
+1. Пользователь открывает страницу.
+2. `middleware.ts` проверяет, нужен ли логин.
+3. Для защищённых страниц `app/(protected)/layout.tsx` валидирует живой статус пользователя в БД.
+4. `LibraryClient.tsx` подгружает профиль (`/api/auth/me`) и дальше запрашивает нужные данные из API.
+5. API‑роуты валидируют входные параметры через Zod, делают SQL‑запросы через `db`/`dbBitrix`.
+6. Ответы возвращаются в UI; пользователь может углубляться в иерархию или запускать AI‑процессы.
+7. Для AI‑операций дополнительно пишутся события в debug‑таблицу и обновляется прогресс в служебных таблицах.
+
+---
+
+## 5) Авторизация и роли
+
+- Логин: `POST /api/auth/login`.
+- Сессия хранится в cookie `cin_session` (JWT, `httpOnly`, `sameSite=lax`).
+- Проверка сессии: `GET /api/auth/me`.
+- Выход: `POST /api/auth/logout`.
+
+Ролевые признаки:
+
+- `activated` — доступ разрешён/запрещён.
+- `irbis_worker` — сотрудник (доступ к расширенным вкладкам и логике квот).
+- `is_admin` вычисляется по логину `admin` (в отдельных местах, например очистка AI debug).
+
+---
+
+## 6) Квоты просмотров
+
+Логика квот применяется при открытии `GET /api/equipment/[id]`:
+
+- если пользователь безлимитный — карточка всегда доступна;
+- если лимитный — учитываются только **уникальные** карточки за текущий день;
+- таймзона дневного окна: `Europe/Amsterdam`;
+- в ответе отдаются служебные заголовки `X-Views-Limit` и `X-Views-Remaining`.
+
+---
+
+## 7) AI Search
+
+`POST /api/ai-search`:
+
+- делает быстрые SQL‑поиски по товарам/оборудованию/классам;
+- при необходимости вызывает внешний AI endpoint (`AI_SEARCH_BASE`) и эмбеддинги OpenAI;
+- нормализует и дедуплицирует результаты;
+- логирует события в AI debug журнал.
+
+---
+
+## 8) AI Analysis (очередной анализ компаний)
+
+Основные endpoint’ы:
+
+- `GET/POST /api/ai-analysis/run` — старт анализа (моментальный/через очередь).
+- `GET /api/ai-analysis/queue` — состояние очереди и активных задач.
+- `POST /api/ai-analysis/stop` — команда остановки для ИНН.
+- `GET /api/ai-analysis/companies` — список компаний/статусов для UI.
+
+Особенности:
+
+- очередь на таблице `ai_analysis_queue`;
+- worker запускается в приложении и берёт advisory lock (защита от параллельных воркеров);
+- поддержка пошагового и full‑режима;
+- таймауты и ретраи конфигурируются через переменные окружения.
+
+Подробный разбор: `docs/ai-analysis-overview.md` и `docs/ai-analysis-detailed-flow.md`.
+
+---
+
+## 9) Переменные окружения
+
+Минимально необходимые:
+
+- `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`
+- `JWT_SECRET`
+
+Часто используемые интеграции:
+
+- `AI_SEARCH_BASE`, `OPENAI_API_KEY`, `OPENAI_EMBED_MODEL`
+- `AI_INTEGRATION_BASE` (или `AI_ANALYZE_BASE` / `ANALYZE_BASE`)
+- `B24_WEBHOOK_URL`, `B24_PORTAL_ORIGIN`
+- `GOOGLE_CSE_KEY`, `GOOGLE_CSE_CX`
+- `BITRIX_DB_*`
+
+См. полный шаблон: `.env.example`.
+
+---
+
+## 10) Локальный запуск
 
 ```bash
-# 1) Установить зависимости
 npm ci
-
-# 2) Создать файл окружения
 cp .env.example .env.local
-# затем заполнить переменные (PostgreSQL, JWT_SECRET и др.)
-
-# 3) Запустить dev-сервер
 npm run dev
-# http://localhost:3000
 ```
 
-### Docker Compose (демо)
+По умолчанию: `http://localhost:3000`.
 
-Для быстрой демонстрации можно собрать контейнеры.
+Сборка/прод:
+
+```bash
+npm run build
+npm run start
+```
+
+---
+
+## 11) Docker
+
+В репозитории есть `Dockerfile`, `docker-compose.yml`, `run.sh` для контейнерного запуска.
 
 ```bash
 docker compose up --build
-# app: http://localhost:3000
-# db : postgres://library_readonly:readonly_password@localhost:5432/library_db
 ```
 
-Перед запуском подготовьте `db/init.sql` с таблицами `ib_industry`, `ib_prodclass`, `ib_workshops`, `ib_equipment` и демо‑данными под структуру запросов.
+---
+
+## 12) Встраиваемая карточка (`/embed/equipment`)
+
+- страница публичная и не требует cookie‑сессии;
+- принимает `hash_equipment` (или совместимые алиасы параметра);
+- ищет оборудование по публичному хэшу;
+- может показываться во внешнем `iframe` (заголовки настроены в `next.config.js`).
+
+Важно: для работы нужно заполнить `ib_equipment.hash_equipment` и обеспечить уникальность значения.
 
 ---
 
-## 🧷 Встраивание карточек оборудования
+## 13) Скрипты
 
-Чтобы можно было показывать карточку оборудования внутри `<iframe>` на сторонних сайтах (например, в корпоративном портале или на лендинге), в `next.config.js` добавлены специальные HTTP‑заголовки для маршрутов `/embed/*`.
+- `npm run dev` — запуск dev сервера.
+- `npm run build` — production build.
+- `npm run start` — запуск production сервера.
+- `npm run lint` — линтер.
+- `npm run backfill:equipment-hash` — заполнение `hash_equipment` для старых записей.
 
-- `Content-Security-Policy: frame-ancestors 'self' https: http:` — разрешает загружать страницу не только с текущего домена, но и с любых HTTP/HTTPS источников.
-- `X-Frame-Options: ALLOWALL` — отключает стандартный запрет браузеров на встраивание страницы.
-
-Важно: открывайте публично только embed-маршруты, остальные страницы остаются защищёнными middleware и cookie-сессией.
-
----
-
-## 🧪 Скрипты npm
-
-- `npm run dev` — Next.js dev mode.
-- `npm run build` — продакшн сборка.
-- `npm run start` — запуск собранного приложения.
-- `npm run lint` — ESLint (`next/core-web-vitals`).
-- `npm run backfill:equipment-hash` — генерация `hash_equipment` для существующих записей в таблице `ib_equipment`.
-
----
-
-## 🔒 Подготовка hash_equipment в базе данных
-
-Страница встраиваемой карточки оборудования (`/embed/equipment`) теперь работает **только** по публичному хэшу. Чтобы закрыть доступ по последовательным ID и обеспечить корректную работу приложения, подготовьте таблицу `ib_equipment`.
-
-1. **Создайте колонку и включите расширение для генерации случайных значений.**
-
-   ```sql
-   CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
-   ALTER TABLE ib_equipment
-     ADD COLUMN IF NOT EXISTS hash_equipment TEXT;
-   ```
-
-2. **Заполните пустые значения (можно SQL-скриптом либо готовым Node-скриптом).**
-
-   Вариант на SQL:
-
-   ```sql
-   UPDATE ib_equipment
-      SET hash_equipment = encode(gen_random_bytes(16), 'hex')
-    WHERE hash_equipment IS NULL OR length(trim(hash_equipment)) = 0;
-   ```
-
-   Либо выполните Node-скрипт, который заполнит только отсутствующие хэши и гарантирует уникальность:
-
-   ```bash
-   PGHOST=... PGUSER=... PGPASSWORD=... PGDATABASE=... npm run backfill:equipment-hash
-   ```
-
-3. **Зафиксируйте ограничения для новых строк.**
-
-   ```sql
-   ALTER TABLE ib_equipment
-     ALTER COLUMN hash_equipment SET NOT NULL;
-
-   ALTER TABLE ib_equipment
-     ADD CONSTRAINT ib_equipment_hash_equipment_unique UNIQUE (hash_equipment);
-
-   CREATE INDEX IF NOT EXISTS idx_ib_equipment_hash_equipment ON ib_equipment (hash_equipment);
-   ```
-
-4. **Автоматически выдавайте хэш при вставке.**
-
-   ```sql
-   CREATE OR REPLACE FUNCTION set_equipment_hash()
-   RETURNS TRIGGER AS $$
-   BEGIN
-     IF NEW.hash_equipment IS NULL OR length(trim(NEW.hash_equipment)) = 0 THEN
-       NEW.hash_equipment := encode(gen_random_bytes(16), 'hex');
-     END IF;
-     RETURN NEW;
-   END;
-   $$ LANGUAGE plpgsql;
-
-   DROP TRIGGER IF EXISTS trg_set_equipment_hash ON ib_equipment;
-
-   CREATE TRIGGER trg_set_equipment_hash
-   BEFORE INSERT ON ib_equipment
-   FOR EACH ROW
-   EXECUTE FUNCTION set_equipment_hash();
-   ```
-
-После выполнения шагов новые записи автоматически получают безопасный публичный идентификатор, а существующие карточки становятся доступны только по `hash_equipment`.
-
----
-
-## 🔐 Рекомендации по безопасности
-
-- Меняйте все секреты при утечке и не коммитьте реальные `.env` файлы. Пример `.env.example` содержит только плейсхолдеры и безопасные значения по умолчанию.
-- Для продакшена включайте `USE_HTTPS=true`, храните `JWT_SECRET` в хранилищах секретов, ограничивайте доступ к БД и Bitrix webhook.
-- Рассмотрите добавление CI для запуска `npm run lint`/`npm run build` и сканера секретов перед деплоем.
-
----
-
-## 📜 Лицензия
-
-MIT
