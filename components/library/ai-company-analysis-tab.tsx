@@ -58,6 +58,7 @@ const stepOptions: { key: StepKey; label: string }[] = [
 
 const PAGE_SIZE_STORAGE_KEY = 'ai-analysis-page-size';
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 75, 100];
+const SCORE_VALUE_CLASS = 'text-foreground text-2xl leading-none font-semibold tabular-nums';
 
 type ColumnWidthKey = 'company' | 'contacts' | 'status' | 'pipeline' | 'actions';
 
@@ -3014,17 +3015,17 @@ export default function AiCompanyAnalysisTab() {
                                   <span>
                                     Ответственный: <span className="text-foreground">{responsibleLabel}</span>
                                   </span>
-                                  <span>
-                                    Оценка: <span className="text-foreground text-[300%] leading-none font-semibold">{score}</span>
-                                  </span>
                                 </div>
-                                <div className="w-[150px] h-[48px]">
-                                  <InlineRevenueBars
-                                    mode="stack"
-                                    revenue={[company.revenue_3, company.revenue_2, company.revenue_1, company.revenue]}
-                                    income={[company.income_3, company.income_2, company.income_1, null]}
-                                    year={company.year}
-                                  />
+                                <div className="flex items-end gap-3">
+                                  <div className="h-[48px] w-[150px]">
+                                    <InlineRevenueBars
+                                      mode="stack"
+                                      revenue={[company.revenue_3, company.revenue_2, company.revenue_1, company.revenue]}
+                                      income={[company.income_3, company.income_2, company.income_1, null]}
+                                      year={company.year}
+                                    />
+                                  </div>
+                                  <div className={SCORE_VALUE_CLASS}>{score}</div>
                                 </div>
                               </div>
                             </td>
@@ -3121,7 +3122,7 @@ export default function AiCompanyAnalysisTab() {
                                   </div>
                                   <div>
                                     <div className="uppercase">Оценка</div>
-                                    <div className="text-foreground text-[300%] leading-none font-semibold">{score}</div>
+                                    <div className={SCORE_VALUE_CLASS}>{score}</div>
                                   </div>
                                 </div>
                                 {finishedAt && (
@@ -3497,7 +3498,9 @@ export default function AiCompanyAnalysisTab() {
                             <span>ИНН {item.inn}</span>
                             {queuedTime && <span>в очереди с {queuedTime}</span>}
                             <span>Попыток: {attempts}</span>
-                            <span>Оценка: <span className="text-foreground text-[300%] leading-none font-semibold">{score}</span></span>
+                            <span>
+                              Оценка: <span className={SCORE_VALUE_CLASS}>{score}</span>
+                            </span>
                             <Badge variant="outline" className="whitespace-nowrap text-foreground">
                               {statusLabel}
                             </Badge>
@@ -3747,7 +3750,7 @@ export default function AiCompanyAnalysisTab() {
                         </div>
                         <div>
                           <div className="uppercase">Оценка</div>
-                          <div className="text-foreground text-[300%] leading-none font-semibold">{score ?? '—'}</div>
+                          <div className={SCORE_VALUE_CLASS}>{score ?? '—'}</div>
                         </div>
                         <div>
                           <div className="uppercase">Длительность</div>
