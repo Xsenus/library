@@ -231,6 +231,11 @@ function formatDuration(ms: number | null | undefined): string {
   return parts.join(':');
 }
 
+function formatAnalysisScore(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return value.toFixed(2);
+}
+
 function getActiveElapsedMs(company: AiCompany, nowMs: number): number | null {
   const startedTs = toTimestamp(company.analysis_started_at);
   if (startedTs == null) return null;
@@ -2852,10 +2857,7 @@ export default function AiCompanyAnalysisTab() {
                           getSyncedDurationMs(company, state.running, nowMs, durationSyncByInn[company.inn]),
                         );
                         const attempts = company.analysis_attempts != null ? company.analysis_attempts : '—';
-                        const score =
-                          company.analysis_score != null && Number.isFinite(company.analysis_score)
-                            ? company.analysis_score.toFixed(2)
-                            : '—';
+                        const score = formatAnalysisScore(company.analysis_score);
                         const revenueLabel = revenue !== '—' ? `${revenue} млн ₽` : '—';
                         const reportYear = company.year != null && Number.isFinite(company.year) ? String(company.year) : '—';
                         const responsibleLabel = company.responsible?.trim() || '—';
@@ -2970,7 +2972,7 @@ export default function AiCompanyAnalysisTab() {
                                     Ответственный: <span className="text-foreground">{responsibleLabel}</span>
                                   </span>
                                   <span>
-                                    Оценка: <span className="text-foreground">{score}</span>
+                                    Оценка: <span className="text-foreground text-[300%] leading-none font-semibold">{score}</span>
                                   </span>
                                 </div>
                                 <div className="w-[150px] h-[48px]">
@@ -3076,7 +3078,7 @@ export default function AiCompanyAnalysisTab() {
                                   </div>
                                   <div>
                                     <div className="uppercase">Оценка</div>
-                                    <div className="text-foreground">{score}</div>
+                                    <div className="text-foreground text-[300%] leading-none font-semibold">{score}</div>
                                   </div>
                                 </div>
                                 {finishedAt && (
@@ -3436,10 +3438,7 @@ export default function AiCompanyAnalysisTab() {
                       item.analysis_attempts != null && Number.isFinite(item.analysis_attempts)
                         ? item.analysis_attempts
                         : '—';
-                    const score =
-                      item.analysis_score != null && Number.isFinite(item.analysis_score)
-                        ? item.analysis_score.toFixed(2)
-                        : '—';
+                    const score = formatAnalysisScore(item.analysis_score);
 
                     return (
                       <div
@@ -3455,7 +3454,7 @@ export default function AiCompanyAnalysisTab() {
                             <span>ИНН {item.inn}</span>
                             {queuedTime && <span>в очереди с {queuedTime}</span>}
                             <span>Попыток: {attempts}</span>
-                            <span>Оценка: {score}</span>
+                            <span>Оценка: <span className="text-foreground text-[300%] leading-none font-semibold">{score}</span></span>
                             <Badge variant="outline" className="whitespace-nowrap text-foreground">
                               {statusLabel}
                             </Badge>
@@ -3661,10 +3660,8 @@ export default function AiCompanyAnalysisTab() {
                     infoCompany.analysis_attempts != null ? infoCompany.analysis_attempts : undefined;
                   const infoSites = toSiteArray(infoCompany.sites);
                   const okvedFallbackUsed = isOkvedFallbackUsed(infoCompany, infoSites);
-                  const score =
-                    infoCompany.analysis_score != null && Number.isFinite(infoCompany.analysis_score)
-                      ? infoCompany.analysis_score.toFixed(2)
-                      : undefined;
+                  const scoreRaw = formatAnalysisScore(infoCompany.analysis_score);
+                  const score = scoreRaw !== '—' ? scoreRaw : undefined;
 
                   return (
                     <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
@@ -3707,7 +3704,7 @@ export default function AiCompanyAnalysisTab() {
                         </div>
                         <div>
                           <div className="uppercase">Оценка</div>
-                          <div className="text-foreground">{score ?? '—'}</div>
+                          <div className="text-foreground text-[300%] leading-none font-semibold">{score ?? '—'}</div>
                         </div>
                         <div>
                           <div className="uppercase">Длительность</div>
