@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
 import { db } from '@/lib/db';
 import { okvedCompaniesQuerySchema, okvedCompanySchema } from '@/lib/validators';
+import { requireApiAuth } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -32,6 +33,9 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireApiAuth();
+    if (!auth.ok) return auth.response;
+
     const { searchParams } = new URL(request.url);
 
     const base = okvedCompaniesQuerySchema.parse({

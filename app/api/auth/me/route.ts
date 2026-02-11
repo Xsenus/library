@@ -37,7 +37,7 @@ export async function GET() {
   }
 
   const normLogin = (login ?? '').trim();
-  const fallbackLogin = typeof (sess as any).login === 'string' ? (sess as any).login : '';
+  const fallbackLogin = sess.login;
   const finalLogin = normLogin || fallbackLogin;
 
   const is_admin = finalLogin.toLowerCase() === 'admin';
@@ -114,15 +114,13 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    // limits в сессию — опционально; /api/user/quota и так читает из БД
     await createSession(
       {
         id: u.id,
         login: u.user_login,
         activated: u.activated,
         irbis_worker: u.irbis_worker,
-        limits: u.limits,
-      } as any,
+      },
       remember,
     );
 

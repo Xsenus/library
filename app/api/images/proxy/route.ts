@@ -1,4 +1,7 @@
 import { NextRequest } from 'next/server';
+import { lookup } from 'node:dns/promises';
+import { isIP } from 'node:net';
+import { requireApiAuth } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
 
@@ -6,6 +9,12 @@ const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 const DEFAULT_USER_AGENT =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/123 Safari/537.36';
 const DEFAULT_ACCEPT = 'image/avif,image/webp,image/png,image/svg+xml,image/*,*/*;q=0.8';
+const FETCH_TIMEOUT_MS = 10_000;
+const MAX_IMAGE_SIZE_BYTES = 8 * 1024 * 1024;
+const ALLOWED_HOSTS = (process.env.IMAGE_PROXY_ALLOWED_HOSTS ?? '')
+  .split(',')
+  .map((h) => h.trim().toLowerCase())
+  .filter(Boolean);
 
 function isAllowedUrl(url: URL): boolean {
   return ALLOWED_PROTOCOLS.has(url.protocol);
@@ -54,21 +63,121 @@ function buildBaseHeaders(req: NextRequest, target: URL, secFetchSite: string): 
   return headers;
 }
 
+function isPrivateIPv4(ip: string): boolean {
+  const [a, b] = ip.split('.').map((x) => Number(x));
+  if (a === 10) return true;
+  if (a === 127) return true;
+  if (a === 0) return true;
+  if (a === 169 && b === 254) return true;
+  if (a === 172 && b >= 16 && b <= 31) return true;
+  if (a === 192 && b === 168) return true;
+  return false;
+}
+
+function isPrivateIPv6(ip: string): boolean {
+  const normalized = ip.toLowerCase();
+  return (
+    normalized === '::1' ||
+    normalized.startsWith('fc') ||
+    normalized.startsWith('fd') ||
+    normalized.startsWith('fe80:') ||
+    normalized.startsWith('::ffff:127.')
+  );
+}
+
+function isDisallowedIp(ip: string): boolean {
+  const version = isIP(ip);
+  if (version === 4) return isPrivateIPv4(ip);
+  if (version === 6) return isPrivateIPv6(ip);
+  return true;
+}
+
+function isDisallowedHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase();
+  return host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local');
+}
+
+function isHostAllowedByAllowlist(hostname: string): boolean {
+  if (ALLOWED_HOSTS.length === 0) return true;
+  const target = hostname.toLowerCase();
+  return ALLOWED_HOSTS.some((allowed) => target === allowed || target.endsWith(`.${allowed}`));
+}
+
+async function ensureHostIsSafe(target: URL): Promise<void> {
+  if (isDisallowedHostname(target.hostname)) {
+    throw new Error('Host is not allowed');
+  }
+
+  if (!isHostAllowedByAllowlist(target.hostname)) {
+    throw new Error('Host is not in allowlist');
+  }
+
+  const targetIpVersion = isIP(target.hostname);
+  if (targetIpVersion) {
+    if (isDisallowedIp(target.hostname)) throw new Error('IP is not allowed');
+    return;
+  }
+
+  const resolved = await lookup(target.hostname, { all: true, verbatim: true });
+  if (!resolved.length) throw new Error('Unable to resolve hostname');
+
+  for (const r of resolved) {
+    if (isDisallowedIp(r.address)) {
+      throw new Error('Resolved IP is not allowed');
+    }
+  }
+}
+
 async function tryFetch(url: URL, headers: Headers): Promise<Response | null> {
   try {
-    return await fetch(url.toString(), {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+    const response = await fetch(url.toString(), {
       cache: 'no-store',
       redirect: 'follow',
       headers,
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
+    return response;
   } catch {
     return null;
   }
 }
 
+async function readLimitedImage(upstream: Response): Promise<{ ok: true; data: Buffer } | { ok: false }> {
+  const reader = upstream.body?.getReader();
+  if (!reader) return { ok: false };
+
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    if (!value) continue;
+
+    total += value.byteLength;
+    if (total > MAX_IMAGE_SIZE_BYTES) {
+      await reader.cancel();
+      return { ok: false };
+    }
+    chunks.push(value);
+  }
+
+  return { ok: true, data: Buffer.concat(chunks.map((v) => Buffer.from(v))) };
+}
+
 export async function GET(req: NextRequest) {
   try {
     const requestUrl = new URL(req.url);
+    const isEmbedMode = requestUrl.searchParams.get('embed') === '1';
+
+    if (!isEmbedMode) {
+      const auth = await requireApiAuth();
+      if (!auth.ok) return auth.response;
+    }
+
     const raw = requestUrl.searchParams.get('url')?.trim();
     if (!raw) {
       return new Response('Missing url parameter', { status: 400 });
@@ -83,6 +192,12 @@ export async function GET(req: NextRequest) {
 
     if (!isAllowedUrl(target)) {
       return new Response('Unsupported protocol', { status: 400 });
+    }
+
+    try {
+      await ensureHostIsSafe(target);
+    } catch {
+      return new Response('Target host is not allowed', { status: 400 });
     }
 
     const secFetchSite = resolveSecFetchSite(requestUrl, target);
@@ -134,7 +249,6 @@ export async function GET(req: NextRequest) {
       const status = lastFailed?.status ?? 502;
       const message = lastFailed?.statusText || 'Upstream error';
       const errorHeaders = new Headers();
-      errorHeaders.set('Access-Control-Allow-Origin', '*');
       errorHeaders.set('Cache-Control', 'no-store');
       if (lastFailed?.status) {
         errorHeaders.set('X-Upstream-Status', String(lastFailed.status));
@@ -142,15 +256,27 @@ export async function GET(req: NextRequest) {
       return new Response(message, { status, headers: errorHeaders });
     }
 
-    const headers = new Headers();
-    const contentType = upstream.headers.get('content-type');
-    if (contentType) {
-      headers.set('Content-Type', contentType);
+    const contentType = upstream.headers.get('content-type') || '';
+    if (!contentType.toLowerCase().startsWith('image/')) {
+      return new Response('Unsupported upstream content-type', { status: 415 });
     }
-    headers.set('Cache-Control', 'public, max-age=60, s-maxage=60');
-    headers.set('Access-Control-Allow-Origin', '*');
 
-    return new Response(upstream.body, {
+    const contentLengthRaw = upstream.headers.get('content-length');
+    const contentLength = contentLengthRaw ? Number(contentLengthRaw) : 0;
+    if (Number.isFinite(contentLength) && contentLength > MAX_IMAGE_SIZE_BYTES) {
+      return new Response('Image too large', { status: 413 });
+    }
+
+    const limitedBody = await readLimitedImage(upstream);
+    if (!limitedBody.ok) {
+      return new Response('Image too large', { status: 413 });
+    }
+
+    const headers = new Headers();
+    headers.set('Content-Type', contentType);
+    headers.set('Cache-Control', 'public, max-age=60, s-maxage=60');
+
+    return new Response(limitedBody.data, {
       status: 200,
       headers,
     });

@@ -2,6 +2,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { industriesQuerySchema, industrySchema } from '@/lib/validators';
+import { requireApiAuth } from '@/lib/api-auth';
 import { z } from 'zod';
 
 export const dynamic = 'force-dynamic';
@@ -10,6 +11,9 @@ export const runtime = 'nodejs';
 
 export async function GET(request: NextRequest) {
   try {
+    const auth = await requireApiAuth();
+    if (!auth.ok) return auth.response;
+
     const { searchParams } = new URL(request.url);
     const params = industriesQuerySchema.parse({
       page: searchParams.get('page') ?? undefined,

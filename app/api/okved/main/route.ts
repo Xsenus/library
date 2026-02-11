@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { okvedMainSchema } from '@/lib/validators';
+import { requireApiAuth } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -8,6 +9,9 @@ export const runtime = 'nodejs';
 
 export async function GET(req: NextRequest) {
   try {
+    const auth = await requireApiAuth();
+    if (!auth.ok) return auth.response;
+
     const { searchParams } = new URL(req.url);
     const industryId = Number(searchParams.get('industryId') ?? '') || null;
 

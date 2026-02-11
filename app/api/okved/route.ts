@@ -1,7 +1,7 @@
 // app/api/okved/route.ts
 import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
-import { getSession } from '@/lib/auth';
+import { requireApiAuth } from '@/lib/api-auth';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -32,20 +32,9 @@ const SQL_BY_INDUSTRY = `
 
 export async function GET(req: NextRequest) {
   try {
-    const sess = await getSession();
-    if (!sess) {
-      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-    }
+    const auth = await requireApiAuth({ requireWorker: true });
+    if (!auth.ok) return auth.response;
 
-    // Разрешаем только сотрудникам (если хочешь сделать публичным — убери этот блок)
-    const { rows: meRows } = await db.query<{ irbis_worker: boolean }>(
-      `SELECT irbis_worker FROM users_irbis WHERE id = $1 LIMIT 1`,
-      [sess.id],
-    );
-    const isWorker = !!meRows[0]?.irbis_worker;
-    if (!isWorker) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
 
     const { searchParams } = new URL(req.url);
     const industryId = Number(searchParams.get('industryId') || '');
