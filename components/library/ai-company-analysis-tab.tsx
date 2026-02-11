@@ -718,6 +718,31 @@ function formatRawScore(score: number | string | null | undefined): string | nul
   return value.toFixed(2);
 }
 
+function formatSimilarityScore(score: number | string | null | undefined): string | null {
+  if (score == null) return null;
+  const value = Number(score);
+  if (!Number.isFinite(value)) return null;
+  if (value >= 0 && value <= 1) return `${(value * 100).toFixed(1)}%`;
+  if (value > 1 && value <= 100) return `${value.toFixed(1)}%`;
+  return value.toFixed(2);
+}
+
+function normalizeDetectionSource(value: unknown): 'site' | 'okved' | null {
+  if (value == null) return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized.includes('okved') || normalized.includes('оквэд')) return 'okved';
+  if (
+    normalized.includes('site') ||
+    normalized.includes('сайт') ||
+    normalized.includes('web') ||
+    normalized.includes('url') ||
+    normalized.includes('domain')
+  )
+    return 'site';
+  return null;
+}
+
 type CompanyState = { running: boolean; queued: boolean };
 
 type OutcomeKey = 'completed' | 'partial' | 'failed' | 'not_started' | 'pending';
@@ -2368,13 +2393,14 @@ export default function AiCompanyAnalysisTab() {
   const tnvedProducts = (
     company: AiCompany,
     analyzer?: AiAnalyzerInfo | null,
-  ): Array<{ name: string; code?: string; score?: number | null }> => {
+  ): Array<{ name: string; code?: string; score?: number | null; source?: 'site' | 'okved' | null }> => {
     const raw = company.analysis_tnved;
-    const items: Array<{ name: string; code?: string; score?: number | null }> = [];
+    const items: Array<{ name: string; code?: string; score?: number | null; source?: 'site' | 'okved' | null }> = [];
     const seen = new Set<string>();
     if (raw) {
       const arr = Array.isArray(raw) ? raw : [raw];
-      const normalizedRawItems = arr.flatMap((item: any): Array<{ name: string; code?: string; score?: number | null }> => {
+      const normalizedRawItems = arr.flatMap(
+        (item: any): Array<{ name: string; code?: string; score?: number | null; source?: 'site' | 'okved' | null }> => {
         if (!item) return [];
 
         if (typeof item === 'string') {
@@ -2399,9 +2425,25 @@ export default function AiCompanyAnalysisTab() {
           const score = Number(
             item?.bigdata_similarity ?? item?.big_data_similarity ?? item?.vector_similarity ?? item?.score ?? item?.goods_types_score,
           );
+          const source =
+            normalizeDetectionSource(
+              item?.source ??
+                item?.detected_from ??
+                item?.detection_source ??
+                item?.origin ??
+                item?.from,
+            ) ??
+            (item?.url || item?.domain ? 'site' : null);
           const hasName = isMeaningfulTnvedName(name);
           if (!hasName && !code) return [];
-          return [{ name: hasName ? name : code, code: code || undefined, score: Number.isFinite(score) ? score : undefined }];
+          return [
+            {
+              name: hasName ? name : code,
+              code: code || undefined,
+              score: Number.isFinite(score) ? score : undefined,
+              source,
+            },
+          ];
         }
 
         const name = normalizeTnvedValue(item);
@@ -2412,23 +2454,24 @@ export default function AiCompanyAnalysisTab() {
     }
 
     if (!items.length && analyzer?.ai?.products?.length) {
-      const analyzerProducts = analyzer.ai.products.reduce<Array<{ name: string; code?: string; score?: number | null }>>((acc, item) => {
+      const analyzerProducts = analyzer.ai.products.reduce<Array<{ name: string; code?: string; score?: number | null; source?: 'site' | 'okved' | null }>>((acc, item) => {
         const name = normalizeTnvedValue(item?.name);
         const code = normalizeTnvedValue(item?.tnved_code) || undefined;
         const score = Number(item?.score);
         if (!name && !code) return acc;
-        acc.push({ name: name || code || '—', code, score: Number.isFinite(score) ? score : undefined });
+        acc.push({ name: name || code || '—', code, score: Number.isFinite(score) ? score : undefined, source: 'site' });
         return acc;
       }, []);
 
       items.push(...analyzerProducts);
     }
 
-    return items.reduce<Array<{ name: string; code?: string; score?: number | null }>>((acc, item) => {
+    return items.reduce<Array<{ name: string; code?: string; score?: number | null; source?: 'site' | 'okved' | null }>>((acc, item) => {
       const key = `${item.name?.trim().toLowerCase() || ''}|${item.code?.trim().toLowerCase() || ''}`;
       if (!item.name || seen.has(key)) return acc;
       seen.add(key);
-      acc.push({ name: item.name.trim(), code: item.code?.trim() || undefined, score: item.score ?? undefined });
+      const source = item.source ?? (item.code && !item.score ? 'okved' : null);
+      acc.push({ name: item.name.trim(), code: item.code?.trim() || undefined, score: item.score ?? undefined, source });
       return acc;
     }, []);
   };
@@ -2459,8 +2502,8 @@ export default function AiCompanyAnalysisTab() {
       ? analyzerProdclass.name
       : null;
   const okvedMatchText =
-    formatMatchScore(analyzerOkvedScore ?? infoCompany?.okved_score ?? null) ||
     formatMatchScore(analyzerDescriptionOkvedScore ?? null) ||
+    formatMatchScore(analyzerOkvedScore ?? infoCompany?.okved_score ?? null) ||
     (infoCompany?.analysis_okved_match ? String(infoCompany.analysis_okved_match) : null);
   const analysisDomainValue =
     infoCompany?.analysis_domain ||
@@ -3888,7 +3931,26 @@ export default function AiCompanyAnalysisTab() {
                         .slice(0, 10)
                         .map((item, idx) => (
                           <li key={`${item.name}-${item.id ?? idx}`} className="rounded-md border bg-muted/30 p-3">
-                            <div className="font-medium text-foreground">{item.name}</div>
+                            <div className="flex items-start justify-between gap-2">
+                              <div className="font-medium text-foreground">{item.name}</div>
+                              {item.id && (
+                                <Button
+                                  asChild
+                                  type="button"
+                                  variant="link"
+                                  className="h-auto p-0 text-xs"
+                                >
+                                  <a
+                                    href={`/library?equipmentId=${encodeURIComponent(item.id)}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                  >
+                                    карточка
+                                    <ExternalLink className="ml-1 h-3 w-3" />
+                                  </a>
+                                </Button>
+                              )}
+                            </div>
                             {(item.id || item.score != null) && (
                               <div className="mt-1 flex flex-wrap gap-2 text-[12px] text-muted-foreground">
                                 {item.id && (
@@ -3898,7 +3960,7 @@ export default function AiCompanyAnalysisTab() {
                                 )}
                                 {item.score != null && (
                                   <Badge variant="outline" className="text-[12px]">
-                                    BigData similarity {item.score}
+                                    Рейтинг {formatSimilarityScore(item.score) ?? item.score}
                                   </Badge>
                                 )}
                               </div>
@@ -3920,7 +3982,7 @@ export default function AiCompanyAnalysisTab() {
                       {tnvedProducts(infoCompany, analyzerInfo).map((item, idx) => (
                         <li key={`${item.name}-${idx}`} className="rounded-md border bg-muted/30 p-3">
                           <div className="font-medium text-foreground">{item.name}</div>
-                          {(item.code || item.score != null) && (
+                          {(item.code || item.score != null || item.source) && (
                             <div className="mt-1 flex flex-wrap gap-2">
                               {item.code && (
                                 <Badge variant="outline" className="text-[12px]">
@@ -3929,7 +3991,12 @@ export default function AiCompanyAnalysisTab() {
                               )}
                               {item.score != null && (
                                 <Badge variant="outline" className="text-[12px]">
-                                  BigData similarity {item.score}
+                                  Рейтинг {formatSimilarityScore(item.score) ?? item.score}
+                                </Badge>
+                              )}
+                              {item.source && (
+                                <Badge variant="outline" className="text-[12px]">
+                                  Источник: {item.source === 'okved' ? 'ОКВЭД' : 'сайт'}
                                 </Badge>
                               )}
                             </div>
