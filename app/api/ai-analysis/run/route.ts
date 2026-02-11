@@ -281,7 +281,7 @@ type StepAttempt = {
   path: (inn: string) => string;
   label: string;
   method: 'GET' | 'POST';
-  body?: (inn: string) => Record<string, unknown>;
+  body?: (inn: string, context?: { clientId: number | null }) => Record<string, unknown>;
 };
 
 type StepDefinition = {
@@ -353,12 +353,6 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
       {
         path: () => '/v1/ib-match/by-inn',
         label: 'POST ib-match/by-inn',
-        method: 'POST',
-        body: (inn) => ({ inn }),
-      },
-      {
-        path: () => '/v1/ib-match',
-        label: 'POST ib-match',
         method: 'POST',
         body: (inn) => ({ inn }),
       },
@@ -633,9 +627,37 @@ async function shouldUseOkvedFallbackForIbMatch(inn: string, timeoutMs: number):
   return postRes.ok && postExtracted.used;
 }
 
+async function getClientRequestIdByInn(inn: string): Promise<number | null> {
+  try {
+    const { rows } = await dbBitrix.query<{ id: number }>(
+      'SELECT id FROM clients_requests WHERE inn = $1 ORDER BY id DESC LIMIT 1',
+      [inn],
+    );
+    const rawId = rows?.[0]?.id;
+    if (Number.isFinite(rawId)) {
+      return Number(rawId);
+    }
+  } catch (error) {
+    console.warn('Failed to resolve client_id for ib-match fallback', { inn, error });
+  }
+
+  return null;
+}
+
 async function runStep(inn: string, step: StepKey, timeoutMs: number) {
   const definition = STEP_DEFINITIONS[step];
   const attempts: StepAttempt[] = [definition.primary, ...(definition.fallbacks ?? [])];
+  const clientId = step === 'ib_match' ? await getClientRequestIdByInn(inn) : null;
+
+  if (step === 'ib_match' && clientId != null) {
+    attempts.splice(1, 0, {
+      path: () => '/v1/ib-match',
+      label: 'POST ib-match (client_id)',
+      method: 'POST',
+      body: (currentInn, context) => ({ inn: currentInn, client_id: context?.clientId }),
+    });
+  }
+
   let lastError: string | undefined;
   let lastStatus = 0;
 
@@ -655,7 +677,7 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
         const path = attempt.path(inn);
         const init: RequestInit & { timeoutMs?: number } = { method: attempt.method };
 
-        const requestBody = attempt.body?.(inn);
+        const requestBody = attempt.body?.(inn, { clientId });
         if (requestBody) {
           init.body = JSON.stringify(requestBody);
         }

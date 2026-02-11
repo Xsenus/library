@@ -39,7 +39,7 @@
    - `lookup`: `GET /v1/lookup/{inn}/card` → JSON карточки компании; если недоступно, `POST /v1/lookup/card` c `{inn}`.
    - `parse_site`: `POST /v1/parse-site` c `{ inn }` плюс собранные домены/почты; fallback — `GET /v1/parse-site/{inn}`.
    - `analyze_json`: `GET /v1/analyze-json/{inn}` или `POST /v1/analyze-json` c `{inn}`.
-   - `ib_match`: `GET /v1/ib-match/by-inn?inn=...`, fallback — `POST /v1/ib-match` или `/v1/ib-match/by-inn` с `{inn}`.
+   - `ib_match`: `GET /v1/ib-match/by-inn?inn=...`; если в `clients_requests` найден `client_id`, добавляется fallback `POST /v1/ib-match` с `{ inn, client_id }`, затем `POST /v1/ib-match/by-inn` с `{inn}`.
    - `equipment_selection`: `GET /v1/equipment-selection/by-inn/{inn}`.
 3. Перед каждым сетевым вызовом проверяется `/health` интеграции. Если сервис недоступен,
    логируется ошибка `server_retry`/`server_stop` и попытка повторяется либо завершается
@@ -66,7 +66,7 @@
 3. `GET /v1/lookup/{inn}/card` (или `POST /v1/lookup/card {inn}`) → карточка компании {id, domains} → обновляем прогресс, передаём домен дальше.
 4. `POST /v1/parse-site { inn, domain?, parse_domains[], parse_emails[], company_name?, portal_domain?, company_id? }` → JSON с итогами парсинга {planned_domains, successful_domains, chunks_inserted} → пишем прогресс.
 5. `GET /v1/analyze-json/{inn}` (или `POST /v1/analyze-json {inn}`) → {status, text_length, total_text_length, domains_processed, ai?} → обновляем прогресс.
-6. `GET /v1/ib-match/by-inn?inn=...` (fallback `POST /v1/ib-match`/`/by-inn {inn}`) → {summary, duration_ms} → логируем и обновляем прогресс.
+6. `GET /v1/ib-match/by-inn?inn=...` (fallback `POST /v1/ib-match {inn, client_id}` при наличии `client_id`, затем `POST /v1/ib-match/by-inn {inn}`) → {summary, duration_ms} → логируем и обновляем прогресс.
 7. `GET /v1/equipment-selection/by-inn/{inn}` → {goods_types, site_equipment, log} → прогресс.
 8. `GET /v1/lookup/{inn}/ai-analyzer` → итоговый ответ AI {ai, company, sites...} → записываем в UI/БД, помечаем анализ завершённым.
 9. При ошибке на любом шаге: фиксируем событие `error`, возвращаем в очередь с `defer_count+1` (макс. 3) и списком успешных шагов; после исчерпания попыток — статус `failed`.
