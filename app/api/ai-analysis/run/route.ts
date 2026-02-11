@@ -627,6 +627,39 @@ async function shouldUseOkvedFallbackForIbMatch(inn: string, timeoutMs: number):
   return postRes.ok && postExtracted.used;
 }
 
+async function shouldUseOkvedFallbackForAnalyzeJson(inn: string, timeoutMs: number): Promise<boolean> {
+  const getRes = await callAiIntegration(`/v1/parse-site/${encodeURIComponent(inn)}`, {
+    method: 'GET',
+    timeoutMs,
+  });
+
+  const getExtracted = extractAnalyzeJsonFallback(getRes.ok ? getRes.data : null);
+  if (getRes.ok && getExtracted.prodclassByOkved != null) {
+    await saveOkvedFallbackToDadata(inn, getExtracted.prodclassByOkved).catch((error) =>
+      console.warn('failed to persist prodclass_by_okved fallback', error),
+    );
+  }
+
+  if (getRes.ok && getExtracted.used) {
+    return true;
+  }
+
+  const postRes = await callAiIntegration('/v1/parse-site', {
+    method: 'POST',
+    body: JSON.stringify({ inn }),
+    timeoutMs,
+  });
+
+  const postExtracted = extractAnalyzeJsonFallback(postRes.ok ? postRes.data : null);
+  if (postRes.ok && postExtracted.prodclassByOkved != null) {
+    await saveOkvedFallbackToDadata(inn, postExtracted.prodclassByOkved).catch((error) =>
+      console.warn('failed to persist prodclass_by_okved fallback', error),
+    );
+  }
+
+  return postRes.ok && postExtracted.used;
+}
+
 async function getClientRequestIdByInn(inn: string): Promise<number | null> {
   try {
     const { rows } = await dbBitrix.query<{ id: number }>(
@@ -747,6 +780,20 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
         source: 'ai-integration',
         companyId: inn,
         message: 'Сопоставление продклассов пропущено: используется fallback по ОКВЭД',
+        payload: { lastStatus, lastError },
+      });
+      return { step, ok: true as const, status: lastStatus || 200 };
+    }
+  }
+
+  if (step === 'analyze_json') {
+    const okvedFallback = await shouldUseOkvedFallbackForAnalyzeJson(inn, timeoutMs);
+    if (okvedFallback) {
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        message: 'AI-анализ пропущен: используется fallback по ОКВЭД из parse-site',
         payload: { lastStatus, lastError },
       });
       return { step, ok: true as const, status: lastStatus || 200 };
