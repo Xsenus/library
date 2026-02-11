@@ -58,7 +58,7 @@ const stepOptions: { key: StepKey; label: string }[] = [
 
 const PAGE_SIZE_STORAGE_KEY = 'ai-analysis-page-size';
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 75, 100];
-const SCORE_VALUE_CLASS = 'text-foreground text-2xl leading-none font-semibold tabular-nums';
+const SCORE_VALUE_CLASS = 'text-foreground text-xl leading-none font-semibold tabular-nums';
 
 type ColumnWidthKey = 'company' | 'contacts' | 'status' | 'pipeline' | 'actions';
 
@@ -3016,8 +3016,8 @@ export default function AiCompanyAnalysisTab() {
                                     Ответственный: <span className="text-foreground">{responsibleLabel}</span>
                                   </span>
                                 </div>
-                                <div className="flex items-end gap-3">
-                                  <div className="h-[48px] w-[150px]">
+                                <div className="flex items-center gap-3 rounded-md border border-border/50 bg-muted/20 px-3 py-2">
+                                  <div className="h-[46px] w-[150px] shrink-0">
                                     <InlineRevenueBars
                                       mode="stack"
                                       revenue={[company.revenue_3, company.revenue_2, company.revenue_1, company.revenue]}
@@ -3025,7 +3025,10 @@ export default function AiCompanyAnalysisTab() {
                                       year={company.year}
                                     />
                                   </div>
-                                  <div className={SCORE_VALUE_CLASS}>{score}</div>
+                                  <div className="flex min-w-[72px] flex-col items-end justify-center gap-1">
+                                    <div className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">Оценка</div>
+                                    <div className={SCORE_VALUE_CLASS}>{score}</div>
+                                  </div>
                                 </div>
                               </div>
                             </td>
