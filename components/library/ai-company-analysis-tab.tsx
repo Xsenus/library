@@ -33,6 +33,7 @@ import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Separator } from '@/components/ui/separator';
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import SquareImgButton from '@/components/library/square-img-button';
 import InlineRevenueBars from '@/components/library/inline-revenue-bar';
 import { cn } from '@/lib/utils';
@@ -60,25 +61,27 @@ const PAGE_SIZE_STORAGE_KEY = 'ai-analysis-page-size';
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 75, 100];
 const SCORE_VALUE_CLASS = 'text-foreground text-xl leading-none font-semibold tabular-nums';
 
-type ColumnWidthKey = 'company' | 'contacts' | 'status' | 'pipeline' | 'actions';
+type ColumnWidthKey = 'company' | 'metrics' | 'sites' | 'emails' | 'status' | 'actions';
 
 const DEFAULT_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
   company: 250,
-  contacts: 190,
+  metrics: 220,
+  sites: 170,
+  emails: 170,
   status: 300,
-  pipeline: 220,
-  actions: 150,
+  actions: 240,
 };
 
 const MIN_COLUMN_WIDTHS: Record<ColumnWidthKey, number> = {
   company: 250,
-  contacts: 190,
+  metrics: 200,
+  sites: 150,
+  emails: 150,
   status: 240,
-  pipeline: 220,
-  actions: 150,
+  actions: 220,
 };
 
-const COLUMN_ORDER: ColumnWidthKey[] = ['company', 'contacts', 'status', 'pipeline', 'actions'];
+const COLUMN_ORDER: ColumnWidthKey[] = ['company', 'metrics', 'sites', 'emails', 'status', 'actions'];
 
 const COLUMN_WIDTHS_KEY = 'ai-analysis-column-widths';
 
@@ -167,11 +170,6 @@ type BillingResponse = {
   remaining_usd?: number | null;
 };
 
-function formatRevenue(value: number | null | undefined): string {
-  if (!value || !Number.isFinite(value)) return '—';
-  return Math.round(value / 1_000_000).toLocaleString('ru-RU');
-}
-
 function formatEmployees(value: number | null | undefined): string {
   if (!value || !Number.isFinite(value)) return '—';
   return value.toLocaleString('ru-RU');
@@ -216,8 +214,29 @@ function formatLogDate(value: string) {
 }
 
 function formatCompanyDisplayName(name?: string | null, companyId?: number | null) {
-  const prefix = companyId != null && Number.isFinite(companyId) ? `[${companyId}] ` : '';
-  return `${prefix}${name ?? 'Компания'}`;
+  return `${name ?? 'Компания'}`;
+}
+
+function translatePipelineStatus(status?: string | null): string {
+  if (!status) return '';
+  const normalized = status.trim().toLowerCase();
+  if (!normalized) return '';
+  if (['done', 'completed', 'success', 'finished'].some((token) => normalized.includes(token))) {
+    return 'завершён';
+  }
+  if (['running', 'processing', 'in_progress', 'active', 'current'].some((token) => normalized.includes(token))) {
+    return 'выполняется';
+  }
+  if (['queued', 'queue', 'pending', 'waiting'].some((token) => normalized.includes(token))) {
+    return 'в очереди';
+  }
+  if (['failed', 'error'].some((token) => normalized.includes(token))) {
+    return 'ошибка';
+  }
+  if (['skipped'].some((token) => normalized.includes(token))) {
+    return 'пропущен';
+  }
+  return status;
 }
 
 function describeLogEvent(event: AiDebugEventRecord): string {
@@ -2372,8 +2391,8 @@ export default function AiCompanyAnalysisTab() {
   const topEquipment = (
     company: AiCompany,
     analyzer?: AiAnalyzerInfo | null,
-  ): Array<{ name: string; id?: string; score?: number | null; hash_equipment?: string | null }> => {
-    const normalizeEquipmentItem = (item: any): { name: string; id?: string; score?: number | null; hash_equipment?: string | null } | null => {
+  ): Array<{ name: string; id?: string; score?: number | null; hash_equipment?: string | null; industryId?: string; prodclassId?: string; workshopId?: string }> => {
+    const normalizeEquipmentItem = (item: any): { name: string; id?: string; score?: number | null; hash_equipment?: string | null; industryId?: string; prodclassId?: string; workshopId?: string } | null => {
       if (!item) return null;
       if (typeof item === 'string') {
         const name = item.trim();
@@ -2403,6 +2422,9 @@ export default function AiCompanyAnalysisTab() {
           id: id != null ? String(id) : undefined,
           score: score ?? undefined,
           hash_equipment: hashEquipment ? String(hashEquipment) : undefined,
+          industryId: item?.industry_id != null ? String(item.industry_id) : item?.industryId != null ? String(item.industryId) : undefined,
+          prodclassId: item?.prodclass_id != null ? String(item.prodclass_id) : item?.prodclassId != null ? String(item.prodclassId) : undefined,
+          workshopId: item?.workshop_id != null ? String(item.workshop_id) : item?.workshopId != null ? String(item.workshopId) : undefined,
         };
       }
 
@@ -2411,7 +2433,7 @@ export default function AiCompanyAnalysisTab() {
     };
 
     const seen = new Set<string>();
-    const pushItem = (item: { name: string; id?: string; score?: number | null; hash_equipment?: string | null } | null, acc: typeof items) => {
+    const pushItem = (item: { name: string; id?: string; score?: number | null; hash_equipment?: string | null; industryId?: string; prodclassId?: string; workshopId?: string } | null, acc: typeof items) => {
       if (!item?.name) return;
       const key = `${item.name.trim().toLowerCase()}|${item.id?.trim().toLowerCase() || ''}`;
       if (seen.has(key)) return;
@@ -2421,10 +2443,13 @@ export default function AiCompanyAnalysisTab() {
         id: item.id?.trim() || undefined,
         score: item.score,
         hash_equipment: item.hash_equipment?.trim() || undefined,
+        industryId: item.industryId?.trim() || undefined,
+        prodclassId: item.prodclassId?.trim() || undefined,
+        workshopId: item.workshopId?.trim() || undefined,
       });
     };
 
-    const items: Array<{ name: string; id?: string; score?: number | null; hash_equipment?: string | null }> = [];
+    const items: Array<{ name: string; id?: string; score?: number | null; hash_equipment?: string | null; industryId?: string; prodclassId?: string; workshopId?: string }> = [];
     const raw = company.analysis_equipment;
 
     if (Array.isArray(raw)) {
@@ -2648,6 +2673,15 @@ export default function AiCompanyAnalysisTab() {
     infoCompany?.analysis_description ||
     [analyzerInfo?.company?.domain1, analyzerInfo?.company?.domain2].filter(Boolean).join('\n') ||
     null;
+
+  const buildEquipmentCardHref = (item: { id?: string; industryId?: string; prodclassId?: string; workshopId?: string }) => {
+    if (!item.id) return null;
+    const params = new URLSearchParams({ tab: 'library', equipmentId: item.id });
+    if (item.industryId) params.set('industryId', item.industryId);
+    if (item.prodclassId) params.set('prodclassId', item.prodclassId);
+    if (item.workshopId) params.set('workshopId', item.workshopId);
+    return `/library?${params.toString()}`;
+  };
 
   return (
     <TooltipProvider>
@@ -2959,22 +2993,28 @@ export default function AiCompanyAnalysisTab() {
                             {renderResizeHandle('company')}
                           </div>
                         </th>
-                        <th className="relative px-4 py-3 text-left" style={columnStyle('contacts')}>
+                        <th className="relative px-4 py-3 text-left" style={columnStyle('metrics')}>
                           <div className="flex items-center justify-between gap-2">
-                            <span>Контакты</span>
-                            {renderResizeHandle('contacts')}
+                            <span>Оценка и тренд</span>
+                            {renderResizeHandle('metrics')}
+                          </div>
+                        </th>
+                        <th className="relative px-4 py-3 text-left" style={columnStyle('sites')}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span>Сайты</span>
+                            {renderResizeHandle('sites')}
+                          </div>
+                        </th>
+                        <th className="relative px-4 py-3 text-left" style={columnStyle('emails')}>
+                          <div className="flex items-center justify-between gap-2">
+                            <span>Email</span>
+                            {renderResizeHandle('emails')}
                           </div>
                         </th>
                         <th className="relative px-4 py-3 text-left" style={columnStyle('status')}>
                           <div className="flex items-center justify-between gap-2">
                             <span>Запуски и статус</span>
                             {renderResizeHandle('status')}
-                          </div>
-                        </th>
-                        <th className="relative px-4 py-3 text-left" style={columnStyle('pipeline')}>
-                          <div className="flex items-center justify-between gap-2">
-                            <span>Пайплайн</span>
-                            {renderResizeHandle('pipeline')}
                           </div>
                         </th>
                         <th className="relative px-4 py-3 text-right" style={columnStyle('actions')}>
@@ -2997,7 +3037,6 @@ export default function AiCompanyAnalysisTab() {
                         const sites = toSiteArray(company.sites);
                         const okvedFallbackUsed = isOkvedFallbackUsed(company, sites);
                         const emails = toStringArray(company.emails);
-                        const revenue = formatRevenue(company.revenue);
                         const companyLabel = formatCompanyDisplayName(
                           company.short_name,
                           company.company_id,
@@ -3033,8 +3072,6 @@ export default function AiCompanyAnalysisTab() {
                         );
                         const attempts = company.analysis_attempts != null ? company.analysis_attempts : '—';
                         const score = formatAnalysisScore(company.analysis_score);
-                        const revenueLabel = revenue !== '—' ? `${revenue} млн ₽` : '—';
-                        const reportYear = company.year != null && Number.isFinite(company.year) ? String(company.year) : '—';
                         const responsibleLabel = company.responsible?.trim() || '—';
                         const progressPercent = Math.min(
                           100,
@@ -3138,12 +3175,6 @@ export default function AiCompanyAnalysisTab() {
                                 </div>
                                 <div className="flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-muted-foreground">
                                   <span>
-                                    Выручка: <span className="text-foreground">{revenueLabel}</span>
-                                  </span>
-                                  <span>
-                                    Год отчета: <span className="text-foreground">{reportYear}</span>
-                                  </span>
-                                  <span>
                                     Ответственный: <span className="text-foreground">{responsibleLabel}</span>
                                   </span>
                                 </div>
@@ -3152,11 +3183,12 @@ export default function AiCompanyAnalysisTab() {
                                     Tokens: <span className="text-foreground">{formatTokens(company.tokens_total)}</span>
                                     {' '}({formatTokens(company.input_tokens)} / {formatTokens(company.cached_input_tokens)} / {formatTokens(company.output_tokens)})
                                   </span>
-                                  <span>
-                                    Cost: <span className="text-foreground">{formatUsd(company.cost_total_usd)}</span>
-                                  </span>
                                 </div>
-                                <div className="flex items-center gap-3 rounded-md border border-border/50 bg-muted/20 px-3 py-2">
+                              </div>
+                            </td>
+                            <td className="px-4 py-4 align-top text-xs" style={columnStyle('metrics')}>
+                              <div className="space-y-2">
+                                <div className="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
                                   <div className="h-[46px] w-[150px] shrink-0">
                                     <InlineRevenueBars
                                       mode="stack"
@@ -3165,78 +3197,76 @@ export default function AiCompanyAnalysisTab() {
                                       year={company.year}
                                     />
                                   </div>
-                                  <div className="flex min-w-[72px] flex-col items-end justify-center gap-1">
+                                  <div className="mt-2 flex items-center justify-between">
                                     <div className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">Оценка</div>
                                     <div className={SCORE_VALUE_CLASS}>{score}</div>
                                   </div>
                                 </div>
                               </div>
                             </td>
-                            <td className="px-4 py-4 align-top text-xs" style={columnStyle('contacts')}>
-                              <div className="space-y-4">
-                                <div>
-                                  <div className="text-[11px] uppercase text-muted-foreground">Сайты</div>
-                                  {sites.length ? (
-                                    <div className="mt-1 flex flex-col gap-1">
-                                      {displaySites.map((site) => (
-                                        <a
-                                          key={site}
-                                          href={site.startsWith('http') ? site : `https://${site}`}
-                                          className="truncate text-blue-600 hover:underline"
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                        >
-                                          {site}
-                                        </a>
-                                      ))}
-                                      {showSiteToggle && (
-                                        <button
-                                          type="button"
-                                          className="self-start text-xs font-medium text-primary hover:underline"
-                                          onClick={() => toggleSiteExpansion(company.inn)}
-                                        >
-                                          {isSiteExpanded ? 'Скрыть' : `Показать все (${sites.length})`}
-                                        </button>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    <div className="mt-1 space-y-1">
-                                      <span className="text-muted-foreground">—</span>
-                                      {okvedFallbackUsed && (
-                                        <div className="text-[11px] text-amber-700">Нет сайта · подбор по ОКВЭД</div>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                                <div>
-                                  <div className="text-[11px] uppercase text-muted-foreground">E-mail</div>
-                                  {emails.length ? (
-                                    <div className="mt-1 flex flex-col gap-1">
-                                      {displayEmails.map((email) => (
-                                        <a
-                                          key={email}
-                                          href={`mailto:${email}`}
-                                          className="truncate text-blue-600 hover:underline"
-                                        >
-                                          {email}
-                                        </a>
-                                      ))}
-                                      {showEmailToggle && (
-                                        <button
-                                          type="button"
-                                          className="self-start text-xs font-medium text-primary hover:underline"
-                                          onClick={() => toggleEmailExpansion(company.inn)}
-                                        >
-                                          {isEmailExpanded
-                                            ? 'Скрыть'
-                                            : `Показать все (${emails.length})`}
-                                        </button>
-                                      )}
-                                    </div>
-                                  ) : (
+                            <td className="px-4 py-4 align-top text-xs" style={columnStyle('sites')}>
+                              <div>
+                                {sites.length ? (
+                                  <div className="mt-1 flex flex-col gap-1">
+                                    {displaySites.map((site) => (
+                                      <a
+                                        key={site}
+                                        href={site.startsWith('http') ? site : `https://${site}`}
+                                        className="truncate text-blue-600 hover:underline"
+                                        target="_blank"
+                                        rel="noopener noreferrer"
+                                      >
+                                        {site}
+                                      </a>
+                                    ))}
+                                    {showSiteToggle && (
+                                      <button
+                                        type="button"
+                                        className="self-start text-xs font-medium text-primary hover:underline"
+                                        onClick={() => toggleSiteExpansion(company.inn)}
+                                      >
+                                        {isSiteExpanded ? 'Скрыть' : `Показать все (${sites.length})`}
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <div className="mt-1 space-y-1">
                                     <span className="text-muted-foreground">—</span>
-                                  )}
-                                </div>
+                                    {okvedFallbackUsed && (
+                                      <div className="text-[11px] text-amber-700">Нет сайта · подбор по ОКВЭД</div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-4 py-4 align-top text-xs" style={columnStyle('emails')}>
+                              <div>
+                                {emails.length ? (
+                                  <div className="mt-1 flex flex-col gap-1">
+                                    {displayEmails.map((email) => (
+                                      <a
+                                        key={email}
+                                        href={`mailto:${email}`}
+                                        className="truncate text-blue-600 hover:underline"
+                                      >
+                                        {email}
+                                      </a>
+                                    ))}
+                                    {showEmailToggle && (
+                                      <button
+                                        type="button"
+                                        className="self-start text-xs font-medium text-primary hover:underline"
+                                        onClick={() => toggleEmailExpansion(company.inn)}
+                                      >
+                                        {isEmailExpanded
+                                          ? 'Скрыть'
+                                          : `Показать все (${emails.length})`}
+                                      </button>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-muted-foreground">—</span>
+                                )}
                               </div>
                             </td>
                             <td className="px-4 py-4 align-top text-xs" style={columnStyle('status')}>
@@ -3279,45 +3309,6 @@ export default function AiCompanyAnalysisTab() {
                                   </div>
                                 )}
                               </div>
-                            </td>
-                            <td className="px-4 py-4 align-top text-xs" style={columnStyle('pipeline')}>
-                              {liveProgress ? (
-                                <div className="space-y-2">
-                                  <Progress value={progressPercent} className="h-2" />
-                                  <div className="flex items-center justify-between text-[11px] text-muted-foreground">
-                                    <span>{liveStageLabel}</span>
-                                    <span>{progressPercent}%</span>
-                                  </div>
-                                </div>
-                              ) : steps.length ? (
-                                <div className="space-y-2">
-                                  <ul className="space-y-1 text-xs text-muted-foreground">
-                                    {steps.slice(0, 4).map((step, index) => (
-                                      <li key={`${company.inn}-step-${index}`} className="flex items-start gap-2">
-                                        <span className="mt-1 h-1.5 w-1.5 flex-none rounded-full bg-muted-foreground/60" />
-                                        <span className="text-foreground">{step.label}</span>
-                                        {step.status && (
-                                          <span className="text-muted-foreground">· {step.status}</span>
-                                        )}
-                                      </li>
-                                    ))}
-                                  </ul>
-                                  {steps.length > 4 && (
-                                    <div className="text-[11px] text-muted-foreground">
-                                      + ещё {steps.length - 4}
-                                    </div>
-                                  )}
-                                </div>
-                              ) : state.queued ? (
-                                <div className="space-y-1 text-xs text-muted-foreground">
-                                  <Badge variant="outline" className="w-fit">
-                                    Ожидает запуска
-                                  </Badge>
-                                  {queuedTime && <div>с {queuedTime}</div>}
-                                </div>
-                              ) : (
-                                <span className="text-muted-foreground">—</span>
-                              )}
                             </td>
                             <td className="px-4 py-4 align-top text-right" style={columnStyle('actions')}>
                               <div className="flex flex-col items-end gap-2">
@@ -3398,6 +3389,36 @@ export default function AiCompanyAnalysisTab() {
                                     <TooltipContent side="bottom">Подробнее</TooltipContent>
                                   </Tooltip>
                                 </div>
+                                {liveProgress ? (
+                                  <div className="w-full space-y-2 text-left">
+                                    <Progress value={progressPercent} className="h-2" />
+                                    <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                      <span>{liveStageLabel}</span>
+                                      <span>{progressPercent}%</span>
+                                    </div>
+                                  </div>
+                                ) : steps.length ? (
+                                  <div className="w-full space-y-2 text-left">
+                                    <ul className="space-y-1 text-xs text-muted-foreground">
+                                      {steps.slice(0, 3).map((step, index) => (
+                                        <li key={`${company.inn}-step-${index}`} className="flex items-start gap-2">
+                                          <span className="mt-1 h-1.5 w-1.5 flex-none rounded-full bg-muted-foreground/60" />
+                                          <span className="text-foreground">{step.label}</span>
+                                          {step.status && (
+                                            <span className="text-muted-foreground">· {translatePipelineStatus(step.status)}</span>
+                                          )}
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  </div>
+                                ) : state.queued ? (
+                                  <div className="w-full space-y-1 text-left text-xs text-muted-foreground">
+                                    <Badge variant="outline" className="w-fit">
+                                      Ожидает запуска
+                                    </Badge>
+                                    {queuedTime && <div>с {queuedTime}</div>}
+                                  </div>
+                                ) : null}
                                 {showDebugStepButtons && (
                                   <div className="flex flex-wrap items-center justify-end gap-1 rounded-md border border-dashed border-muted-foreground/40 bg-muted/30 px-2 py-1 text-[11px] text-muted-foreground">
                                     <span className="font-medium text-foreground">Шаги:</span>
@@ -3435,7 +3456,7 @@ export default function AiCompanyAnalysisTab() {
                       })}
                       {!companies.length && !isRefreshing && (
                         <tr>
-                          <td colSpan={6} className="px-3 py-10 text-center text-sm text-muted-foreground">
+                          <td colSpan={7} className="px-3 py-10 text-center text-sm text-muted-foreground">
                             Данные не найдены
                           </td>
                         </tr>
@@ -3803,7 +3824,13 @@ export default function AiCompanyAnalysisTab() {
               )}
             </DialogHeader>
             {infoCompany && (
-              <div className="space-y-4 text-sm">
+              <Tabs defaultValue="main" className="space-y-4 text-sm">
+                <TabsList className="grid w-full grid-cols-3">
+                  <TabsTrigger value="main">Основная информация</TabsTrigger>
+                  <TabsTrigger value="logs">Логи и запуск</TabsTrigger>
+                  <TabsTrigger value="billing">Billing</TabsTrigger>
+                </TabsList>
+                <TabsContent value="main" className="space-y-4 mt-0">
                 {(() => {
                   const steps = toPipelineSteps(infoCompany.analysis_pipeline);
                   const state = computeCompanyState(infoCompany);
@@ -3924,7 +3951,7 @@ export default function AiCompanyAnalysisTab() {
                               <li key={`${infoCompany.inn}-dlg-step-${idx}`}>
                                 {step.label}
                                 {step.status ? (
-                                  <span className="text-muted-foreground"> · {step.status}</span>
+                                  <span className="text-muted-foreground"> · {translatePipelineStatus(step.status)}</span>
                                 ) : null}
                               </li>
                             ))}
@@ -3935,7 +3962,9 @@ export default function AiCompanyAnalysisTab() {
                   );
                 })()}
 
-                <div className="space-y-2">
+                </TabsContent>
+
+                <TabsContent value="logs" className="space-y-2 mt-0">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="uppercase">Логи задачи</span>
                     <Button
@@ -4022,8 +4051,10 @@ export default function AiCompanyAnalysisTab() {
                       <div className="px-3 py-4 text-sm text-muted-foreground">Логи пока отсутствуют</div>
                     )}
                   </div>
-                </div>
 
+                </TabsContent>
+
+                <TabsContent value="main" className="space-y-4 mt-0">
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>
@@ -4083,10 +4114,10 @@ export default function AiCompanyAnalysisTab() {
                           <li key={`${item.name}-${item.id ?? idx}`} className="rounded-md border bg-muted/30 p-3">
                             <div className="flex items-start justify-between gap-2">
                               <div className="font-medium text-foreground">{item.name}</div>
-                              {item.id && (
+                              {buildEquipmentCardHref(item) && (
                                 <Button asChild type="button" variant="link" className="h-auto p-0 text-xs">
                                   <a
-                                    href={`/library/equipment/${encodeURIComponent(item.id)}`}
+                                    href={buildEquipmentCardHref(item) ?? '#'}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                   >
@@ -4096,13 +4127,8 @@ export default function AiCompanyAnalysisTab() {
                                 </Button>
                               )}
                             </div>
-                            {(item.id || item.score != null) && (
+                            {item.score != null && (
                               <div className="mt-1 flex flex-wrap gap-2 text-[12px] text-muted-foreground">
-                                {item.id && (
-                                  <Badge variant="outline" className="text-[12px]">
-                                    ID {item.id}
-                                  </Badge>
-                                )}
                                 {item.score != null && (
                                   <Badge variant="outline" className="text-[12px]">
                                     Рейтинг {formatSimilarityScore(item.score) ?? item.score}
@@ -4118,6 +4144,9 @@ export default function AiCompanyAnalysisTab() {
                   )}
                 </div>
 
+                </TabsContent>
+
+                <TabsContent value="billing" className="space-y-4 mt-0">
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">Billing</div>
                   <div className="grid gap-2 sm:grid-cols-2">
@@ -4139,6 +4168,9 @@ export default function AiCompanyAnalysisTab() {
                   </div>
                 </div>
 
+                </TabsContent>
+
+                <TabsContent value="main" className="space-y-4 mt-0">
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">
                     Виды найденной продукции на сайте и ТНВЭД
@@ -4180,7 +4212,8 @@ export default function AiCompanyAnalysisTab() {
                     <div className="text-muted-foreground">нет данных</div>
                   )}
                 </div>
-              </div>
+                </TabsContent>
+              </Tabs>
             )}
           </DialogContent>
         </Dialog>
