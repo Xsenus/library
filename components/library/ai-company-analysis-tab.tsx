@@ -2363,7 +2363,19 @@ export default function AiCompanyAnalysisTab() {
       analyzer.ai.equipment.forEach((item) => pushItem(normalizeEquipmentItem(item), items));
     }
 
-    return items;
+    return items
+      .sort((a, b) => {
+        const scoreA = a.score;
+        const scoreB = b.score;
+        const hasScoreA = typeof scoreA === 'number' && Number.isFinite(scoreA);
+        const hasScoreB = typeof scoreB === 'number' && Number.isFinite(scoreB);
+
+        if (hasScoreA && hasScoreB) return scoreB - scoreA;
+        if (hasScoreA) return -1;
+        if (hasScoreB) return 1;
+        return 0;
+      })
+      .slice(0, 10);
   };
 
   const isObjectObjectPlaceholder = (value: string): boolean => value.trim().toLowerCase() === '[object object]';
@@ -3967,9 +3979,7 @@ export default function AiCompanyAnalysisTab() {
                   <div className="text-xs text-muted-foreground mb-2">Топ-10 оборудования</div>
                   {topEquipment(infoCompany, analyzerInfo).length ? (
                     <ul className="grid gap-2 sm:grid-cols-2">
-                      {topEquipment(infoCompany, analyzerInfo)
-                        .slice(0, 10)
-                        .map((item, idx) => (
+                      {topEquipment(infoCompany, analyzerInfo).map((item, idx) => (
                           <li key={`${item.name}-${item.id ?? idx}`} className="rounded-md border bg-muted/30 p-3">
                             <div className="flex items-start justify-between gap-2">
                               <div className="font-medium text-foreground">{item.name}</div>

@@ -347,21 +347,27 @@ async function getEquipmentByInn(
   const idColumn = meta.names.has('company_id') ? 'company_id' : meta.names.has('inn') ? 'inn' : null;
   if (!idColumn) return result;
 
-  const equipmentCol =
-    [
-      'equipment',
-      'equipment_list',
-      'equipment_ai',
-      'equipment_data',
-      'equipment_json',
-      'top_equipment',
-      'top10_equipment',
-      'equipment_name',
-      'equipmentId',
-    ]
-      .find((c) => meta.names.has(c)) ?? null;
+  const hasRowBasedEquipmentTable =
+    meta.names.has('company_id') &&
+    meta.names.has('id') &&
+    meta.names.has('equipment_name') &&
+    meta.names.has('score');
 
-  if (!equipmentCol) return result;
+  const equipmentCol = hasRowBasedEquipmentTable
+    ? null
+    : [
+        'equipment',
+        'equipment_list',
+        'equipment_ai',
+        'equipment_data',
+        'equipment_json',
+        'top_equipment',
+        'top10_equipment',
+        'equipment_name',
+        'equipmentId',
+      ].find((c) => meta.names.has(c)) ?? null;
+
+  if (!hasRowBasedEquipmentTable && !equipmentCol) return result;
 
   const clientsMeta = await getTableColumns('clients_requests', { connection });
 
@@ -417,6 +423,46 @@ async function getEquipmentByInn(
       idColumn === 'company_id'
         ? [Array.from(companyMap.keys())]
         : [inns.map((inn) => (inn == null ? null : String(inn)))];
+
+    if (hasRowBasedEquipmentTable && idColumn === 'company_id') {
+      const { rows } = await connection.query<{
+        company_id: number;
+        id: number | null;
+        equipment_name: string | null;
+        score: number | null;
+      }>(
+        `
+          SELECT company_id, id, equipment_name, score
+          FROM public.${quoteIdent(meta.tableName)}
+          WHERE company_id = ANY($1::int[])
+          ORDER BY company_id, score DESC NULLS LAST
+        `,
+        [Array.from(companyMap.keys())],
+      );
+
+      const groupedByCompanyId = new Map<number, any[]>();
+      for (const row of rows) {
+        if (!row.company_id) continue;
+        const equipmentName = parseString(row.equipment_name);
+        if (!equipmentName) continue;
+
+        const entry: { id?: number; name: string; score?: number | null } = { name: equipmentName };
+        if (row.id != null) entry.id = row.id;
+        if (row.score != null) entry.score = row.score;
+
+        const items = groupedByCompanyId.get(row.company_id) ?? [];
+        items.push(entry);
+        groupedByCompanyId.set(row.company_id, items);
+      }
+
+      groupedByCompanyId.forEach((items, companyId) => {
+        const inn = companyMap.get(companyId);
+        if (!inn || !items.length) return;
+        result.set(inn, items);
+      });
+
+      return result;
+    }
 
     const { rows } = await connection.query<{ inn: string | number; equipment: any }>(
       `SELECT ${idColumn} AS inn, ${equipmentCol} AS equipment FROM ${quoteIdent(meta.tableName)} WHERE ${idColumn} = ANY($1::${
