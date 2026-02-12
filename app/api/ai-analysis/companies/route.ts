@@ -124,6 +124,7 @@ const OPTIONAL_COLUMNS: OptionalColumnSpec[] = [
     candidates: ['description_okved_score', 'analysis_description_okved_score', 'description_okved_match'],
     fallback: 'NULL::numeric',
   },
+  { alias: 'score_source', candidates: ['score_source'], fallback: 'NULL::text' },
   { alias: 'analysis_tnved', candidates: ['analysis_tnved', 'tnved_products', 'analysis_products'], fallback: 'NULL::jsonb' },
   {
     alias: 'analysis_info',
@@ -450,6 +451,7 @@ type SiteAnalyzerFallback = {
   descriptionScore: number | null;
   okvedScore: number | null;
   descriptionOkvedScore: number | null;
+  scoreSource: string | null;
   prodclassByOkved: number | null;
   goods: any[];
   equipment: any[];
@@ -744,6 +746,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         prodclassMeta.names.has('description_score') ? 'description_score' : null,
         prodclassMeta.names.has('okved_score') ? 'okved_score' : null,
         prodclassMeta.names.has('description_okved_score') ? 'description_okved_score' : null,
+        prodclassMeta.names.has('score_source') ? 'score_source' : null,
         prodclassMeta.names.has('prodclass_by_okved') ? 'prodclass_by_okved' : null,
       ].filter(Boolean) as string[];
 
@@ -965,6 +968,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       descriptionOkvedScore:
         parseNumber(prodclassRow.description_okved_score) ??
         parseNumber((openAiRow as any).description_okved_score),
+      scoreSource: parseString(prodclassRow.score_source) ?? parseString((openAiRow as any).score_source),
       prodclassByOkved:
         parseNumber(prodclassRow.prodclass_by_okved) ?? parseNumber((openAiRow as any).prodclass_by_okved),
       goods: fallbackGoods.map((g) => ({
@@ -1233,6 +1237,7 @@ function mergeAnalyzerInfo(
     descriptionScore: number | null;
     okvedScore: number | null;
     descriptionOkvedScore: number | null;
+    scoreSource: string | null;
     prodclassByOkved: number | null;
   },
 ) {
@@ -1266,6 +1271,7 @@ function mergeAnalyzerInfo(
       score: extra.descriptionOkvedScore ?? (extra.matchLevel ? parseNumber(extra.matchLevel) : null),
       description_okved_score: extra.descriptionOkvedScore ?? (extra.okvedMatch ? parseNumber(extra.okvedMatch) : null),
       okved_score: extra.okvedScore ?? null,
+      score_source: extra.scoreSource ?? null,
     };
   } else if (ai.prodclass) {
     if (ai.prodclass.description_okved_score == null && extra.descriptionOkvedScore != null) {
@@ -1277,6 +1283,9 @@ function mergeAnalyzerInfo(
     if (ai.prodclass.score == null && (extra.descriptionOkvedScore != null || extra.matchLevel)) {
       ai.prodclass.score =
         extra.descriptionOkvedScore ?? (extra.matchLevel ? parseNumber(extra.matchLevel) : ai.prodclass.score ?? null);
+    }
+    if (ai.prodclass.score_source == null && extra.scoreSource != null) {
+      ai.prodclass.score_source = extra.scoreSource;
     }
   }
 
@@ -1772,6 +1781,13 @@ export async function GET(request: NextRequest) {
         (analysisInfo && parseString((analysisInfo as any)?.okved_match)) ||
         (okvedScore != null ? String(okvedScore) : null) ||
         (descriptionOkvedScore != null ? String(descriptionOkvedScore) : null);
+      const scoreSource =
+        parseString(row.score_source) ||
+        parseString((analysisInfo as any)?.score_source) ||
+        parseString((analysisInfo as any)?.ai?.score_source) ||
+        parseString((analysisInfo as any)?.ai?.prodclass?.score_source) ||
+        siteFallback?.scoreSource ||
+        null;
       const domain =
         parseString(row.analysis_domain) ||
         (analysisInfo && parseString((analysisInfo as any)?.domain)) ||
@@ -1826,6 +1842,7 @@ export async function GET(request: NextRequest) {
         tnved,
         descriptionScore,
         descriptionOkvedScore,
+        scoreSource,
         okvedScore,
         prodclassByOkved,
       });
@@ -1868,6 +1885,7 @@ export async function GET(request: NextRequest) {
         analysis_equipment: equipment,
         description_score: descriptionScore,
         description_okved_score: descriptionOkvedScore,
+        score_source: scoreSource,
         okved_score: okvedScore,
         prodclass_by_okved: prodclassByOkved,
         prodclass_name: prodclassName,
