@@ -503,6 +503,77 @@ type SiteAnalyzerFallback = {
   equipment: any[];
 };
 
+type CompanyCostSummary = {
+  input_tokens: number;
+  cached_input_tokens: number;
+  output_tokens: number;
+  tokens_total: number;
+  cost_total_usd: number;
+};
+
+async function loadCompanyCostSummaries(companyIds: number[]): Promise<Map<number, CompanyCostSummary>> {
+  const result = new Map<number, CompanyCostSummary>();
+  if (!companyIds.length) return result;
+
+  const openAiMeta = await getTableColumns('ai_site_openai_responses');
+  if (!openAiMeta.available || !openAiMeta.names.has('company_id')) return result;
+
+  const inputExpr = openAiMeta.names.has('input_tokens') ? 'COALESCE(SUM(input_tokens), 0)::bigint' : '0::bigint';
+  const cachedExpr = openAiMeta.names.has('cached_input_tokens')
+    ? 'COALESCE(SUM(cached_input_tokens), 0)::bigint'
+    : '0::bigint';
+  const outputExpr = openAiMeta.names.has('output_tokens') ? 'COALESCE(SUM(output_tokens), 0)::bigint' : '0::bigint';
+  const costExpr = openAiMeta.names.has('cost_usd')
+    ? 'COALESCE(SUM(cost_usd), 0)::numeric(12,6)'
+    : '0::numeric(12,6)';
+
+  try {
+    const { rows } = await db.query<{
+      company_id: number;
+      input_tokens: string | number;
+      cached_input_tokens: string | number;
+      output_tokens: string | number;
+      cost_total_usd: string | number;
+    }>(
+      `
+        SELECT
+          company_id,
+          ${inputExpr} AS input_tokens,
+          ${cachedExpr} AS cached_input_tokens,
+          ${outputExpr} AS output_tokens,
+          ${costExpr} AS cost_total_usd
+        FROM ai_site_openai_responses
+        WHERE company_id = ANY($1::int[])
+        GROUP BY company_id
+      `,
+      [companyIds],
+    );
+
+    for (const row of rows) {
+      const companyId = Number(row.company_id);
+      if (!Number.isFinite(companyId)) continue;
+
+      const inputTokens = Number(row.input_tokens ?? 0);
+      const cachedInputTokens = Number(row.cached_input_tokens ?? 0);
+      const outputTokens = Number(row.output_tokens ?? 0);
+      const costTotalUsd = Number(row.cost_total_usd ?? 0);
+      const tokensTotal = inputTokens + cachedInputTokens + outputTokens;
+
+      result.set(companyId, {
+        input_tokens: Number.isFinite(inputTokens) ? inputTokens : 0,
+        cached_input_tokens: Number.isFinite(cachedInputTokens) ? cachedInputTokens : 0,
+        output_tokens: Number.isFinite(outputTokens) ? outputTokens : 0,
+        tokens_total: Number.isFinite(tokensTotal) ? tokensTotal : 0,
+        cost_total_usd: Number.isFinite(costTotalUsd) ? costTotalUsd : 0,
+      });
+    }
+  } catch (error) {
+    console.warn('Failed to load ai_site_openai_responses cost summary', error);
+  }
+
+  return result;
+}
+
 async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, SiteAnalyzerFallback>> {
   const result = new Map<string, SiteAnalyzerFallback>();
   if (!inns.length) return result;
@@ -1666,6 +1737,7 @@ export async function GET(request: NextRequest) {
     let responsiblesByInn = new Map<string, string>();
     let equipmentByInn = new Map<string, any[]>();
     let siteAnalyzerByInn = new Map<string, SiteAnalyzerFallback>();
+    let costsByCompanyId = new Map<number, CompanyCostSummary>();
 
     if (inns.length) {
       try {
@@ -1688,6 +1760,15 @@ export async function GET(request: NextRequest) {
 
       equipmentByInn = await getEquipmentByInn(inns, companyIds);
       siteAnalyzerByInn = await loadSiteAnalyzerFallbacks(inns);
+      for (const [inn, fallback] of siteAnalyzerByInn.entries()) {
+        const fallbackCompanyId = Number(fallback.companyId);
+        if (!Number.isFinite(fallbackCompanyId)) continue;
+        if (!companyIds.has(inn)) {
+          companyIds.set(inn, fallbackCompanyId);
+        }
+      }
+
+      costsByCompanyId = await loadCompanyCostSummaries(Array.from(new Set(companyIds.values())));
 
       if (await isB24MetaAvailable()) {
         try {
@@ -1891,13 +1972,17 @@ export async function GET(request: NextRequest) {
         parseNumber((analysisInfo as any)?.attempts) ??
         parseNumber((analysisInfo as any)?.retry_count);
 
+      const companyId = row.company_id != null ? Number(row.company_id) : siteFallback?.companyId ?? null;
+      const numericCompanyId = Number(companyId);
+      const costSummary = Number.isFinite(numericCompanyId) ? costsByCompanyId.get(numericCompanyId) : null;
+
       return {
         ...core,
         sites,
         emails,
         analysis_status: status,
         analysis_outcome: outcome,
-        company_id: row.company_id != null ? Number(row.company_id) : null,
+        company_id: Number.isFinite(numericCompanyId) ? numericCompanyId : null,
         analysis_progress: progress,
         analysis_started_at: startedAt,
         analysis_finished_at: finishedAt,
@@ -1926,6 +2011,18 @@ export async function GET(request: NextRequest) {
         queued_at: queuedAt,
         queued_by: queuedBy,
         responsible: responsiblesByInn.get(core.inn) ?? null,
+        tokens_total: costSummary?.tokens_total ?? 0,
+        input_tokens: costSummary?.input_tokens ?? 0,
+        cached_input_tokens: costSummary?.cached_input_tokens ?? 0,
+        output_tokens: costSummary?.output_tokens ?? 0,
+        cost_total_usd: costSummary?.cost_total_usd ?? 0,
+        breakdown: costSummary
+          ? {
+              input_tokens: costSummary.input_tokens,
+              cached_input_tokens: costSummary.cached_input_tokens,
+              output_tokens: costSummary.output_tokens,
+            }
+          : null,
       };
     });
 
