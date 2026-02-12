@@ -127,6 +127,7 @@ type AiCompany = {
   prodclass_name?: string | null;
   analysis_okved_match?: string | null;
   analysis_description?: string | null;
+  score_source?: string | null;
   analysis_tnved?: any;
   analysis_info?: any;
   analysis_pipeline?: any;
@@ -335,6 +336,7 @@ type AiAnalyzerInfo = {
     domain2_site?: string | null;
   } | null;
   ai?: {
+    score_source?: string | null;
     sites?: string[];
     products?: Array<{
       name: string;
@@ -359,6 +361,7 @@ type AiAnalyzerInfo = {
       score?: number | null;
       description_okved_score?: number | null;
       okved_score?: number | null;
+      score_source?: string | null;
     } | null;
     prodclass_by_okved?: string | number | null;
     okved_score?: number | null;
@@ -513,6 +516,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
               description_okved_score:
                 prodclass.description_okved_score ?? prodclass.okved_match_score ?? prodclass.okved_score ?? null,
               okved_score: prodclass.okved_score ?? null,
+              score_source: prodclass.score_source ?? ai.score_source ?? null,
             }
           : null,
         prodclass_by_okved: prodclassByOkved,
@@ -521,6 +525,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
         utp: ai.utp ?? ai.usp ?? null,
         letter: ai.letter ?? ai.email ?? null,
         note: ai.note ?? null,
+        score_source: ai.score_source ?? null,
       }
     : null;
 
@@ -591,6 +596,10 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
           null;
         const rawProdclassByOkved =
           prodclassByOkved ?? (data as any).prodclass_by_okved ?? (data as any).prodclassByOkved ?? null;
+        const rawScoreSource =
+          (data as any).score_source ??
+          (prodclass && typeof prodclass === 'object' ? (prodclass as any).score_source : null) ??
+          null;
 
         if (
           !rawProdclass &&
@@ -613,6 +622,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
               rawProdclass.okved_score ??
               (rawOkvedMatch != null ? Number(rawOkvedMatch) : null),
             okved_score: rawProdclass.okved_score ?? (rawOkvedScore != null ? Number(rawOkvedScore) : null),
+            score_source: rawProdclass.score_source ?? rawScoreSource ?? null,
           };
         }
 
@@ -623,6 +633,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
           score: rawScore != null ? Number(rawScore) : rawOkvedScore != null ? Number(rawOkvedScore) : null,
           description_okved_score: rawOkvedMatch != null ? Number(rawOkvedMatch) : null,
           okved_score: rawOkvedScore != null ? Number(rawOkvedScore) : null,
+          score_source: rawScoreSource,
         };
       })()
     : aiInfo.prodclass;
@@ -1030,6 +1041,7 @@ export default function AiCompanyAnalysisTab() {
   const analyzerProdclassByOkved = analyzerInfo?.ai?.prodclass_by_okved ?? null;
   const analyzerOkvedScore =
     analyzerProdclass?.okved_score ?? analyzerInfo?.ai?.okved_score ?? infoCompany?.okved_score ?? null;
+  const analyzerDescriptionScore = infoCompany?.description_score ?? null;
   const analyzerDescriptionOkvedScore =
     analyzerProdclass?.description_okved_score ??
     analyzerInfo?.ai?.description_okved_score ??
@@ -2487,17 +2499,34 @@ export default function AiCompanyAnalysisTab() {
     analyzerProdclass?.score ??
     analyzerDescriptionOkvedScore ??
     analyzerOkvedScore ??
-    (infoCompany?.analysis_match_level != null ? Number(infoCompany.analysis_match_level) : null);
+    null;
+  const matchLevelValue = infoCompany?.analysis_match_level != null ? Number(infoCompany.analysis_match_level) : null;
+  const okvedMatchLevelValue = infoCompany?.analysis_okved_match != null ? Number(infoCompany.analysis_okved_match) : null;
+  const scoreSource =
+    infoCompany?.score_source ??
+    analyzerInfo?.ai?.score_source ??
+    analyzerInfo?.ai?.prodclass?.score_source ??
+    null;
+  const isFallbackBySource = scoreSource === 'okved_fallback';
+  const hasSiteScores = [
+    analyzerProdclass?.score,
+    analyzerDescriptionScore,
+    analyzerDescriptionOkvedScore,
+    analyzerOkvedScore,
+    infoCompany?.description_score,
+    infoCompany?.description_okved_score,
+    infoCompany?.okved_score,
+  ].some((value) => value != null);
+  const isFallbackByNullScores = !hasSiteScores;
+  const showOkvedFallbackBadge = isFallbackBySource || isFallbackByNullScores;
   const prodclassScoreText =
     formatMatchScore(prodclassScoreValue) ||
     formatMatchScore(analyzerProdclass?.score ?? null) ||
-    formatMatchScore(analyzerOkvedScore) ||
-    (infoCompany?.analysis_match_level ? String(infoCompany.analysis_match_level) : null);
+    formatMatchScore(analyzerOkvedScore);
   const prodclassRawScoreText =
     formatRawScore(prodclassScoreValue) ||
     formatRawScore(analyzerProdclass?.score ?? null) ||
-    formatRawScore(analyzerOkvedScore) ||
-    formatRawScore(infoCompany?.analysis_match_level ?? null);
+    formatRawScore(analyzerOkvedScore);
   const prodclassId =
     (analyzerProdclass?.id as string | number | null | undefined) ??
     analyzerProdclassByOkved ??
@@ -2509,8 +2538,7 @@ export default function AiCompanyAnalysisTab() {
       : null;
   const okvedMatchText =
     formatMatchScore(analyzerDescriptionOkvedScore ?? null) ||
-    formatMatchScore(analyzerOkvedScore ?? infoCompany?.okved_score ?? null) ||
-    (infoCompany?.analysis_okved_match ? String(infoCompany.analysis_okved_match) : null);
+    formatMatchScore(analyzerOkvedScore ?? infoCompany?.okved_score ?? null);
   const analysisDomainValue =
     infoCompany?.analysis_domain ||
     analyzerInfo?.company?.domain1_site ||
@@ -3888,12 +3916,18 @@ export default function AiCompanyAnalysisTab() {
                   <div>
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>
                     <div className="space-y-1 font-medium">
+                      {showOkvedFallbackBadge && (
+                        <div className="text-sm text-amber-600">Класс определён по ОКВЭД (сайт недоступен)</div>
+                      )}
                       <div className="flex flex-wrap items-baseline gap-2">
-                        <span className="text-base sm:text-lg">{prodclassScoreText || '—'}</span>
-                        {prodclassRawScoreText && (
+                        <span className="text-base sm:text-lg">{showOkvedFallbackBadge ? 'Оценки по сайту: —' : prodclassScoreText || '—'}</span>
+                        {!showOkvedFallbackBadge && prodclassRawScoreText && (
                           <span className="text-xs text-muted-foreground">(расчёт: {prodclassRawScoreText})</span>
                         )}
                       </div>
+                      {Number.isFinite(matchLevelValue) && (
+                        <div className="text-sm text-muted-foreground">Уровень (level): {matchLevelValue}</div>
+                      )}
                       <div className="text-sm text-muted-foreground">
                         {prodclassId ? `Класс ${prodclassId}` : 'Класс не определён'}
                         {prodclassLabel ? ` · ${prodclassLabel}` : ''}
@@ -3915,7 +3949,10 @@ export default function AiCompanyAnalysisTab() {
                     <div className="text-xs text-muted-foreground">
                       Соответствие ИИ-описания сайта и ОКВЭД
                     </div>
-                    <div className="font-medium">{okvedMatchText || '—'}</div>
+                    <div className="font-medium">{showOkvedFallbackBadge ? 'Оценки по сайту: —' : okvedMatchText || '—'}</div>
+                    {Number.isFinite(okvedMatchLevelValue) && (
+                      <div className="text-sm text-muted-foreground">Уровень (level): {okvedMatchLevelValue}</div>
+                    )}
                   </div>
                 </div>
 
