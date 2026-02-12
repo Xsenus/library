@@ -4150,7 +4150,7 @@ export default function AiCompanyAnalysisTab() {
                           <div className="flex items-start justify-between gap-2">
                             <div className="font-medium text-foreground">{item.name}</div>
                           </div>
-                          {(item.code || item.score != null || item.id) && (
+                          {(item.code || item.score != null || item.source) && (
                             <div className="mt-1 flex flex-wrap gap-2">
                               {item.code && (
                                 <Badge variant="outline" className="text-[12px]">
@@ -4161,7 +4161,7 @@ export default function AiCompanyAnalysisTab() {
                                 Рейтинг {item.score != null ? formatSimilarityScore(item.score) ?? item.score : '—'}
                               </Badge>
                               <Badge variant="outline" className="text-[12px]">
-                                Источник {item.source === 'okved' ? 'ОКВЭД' : 'сайт'}
+                                Источник: {item.source === 'okved' ? 'ОКВЭД' : 'сайт'}
                               </Badge>
                               {item.score == null && (
                                 <Tooltip>
