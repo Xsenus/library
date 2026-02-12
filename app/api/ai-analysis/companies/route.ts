@@ -1760,13 +1760,13 @@ export async function GET(request: NextRequest) {
 
       equipmentByInn = await getEquipmentByInn(inns, companyIds);
       siteAnalyzerByInn = await loadSiteAnalyzerFallbacks(inns);
-      for (const [inn, fallback] of siteAnalyzerByInn.entries()) {
+      siteAnalyzerByInn.forEach((fallback, inn) => {
         const fallbackCompanyId = Number(fallback.companyId);
-        if (!Number.isFinite(fallbackCompanyId)) continue;
+        if (!Number.isFinite(fallbackCompanyId)) return;
         if (!companyIds.has(inn)) {
           companyIds.set(inn, fallbackCompanyId);
         }
-      }
+      });
 
       costsByCompanyId = await loadCompanyCostSummaries(Array.from(new Set(companyIds.values())));
 
