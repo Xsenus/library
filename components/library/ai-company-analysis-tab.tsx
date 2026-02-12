@@ -140,6 +140,10 @@ type AiCompany = {
   cached_input_tokens?: number | null;
   output_tokens?: number | null;
   cost_total_usd?: number | null;
+  analysis_cost?: {
+    tokens_total?: number | null;
+    cost_usd?: number | null;
+  } | null;
   breakdown?: {
     input_tokens?: number | null;
     cached_input_tokens?: number | null;
@@ -158,8 +162,8 @@ type FetchResponse = {
 };
 
 type BillingResponse = {
-  month_to_date_spend_usd?: number | null;
-  budget_monthly_usd?: number | null;
+  spend_month_to_date_usd?: number | null;
+  limit_usd?: number | null;
   remaining_usd?: number | null;
 };
 
@@ -2363,8 +2367,8 @@ export default function AiCompanyAnalysisTab() {
   const topEquipment = (
     company: AiCompany,
     analyzer?: AiAnalyzerInfo | null,
-  ): Array<{ name: string; id?: string; score?: number | null }> => {
-    const normalizeEquipmentItem = (item: any): { name: string; id?: string; score?: number | null } | null => {
+  ): Array<{ name: string; id?: string; score?: number | null; hash_equipment?: string | null }> => {
+    const normalizeEquipmentItem = (item: any): { name: string; id?: string; score?: number | null; hash_equipment?: string | null } | null => {
       if (!item) return null;
       if (typeof item === 'string') {
         const name = item.trim();
@@ -2386,9 +2390,15 @@ export default function AiCompanyAnalysisTab() {
           null;
         const score =
           item?.equipment_score ?? item?.score ?? item?.match_score ?? item?.goods_types_score ?? undefined;
+        const hashEquipment = item?.hash_equipment ?? null;
 
         if (!name && id == null) return null;
-        return { name: name || String(id), id: id != null ? String(id) : undefined, score: score ?? undefined };
+        return {
+          name: name || String(id),
+          id: id != null ? String(id) : undefined,
+          score: score ?? undefined,
+          hash_equipment: hashEquipment ? String(hashEquipment) : undefined,
+        };
       }
 
       const value = String(item).trim();
@@ -2396,15 +2406,20 @@ export default function AiCompanyAnalysisTab() {
     };
 
     const seen = new Set<string>();
-    const pushItem = (item: { name: string; id?: string; score?: number | null } | null, acc: typeof items) => {
+    const pushItem = (item: { name: string; id?: string; score?: number | null; hash_equipment?: string | null } | null, acc: typeof items) => {
       if (!item?.name) return;
       const key = `${item.name.trim().toLowerCase()}|${item.id?.trim().toLowerCase() || ''}`;
       if (seen.has(key)) return;
       seen.add(key);
-      acc.push({ name: item.name.trim(), id: item.id?.trim() || undefined, score: item.score });
+      acc.push({
+        name: item.name.trim(),
+        id: item.id?.trim() || undefined,
+        score: item.score,
+        hash_equipment: item.hash_equipment?.trim() || undefined,
+      });
     };
 
-    const items: Array<{ name: string; id?: string; score?: number | null }> = [];
+    const items: Array<{ name: string; id?: string; score?: number | null; hash_equipment?: string | null }> = [];
     const raw = company.analysis_equipment;
 
     if (Array.isArray(raw)) {
@@ -4021,7 +4036,7 @@ export default function AiCompanyAnalysisTab() {
                         <div className="text-sm text-muted-foreground">Уровень (level): {matchLevelValue}</div>
                       )}
                       <div className="text-sm text-muted-foreground">
-                        {prodclassId ? `Класс ${prodclassId}` : 'Класс не определён'}
+                        {prodclassId ? `Класс ${prodclassId}` : prodclassLabel ? 'Класс найден' : 'Класс не определён'}
                         {prodclassLabel ? ` · ${prodclassLabel}` : ''}
                       </div>
                       {prodclassDescription && (
@@ -4063,7 +4078,7 @@ export default function AiCompanyAnalysisTab() {
                           <li key={`${item.name}-${item.id ?? idx}`} className="rounded-md border bg-muted/30 p-3">
                             <div className="flex items-start justify-between gap-2">
                               <div className="font-medium text-foreground">{item.name}</div>
-                              {item.id && (
+                              {item.hash_equipment && (
                                 <Button
                                   asChild
                                   type="button"
@@ -4071,11 +4086,11 @@ export default function AiCompanyAnalysisTab() {
                                   className="h-auto p-0 text-xs"
                                 >
                                   <a
-                                    href={`/library?equipmentId=${encodeURIComponent(item.id)}`}
+                                    href={`/embed/equipment?hash_equipment=${encodeURIComponent(item.hash_equipment)}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                   >
-                                    карточка
+                                    в карточку оборудования
                                     <ExternalLink className="ml-1 h-3 w-3" />
                                   </a>
                                 </Button>
@@ -4101,6 +4116,27 @@ export default function AiCompanyAnalysisTab() {
                   ) : (
                     <div className="text-muted-foreground">Данные отсутствуют</div>
                   )}
+                </div>
+
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">Billing</div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                      <div className="text-xs text-muted-foreground">API баланс</div>
+                      <div className="mt-1 space-y-1">
+                        <div>remaining_usd: <span className="font-medium">{formatUsd(billing?.remaining_usd)}</span></div>
+                        <div>limit_usd: <span className="font-medium">{formatUsd(billing?.limit_usd)}</span></div>
+                        <div>spend_month_to_date_usd: <span className="font-medium">{formatUsd(billing?.spend_month_to_date_usd)}</span></div>
+                      </div>
+                    </div>
+                    <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                      <div className="text-xs text-muted-foreground">По компании</div>
+                      <div className="mt-1 space-y-1">
+                        <div>tokens_total: <span className="font-medium">{formatTokens(infoCompany?.analysis_cost?.tokens_total ?? infoCompany?.tokens_total)}</span></div>
+                        <div>cost_usd: <span className="font-medium">{formatUsd(infoCompany?.analysis_cost?.cost_usd ?? infoCompany?.cost_total_usd)}</span></div>
+                      </div>
+                    </div>
+                  </div>
                 </div>
 
                 <div>
@@ -4135,6 +4171,9 @@ export default function AiCompanyAnalysisTab() {
                               )}
                               <Badge variant="outline" className="text-[12px]">
                                 Рейтинг {item.score != null ? formatSimilarityScore(item.score) ?? item.score : '—'}
+                              </Badge>
+                              <Badge variant="outline" className="text-[12px]">
+                                Источник {item.source === 'okved' ? 'ОКВЭД' : 'сайт'}
                               </Badge>
                               {item.score == null && (
                                 <Tooltip>
