@@ -463,7 +463,7 @@ async function getEquipmentByInn(
       if (existing.length) result.set(inn, existing);
     }
 
-    for (const [inn, equipment] of result.entries()) {
+    result.forEach((equipment, inn) => {
       const deduped = dedupeItems(equipment)
         .sort((a, b) => {
           const aScore = parseNumber(a.score);
@@ -475,7 +475,7 @@ async function getEquipmentByInn(
         })
         .slice(0, 10);
       result.set(inn, deduped as Equipment[]);
-    }
+    });
   } catch (error) {
     console.warn('Failed to load equipment_all data', error);
   }
