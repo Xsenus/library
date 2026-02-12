@@ -2432,12 +2432,8 @@ export default function AiCompanyAnalysisTab() {
       return value ? { name: value } : null;
     };
 
-    const seen = new Set<string>();
     const pushItem = (item: { name: string; id?: string; score?: number | null; hash_equipment?: string | null; industryId?: string; prodclassId?: string; workshopId?: string } | null, acc: typeof items) => {
       if (!item?.name) return;
-      const key = `${item.name.trim().toLowerCase()}|${item.id?.trim().toLowerCase() || ''}`;
-      if (seen.has(key)) return;
-      seen.add(key);
       acc.push({
         name: item.name.trim(),
         id: item.id?.trim() || undefined,
@@ -2460,7 +2456,28 @@ export default function AiCompanyAnalysisTab() {
       analyzer.ai.equipment.forEach((item) => pushItem(normalizeEquipmentItem(item), items));
     }
 
-    return items
+    const uniqueByName = items.reduce<typeof items>((acc, item) => {
+      const key = item.name.trim().toLowerCase();
+      const existingIndex = acc.findIndex((entry) => entry.name.trim().toLowerCase() === key);
+      if (existingIndex === -1) {
+        acc.push(item);
+        return acc;
+      }
+
+      const existing = acc[existingIndex];
+      const existingHasLinkData = Boolean(existing.id);
+      const nextHasLinkData = Boolean(item.id);
+      const existingScore = typeof existing.score === 'number' && Number.isFinite(existing.score) ? existing.score : -1;
+      const nextScore = typeof item.score === 'number' && Number.isFinite(item.score) ? item.score : -1;
+
+      if ((!existingHasLinkData && nextHasLinkData) || (existingHasLinkData === nextHasLinkData && nextScore > existingScore)) {
+        acc[existingIndex] = item;
+      }
+
+      return acc;
+    }, []);
+
+    return uniqueByName
       .sort((a, b) => {
         const scoreA = a.score;
         const scoreB = b.score;
@@ -2517,6 +2534,7 @@ export default function AiCompanyAnalysisTab() {
     return '';
   };
 
+
   const tnvedProducts = (
     company: AiCompany,
     analyzer?: AiAnalyzerInfo | null,
@@ -2528,62 +2546,63 @@ export default function AiCompanyAnalysisTab() {
       const arr = Array.isArray(raw) ? raw : [raw];
       const normalizedRawItems = arr.flatMap(
         (item: any): Array<{ name: string; code?: string; id?: string; score?: number | null; source?: 'site' | 'okved' | null }> => {
-        if (!item) return [];
+          if (!item) return [];
 
-        if (typeof item === 'string') {
+          if (typeof item === 'string') {
+            const name = normalizeTnvedValue(item);
+            return isMeaningfulTnvedName(name) ? [{ name }] : [];
+          }
+
+          if (typeof item === 'object') {
+            const name = normalizeTnvedValue(
+              item?.name ??
+                item?.title ??
+                item?.product ??
+                item?.goods ??
+                item?.value ??
+                item?.product_name ??
+                item?.goods_name ??
+                item?.description ??
+                item?.text ??
+                item,
+            );
+            const code = normalizeTnvedValue(item?.tnved ?? item?.code ?? item?.tn_ved ?? item?.tnved_code ?? item?.tnvedCode ?? '');
+            const score = Number(
+              item?.bigdata_similarity ?? item?.big_data_similarity ?? item?.vector_similarity ?? item?.score ?? item?.goods_types_score,
+            );
+            const idValue =
+              item?.goods_type_id ??
+              item?.match_id ??
+              item?.id ??
+              item?.goods_id ??
+              item?.product_id ??
+              null;
+            const source =
+              normalizeDetectionSource(
+                item?.source ??
+                  item?.detected_from ??
+                  item?.detection_source ??
+                  item?.origin ??
+                  item?.from,
+              ) ??
+              (item?.url || item?.domain ? 'site' : null);
+            const hasName = isMeaningfulTnvedName(name);
+            if (!hasName && !code) return [];
+            return [
+              {
+                name: hasName ? name : code,
+                code: code || undefined,
+                id: idValue != null ? String(idValue) : undefined,
+                score: Number.isFinite(score) ? score : undefined,
+                source,
+              },
+            ];
+          }
+
           const name = normalizeTnvedValue(item);
-          return isMeaningfulTnvedName(name) ? [{ name }] : [];
-        }
-
-        if (typeof item === 'object') {
-          const name = normalizeTnvedValue(
-            item?.name ??
-              item?.title ??
-              item?.product ??
-              item?.goods ??
-              item?.value ??
-              item?.product_name ??
-              item?.goods_name ??
-              item?.description ??
-              item?.text ??
-              item,
-          );
-          const code = normalizeTnvedValue(item?.tnved ?? item?.code ?? item?.tn_ved ?? item?.tnved_code ?? item?.tnvedCode ?? '');
-          const score = Number(
-            item?.bigdata_similarity ?? item?.big_data_similarity ?? item?.vector_similarity ?? item?.score ?? item?.goods_types_score,
-          );
-          const idValue =
-            item?.goods_type_id ??
-            item?.match_id ??
-            item?.id ??
-            item?.goods_id ??
-            item?.product_id ??
-            null;
-          const source =
-            normalizeDetectionSource(
-              item?.source ??
-                item?.detected_from ??
-                item?.detection_source ??
-                item?.origin ??
-                item?.from,
-            ) ??
-            (item?.url || item?.domain ? 'site' : null);
-          const hasName = isMeaningfulTnvedName(name);
-          if (!hasName && !code) return [];
-          return [
-            {
-              name: hasName ? name : code,
-              code: code || undefined,
-              id: idValue != null ? String(idValue) : undefined,
-              score: Number.isFinite(score) ? score : undefined,
-              source,
-            },
-          ];
-        }
-
-        const name = normalizeTnvedValue(item);
-        return name ? [{ name }] : [];
-      });
+          return name ? [{ name }] : [];
+        },
+      );
 
       items.push(...normalizedRawItems);
     }
@@ -2618,14 +2637,11 @@ export default function AiCompanyAnalysisTab() {
     }, []);
   };
 
-  const prodclassLabel = infoCompany?.prodclass_name ?? null;
   const prodclassScoreValue =
     analyzerProdclass?.score ??
     analyzerDescriptionOkvedScore ??
     analyzerOkvedScore ??
     null;
-  const matchLevelValue = infoCompany?.analysis_match_level != null ? Number(infoCompany.analysis_match_level) : null;
-  const okvedMatchLevelValue = infoCompany?.analysis_okved_match != null ? Number(infoCompany.analysis_okved_match) : null;
   const scoreSource =
     infoCompany?.score_source ??
     analyzerInfo?.ai?.score_source ??
@@ -2651,11 +2667,6 @@ export default function AiCompanyAnalysisTab() {
     formatRawScore(prodclassScoreValue) ||
     formatRawScore(analyzerProdclass?.score ?? null) ||
     formatRawScore(analyzerOkvedScore);
-  const prodclassId =
-    (analyzerProdclass?.id as string | number | null | undefined) ??
-    analyzerProdclassByOkved ??
-    infoCompany?.prodclass_by_okved ??
-    null;
   const prodclassDescription =
     analyzerProdclass && analyzerProdclass.name && analyzerProdclass.label && analyzerProdclass.name !== analyzerProdclass.label
       ? analyzerProdclass.name
@@ -2995,7 +3006,7 @@ export default function AiCompanyAnalysisTab() {
                         </th>
                         <th className="relative px-4 py-3 text-left" style={columnStyle('metrics')}>
                           <div className="flex items-center justify-between gap-2">
-                            <span>Оценка и тренд</span>
+                            <span>Выручка, млн</span>
                             {renderResizeHandle('metrics')}
                           </div>
                         </th>
@@ -3189,17 +3200,13 @@ export default function AiCompanyAnalysisTab() {
                             <td className="px-4 py-4 align-top text-xs" style={columnStyle('metrics')}>
                               <div className="space-y-2">
                                 <div className="rounded-md border border-border/50 bg-muted/20 px-3 py-2">
-                                  <div className="h-[46px] w-[150px] shrink-0">
+                                  <div className="h-[45px] w-[100px] shrink-0 overflow-hidden">
                                     <InlineRevenueBars
                                       mode="stack"
                                       revenue={[company.revenue_3, company.revenue_2, company.revenue_1, company.revenue]}
                                       income={[company.income_3, company.income_2, company.income_1, null]}
                                       year={company.year}
                                     />
-                                  </div>
-                                  <div className="mt-2 flex items-center justify-between">
-                                    <div className="text-[10px] uppercase tracking-[0.08em] text-muted-foreground">Оценка</div>
-                                    <div className={SCORE_VALUE_CLASS}>{score}</div>
                                   </div>
                                 </div>
                               </div>
@@ -3810,7 +3817,7 @@ export default function AiCompanyAnalysisTab() {
         </Dialog>
 
         <Dialog open={!!infoCompany} onOpenChange={(open) => !open && setInfoCompany(null)}>
-          <DialogContent className="max-w-3xl max-h-[90vh] overflow-y-auto">
+          <DialogContent className="flex h-[85vh] w-full max-w-3xl flex-col overflow-hidden">
             <DialogHeader>
               <DialogTitle>
                 {formatCompanyDisplayName(infoCompany?.short_name, infoCompany?.company_id ?? null)} · ИНН{' '}
@@ -3824,13 +3831,13 @@ export default function AiCompanyAnalysisTab() {
               )}
             </DialogHeader>
             {infoCompany && (
-              <Tabs defaultValue="main" className="space-y-4 text-sm">
+              <Tabs defaultValue="main" className="flex h-full flex-col space-y-4 text-sm">
                 <TabsList className="grid w-full grid-cols-3">
                   <TabsTrigger value="main">Основная информация</TabsTrigger>
                   <TabsTrigger value="logs">Логи и запуск</TabsTrigger>
-                  <TabsTrigger value="billing">Billing</TabsTrigger>
+                  <TabsTrigger value="billing">Расходы</TabsTrigger>
                 </TabsList>
-                <TabsContent value="main" className="space-y-4 mt-0">
+                <TabsContent value="main" className="mt-0 flex-1 space-y-4 overflow-y-auto">
                 {(() => {
                   const steps = toPipelineSteps(infoCompany.analysis_pipeline);
                   const state = computeCompanyState(infoCompany);
@@ -3964,7 +3971,7 @@ export default function AiCompanyAnalysisTab() {
 
                 </TabsContent>
 
-                <TabsContent value="logs" className="space-y-2 mt-0">
+                <TabsContent value="logs" className="mt-0 flex-1 space-y-2 overflow-y-auto">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="uppercase">Логи задачи</span>
                     <Button
@@ -4068,13 +4075,6 @@ export default function AiCompanyAnalysisTab() {
                           <span className="text-xs text-muted-foreground">(расчёт: {prodclassRawScoreText})</span>
                         )}
                       </div>
-                      {Number.isFinite(matchLevelValue) && (
-                        <div className="text-sm text-muted-foreground">Уровень (level): {matchLevelValue}</div>
-                      )}
-                      <div className="text-sm text-muted-foreground">
-                        {prodclassId ? `Класс ${prodclassId}` : prodclassLabel ? 'Класс найден' : 'Класс не определён'}
-                        {prodclassLabel ? ` · ${prodclassLabel}` : ''}
-                      </div>
                       {prodclassDescription && (
                         <div className="text-sm text-muted-foreground">{prodclassDescription}</div>
                       )}
@@ -4093,9 +4093,6 @@ export default function AiCompanyAnalysisTab() {
                       Соответствие ИИ-описания сайта и ОКВЭД
                     </div>
                     <div className="font-medium">{showOkvedFallbackBadge ? 'Оценки по сайту: —' : okvedMatchText || '—'}</div>
-                    {Number.isFinite(okvedMatchLevelValue) && (
-                      <div className="text-sm text-muted-foreground">Уровень (level): {okvedMatchLevelValue}</div>
-                    )}
                   </div>
                 </div>
 
@@ -4108,69 +4105,45 @@ export default function AiCompanyAnalysisTab() {
 
                 <div>
                   <div className="text-xs text-muted-foreground mb-2">Топ-10 оборудования</div>
-                  {topEquipment(infoCompany, analyzerInfo).length ? (
-                    <ul className="grid gap-2 sm:grid-cols-2">
-                      {topEquipment(infoCompany, analyzerInfo).map((item, idx) => (
+                  {(() => {
+                    const equipmentItems = topEquipment(infoCompany, analyzerInfo)
+                      .map((item) => ({
+                        ...item,
+                        href: buildEquipmentCardHref(item),
+                      }))
+                      .filter((item) => Boolean(item.href));
+
+                    if (!equipmentItems.length) {
+                      return <div className="text-muted-foreground">Данные отсутствуют</div>;
+                    }
+
+                    return (
+                      <ul className="grid gap-2 sm:grid-cols-2">
+                        {equipmentItems.map((item, idx) => (
                           <li key={`${item.name}-${item.id ?? idx}`} className="rounded-md border bg-muted/30 p-3">
                             <div className="flex items-start justify-between gap-2">
                               <div className="font-medium text-foreground">{item.name}</div>
-                              {buildEquipmentCardHref(item) && (
-                                <Button asChild type="button" variant="link" className="h-auto p-0 text-xs">
-                                  <a
-                                    href={buildEquipmentCardHref(item) ?? '#'}
-                                    target="_blank"
-                                    rel="noopener noreferrer"
-                                  >
-                                    карточка
-                                    <ExternalLink className="ml-1 h-3 w-3" />
-                                  </a>
-                                </Button>
-                              )}
+                              <Button asChild type="button" variant="link" className="h-auto p-0 text-xs">
+                                <a href={item.href ?? '#'} target="_blank" rel="noopener noreferrer">
+                                  карточка
+                                  <ExternalLink className="ml-1 h-3 w-3" />
+                                </a>
+                              </Button>
                             </div>
                             {item.score != null && (
                               <div className="mt-1 flex flex-wrap gap-2 text-[12px] text-muted-foreground">
-                                {item.score != null && (
-                                  <Badge variant="outline" className="text-[12px]">
-                                    Рейтинг {formatSimilarityScore(item.score) ?? item.score}
-                                  </Badge>
-                                )}
+                                <Badge variant="outline" className="text-[12px]">
+                                  Рейтинг {formatSimilarityScore(item.score) ?? item.score}
+                                </Badge>
                               </div>
                             )}
                           </li>
                         ))}
-                    </ul>
-                  ) : (
-                    <div className="text-muted-foreground">Данные отсутствуют</div>
-                  )}
+                      </ul>
+                    );
+                  })()}
                 </div>
 
-                </TabsContent>
-
-                <TabsContent value="billing" className="space-y-4 mt-0">
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Billing</div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                      <div className="text-xs text-muted-foreground">API баланс</div>
-                      <div className="mt-1 space-y-1">
-                        <div>remaining_usd: <span className="font-medium">{formatUsd(billing?.remaining_usd)}</span></div>
-                        <div>limit_usd: <span className="font-medium">{formatUsd(billing?.limit_usd)}</span></div>
-                        <div>spend_month_to_date_usd: <span className="font-medium">{formatUsd(billing?.spend_month_to_date_usd)}</span></div>
-                      </div>
-                    </div>
-                    <div className="rounded-md border bg-muted/30 p-3 text-sm">
-                      <div className="text-xs text-muted-foreground">По компании</div>
-                      <div className="mt-1 space-y-1">
-                        <div>tokens_total: <span className="font-medium">{formatOptionalTokens(infoCompany?.analysis_cost?.tokens_total ?? infoCompany?.tokens_total)}</span></div>
-                        <div>cost_usd: <span className="font-medium">{formatUsd(infoCompany?.analysis_cost?.cost_usd ?? infoCompany?.cost_total_usd)}</span></div>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                </TabsContent>
-
-                <TabsContent value="main" className="space-y-4 mt-0">
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">
                     Виды найденной продукции на сайте и ТНВЭД
@@ -4212,7 +4185,33 @@ export default function AiCompanyAnalysisTab() {
                     <div className="text-muted-foreground">нет данных</div>
                   )}
                 </div>
+
                 </TabsContent>
+
+                <TabsContent value="billing" className="mt-0 flex-1 space-y-4 overflow-y-auto">
+                <div>
+                  <div className="text-xs text-muted-foreground mb-1">Расходы AI-интеграции</div>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                      <div className="text-xs text-muted-foreground">API баланс</div>
+                      <div className="mt-1 space-y-1">
+                        <div>Доступный баланс (USD): <span className="font-medium">{formatUsd(billing?.remaining_usd)}</span></div>
+                        <div>Лимит (USD): <span className="font-medium">{formatUsd(billing?.limit_usd)}</span></div>
+                        <div>Потрачено за месяц (USD): <span className="font-medium">{formatUsd(billing?.spend_month_to_date_usd)}</span></div>
+                      </div>
+                    </div>
+                    <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                      <div className="text-xs text-muted-foreground">По компании</div>
+                      <div className="mt-1 space-y-1">
+                        <div>Всего токенов: <span className="font-medium">{formatOptionalTokens(infoCompany?.analysis_cost?.tokens_total ?? infoCompany?.tokens_total)}</span></div>
+                        <div>Стоимость (USD): <span className="font-medium">{formatUsd(infoCompany?.analysis_cost?.cost_usd ?? infoCompany?.cost_total_usd)}</span></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+
+                </TabsContent>
+
               </Tabs>
             )}
           </DialogContent>
