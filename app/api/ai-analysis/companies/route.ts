@@ -964,31 +964,13 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       domainMatch ??
       {};
 
-    const clientGoodsRaw = clientGoodsCols
-      .map((col) => (row as any)[col.replace('cr.', '')])
-      .find((val) => val != null);
     const clientEquipmentRaw = clientEquipmentCols
       .map((col) => (row as any)[col.replace('cr.', '')])
       .find((val) => val != null);
 
-    const goodsFromEquipment = equipmentRows.map((row) => ({
-      goods_type: (row as any).equipment,
-      goods_type_id:
-        (row as any).equipment_id ??
-        (row as any).equipmentId ??
-        (row as any).match_id ??
-        (row as any).id,
-      goods_types_score: (row as any).equipment_score ?? (row as any).score ?? (row as any).match_score,
-      text_vector: (row as any).text_vector ?? null,
-    }));
-
-    const fallbackGoods = goodsRows.length || goodsFromEquipment.length
-      ? [...goodsRows, ...goodsFromEquipment]
-      : [
-          ...mapGoodsList((openAiRow as any).goods),
-          ...mapGoodsList((openAiRow as any).goods_type),
-          ...mapGoodsList(clientGoodsRaw),
-        ];
+    const fallbackGoods = goodsRows.length
+      ? goodsRows
+      : mapGoodsList((openAiRow as any).goods_type);
 
     const fallbackEquipment = equipmentRows.length
       ? equipmentRows

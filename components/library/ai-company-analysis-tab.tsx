@@ -2423,14 +2423,14 @@ export default function AiCompanyAnalysisTab() {
   const tnvedProducts = (
     company: AiCompany,
     analyzer?: AiAnalyzerInfo | null,
-  ): Array<{ name: string; code?: string; score?: number | null; source?: 'site' | 'okved' | null }> => {
+  ): Array<{ name: string; code?: string; id?: string; score?: number | null; source?: 'site' | 'okved' | null }> => {
     const raw = company.analysis_tnved;
-    const items: Array<{ name: string; code?: string; score?: number | null; source?: 'site' | 'okved' | null }> = [];
+    const items: Array<{ name: string; code?: string; id?: string; score?: number | null; source?: 'site' | 'okved' | null }> = [];
     const seen = new Set<string>();
     if (raw) {
       const arr = Array.isArray(raw) ? raw : [raw];
       const normalizedRawItems = arr.flatMap(
-        (item: any): Array<{ name: string; code?: string; score?: number | null; source?: 'site' | 'okved' | null }> => {
+        (item: any): Array<{ name: string; code?: string; id?: string; score?: number | null; source?: 'site' | 'okved' | null }> => {
         if (!item) return [];
 
         if (typeof item === 'string') {
@@ -2455,6 +2455,13 @@ export default function AiCompanyAnalysisTab() {
           const score = Number(
             item?.bigdata_similarity ?? item?.big_data_similarity ?? item?.vector_similarity ?? item?.score ?? item?.goods_types_score,
           );
+          const idValue =
+            item?.goods_type_id ??
+            item?.match_id ??
+            item?.id ??
+            item?.goods_id ??
+            item?.product_id ??
+            null;
           const source =
             normalizeDetectionSource(
               item?.source ??
@@ -2470,6 +2477,7 @@ export default function AiCompanyAnalysisTab() {
             {
               name: hasName ? name : code,
               code: code || undefined,
+              id: idValue != null ? String(idValue) : undefined,
               score: Number.isFinite(score) ? score : undefined,
               source,
             },
@@ -2484,24 +2492,31 @@ export default function AiCompanyAnalysisTab() {
     }
 
     if (!items.length && analyzer?.ai?.products?.length) {
-      const analyzerProducts = analyzer.ai.products.reduce<Array<{ name: string; code?: string; score?: number | null; source?: 'site' | 'okved' | null }>>((acc, item) => {
+      const analyzerProducts = analyzer.ai.products.reduce<Array<{ name: string; code?: string; id?: string; score?: number | null; source?: 'site' | 'okved' | null }>>((acc, item) => {
         const name = normalizeTnvedValue(item?.name);
         const code = normalizeTnvedValue(item?.tnved_code) || undefined;
         const score = Number(item?.score);
+        const id = item?.id ?? item?.goods_type_id ?? item?.match_id ?? null;
         if (!name && !code) return acc;
-        acc.push({ name: name || code || '—', code, score: Number.isFinite(score) ? score : undefined, source: 'site' });
+        acc.push({ name: name || code || '—', code, id: id != null ? String(id) : undefined, score: Number.isFinite(score) ? score : undefined, source: 'site' });
         return acc;
       }, []);
 
       items.push(...analyzerProducts);
     }
 
-    return items.reduce<Array<{ name: string; code?: string; score?: number | null; source?: 'site' | 'okved' | null }>>((acc, item) => {
-      const key = `${item.name?.trim().toLowerCase() || ''}|${item.code?.trim().toLowerCase() || ''}`;
+    return items.reduce<Array<{ name: string; code?: string; id?: string; score?: number | null; source?: 'site' | 'okved' | null }>>((acc, item) => {
+      const key = `${item.name?.trim().toLowerCase() || ''}|${item.code?.trim().toLowerCase() || ''}|${item.id?.trim().toLowerCase() || ''}`;
       if (!item.name || seen.has(key)) return acc;
       seen.add(key);
       const source = item.source ?? (item.code && !item.score ? 'okved' : null);
-      acc.push({ name: item.name.trim(), code: item.code?.trim() || undefined, score: item.score ?? undefined, source });
+      acc.push({
+        name: item.name.trim(),
+        code: item.code?.trim() || undefined,
+        id: item.id?.trim() || undefined,
+        score: item.score ?? undefined,
+        source,
+      });
       return acc;
     }, []);
   };
@@ -4030,24 +4045,39 @@ export default function AiCompanyAnalysisTab() {
                   {tnvedProducts(infoCompany, analyzerInfo).length ? (
                     <ul className="grid gap-2 sm:grid-cols-2">
                       {tnvedProducts(infoCompany, analyzerInfo).map((item, idx) => (
-                        <li key={`${item.name}-${idx}`} className="rounded-md border bg-muted/30 p-3">
-                          <div className="font-medium text-foreground">{item.name}</div>
-                          {(item.code || item.score != null || item.source) && (
+                        <li key={`${item.name}-${item.id ?? idx}`} className="rounded-md border bg-muted/30 p-3">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="font-medium text-foreground">{item.name}</div>
+                            {item.id && (
+                              <Button asChild type="button" variant="link" className="h-auto p-0 text-xs">
+                                <a
+                                  href={`/library?goodsId=${encodeURIComponent(item.id)}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                >
+                                  карточка
+                                  <ExternalLink className="ml-1 h-3 w-3" />
+                                </a>
+                              </Button>
+                            )}
+                          </div>
+                          {(item.code || item.score != null || item.id) && (
                             <div className="mt-1 flex flex-wrap gap-2">
                               {item.code && (
                                 <Badge variant="outline" className="text-[12px]">
                                   ТНВЭД {item.code}
                                 </Badge>
                               )}
-                              {item.score != null && (
-                                <Badge variant="outline" className="text-[12px]">
-                                  Рейтинг {formatSimilarityScore(item.score) ?? item.score}
-                                </Badge>
-                              )}
-                              {item.source && (
-                                <Badge variant="outline" className="text-[12px]">
-                                  Источник: {item.source === 'okved' ? 'ОКВЭД' : 'сайт'}
-                                </Badge>
+                              <Badge variant="outline" className="text-[12px]">
+                                Рейтинг {item.score != null ? formatSimilarityScore(item.score) ?? item.score : '—'}
+                              </Badge>
+                              {item.score == null && (
+                                <Tooltip>
+                                  <TooltipTrigger asChild>
+                                    <Badge variant="outline" className="text-[12px]">?</Badge>
+                                  </TooltipTrigger>
+                                  <TooltipContent>не сматчено со справочником</TooltipContent>
+                                </Tooltip>
                               )}
                             </div>
                           )}
@@ -4055,7 +4085,7 @@ export default function AiCompanyAnalysisTab() {
                       ))}
                     </ul>
                   ) : (
-                    <div className="text-muted-foreground">Нет данных</div>
+                    <div className="text-muted-foreground">нет данных</div>
                   )}
                 </div>
               </div>
