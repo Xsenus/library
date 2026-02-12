@@ -187,6 +187,11 @@ function formatTokens(value: number | null | undefined): string {
   return Math.max(0, Math.floor(value)).toLocaleString('ru-RU');
 }
 
+function formatOptionalTokens(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return Math.max(0, Math.floor(value)).toLocaleString('ru-RU');
+}
+
 function formatDate(iso: string | null | undefined): string {
   if (!iso) return '—';
   const dt = new Date(iso);
@@ -4078,19 +4083,14 @@ export default function AiCompanyAnalysisTab() {
                           <li key={`${item.name}-${item.id ?? idx}`} className="rounded-md border bg-muted/30 p-3">
                             <div className="flex items-start justify-between gap-2">
                               <div className="font-medium text-foreground">{item.name}</div>
-                              {item.hash_equipment && (
-                                <Button
-                                  asChild
-                                  type="button"
-                                  variant="link"
-                                  className="h-auto p-0 text-xs"
-                                >
+                              {item.id && (
+                                <Button asChild type="button" variant="link" className="h-auto p-0 text-xs">
                                   <a
-                                    href={`/embed/equipment?hash_equipment=${encodeURIComponent(item.hash_equipment)}`}
+                                    href={`/library/equipment/${encodeURIComponent(item.id)}`}
                                     target="_blank"
                                     rel="noopener noreferrer"
                                   >
-                                    в карточку оборудования
+                                    карточка
                                     <ExternalLink className="ml-1 h-3 w-3" />
                                   </a>
                                 </Button>
@@ -4132,7 +4132,7 @@ export default function AiCompanyAnalysisTab() {
                     <div className="rounded-md border bg-muted/30 p-3 text-sm">
                       <div className="text-xs text-muted-foreground">По компании</div>
                       <div className="mt-1 space-y-1">
-                        <div>tokens_total: <span className="font-medium">{formatTokens(infoCompany?.analysis_cost?.tokens_total ?? infoCompany?.tokens_total)}</span></div>
+                        <div>tokens_total: <span className="font-medium">{formatOptionalTokens(infoCompany?.analysis_cost?.tokens_total ?? infoCompany?.tokens_total)}</span></div>
                         <div>cost_usd: <span className="font-medium">{formatUsd(infoCompany?.analysis_cost?.cost_usd ?? infoCompany?.cost_total_usd)}</span></div>
                       </div>
                     </div>
@@ -4149,18 +4149,6 @@ export default function AiCompanyAnalysisTab() {
                         <li key={`${item.name}-${item.id ?? idx}`} className="rounded-md border bg-muted/30 p-3">
                           <div className="flex items-start justify-between gap-2">
                             <div className="font-medium text-foreground">{item.name}</div>
-                            {item.id && (
-                              <Button asChild type="button" variant="link" className="h-auto p-0 text-xs">
-                                <a
-                                  href={`/library?goodsId=${encodeURIComponent(item.id)}`}
-                                  target="_blank"
-                                  rel="noopener noreferrer"
-                                >
-                                  карточка
-                                  <ExternalLink className="ml-1 h-3 w-3" />
-                                </a>
-                              </Button>
-                            )}
                           </div>
                           {(item.code || item.score != null || item.id) && (
                             <div className="mt-1 flex flex-wrap gap-2">
