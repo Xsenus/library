@@ -340,39 +340,64 @@ async function getEquipmentByInn(
   if (!inns.length) return result;
 
   try {
+    const companyByInn = new Map<string, string>();
+    const { rows: companyRows } = await db.query<{ inn: string; id: string | number | null }>(
+      `
+        SELECT inn, id
+        FROM clients_requests
+        WHERE inn = ANY($1::text[])
+      `,
+      [inns],
+    );
+
+    for (const row of companyRows) {
+      const inn = parseString(row.inn);
+      const companyId = parseIdString(row.id);
+      if (!inn || !companyId) continue;
+      companyByInn.set(inn, companyId);
+    }
+
+    const companyIds = Array.from(new Set(companyByInn.values()));
+    if (!companyIds.length) return result;
+
     const { rows } = await db.query<{
-      inn: string;
-      id: number | null;
+      company_id: string | number;
+      id: string | number | null;
       equipment_name: string | null;
-      score: number | null;
+      score: string | number | null;
       source: string | null;
       hash_equipment: string | null;
     }>(
       `
         SELECT
-          cr.inn,
+          ea.company_id,
           ea.id,
           ea.equipment_name,
           ea.score,
           ea.source,
           ie.hash_equipment
         FROM "EQUIPMENT_ALL" ea
-        JOIN clients_requests cr ON cr.id = ea.company_id
-        LEFT JOIN ib_equipment ie ON ie.id = ea.id
-        WHERE cr.inn = ANY($1::text[])
-        ORDER BY cr.inn, ea.score DESC NULLS LAST, ea.id DESC
+        LEFT JOIN ib_equipment ie ON ie.id::bigint = ea.id::bigint
+        WHERE ea.company_id = ANY($1::bigint[])
+        ORDER BY ea.company_id, ea.score DESC NULLS LAST, ea.id DESC
       `,
-      [inns],
+      [companyIds],
     );
 
+    const innByCompanyId = new Map<string, string>();
+    companyByInn.forEach((cid, inn) => innByCompanyId.set(cid, inn));
+
     for (const row of rows) {
-      const inn = parseString(row.inn);
+      const companyId = parseIdString(row.company_id);
+      const inn = companyId ? innByCompanyId.get(companyId) : null;
       if (!inn) continue;
       const equipmentName = parseString(row.equipment_name);
       if (!equipmentName) continue;
 
       const parsed = {
-        id: row.id != null ? Number(row.id) : null,
+        // BIGINT в pg возвращается как string — сохраняем id строкой,
+        // чтобы не терять точность и корректно формировать ссылку на карточку.
+        id: parseIdString(row.id),
         name: equipmentName,
         score: parseNumber(row.score),
         source: parseString(row.source),
@@ -389,9 +414,10 @@ async function getEquipmentByInn(
   return result;
 }
 
+
 type SiteAnalyzerFallback = {
-  parsId: number | null;
-  companyId: number | null;
+  parsId: string | number | null;
+  companyId: string | number | null;
   description: string | null;
   domains: string[];
   prodclass: number | string | null;
@@ -413,15 +439,15 @@ type CompanyCostSummary = {
   cost_total_usd: number;
 };
 
-async function loadCompanyCostSummaries(companyIds: number[]): Promise<Map<number, CompanyCostSummary>> {
+async function loadCompanyCostSummaries(companyIds: string[]): Promise<Map<string, CompanyCostSummary>> {
   const fromCostTable = await loadCompanyCostFromCostTable(companyIds);
   if (fromCostTable.size) return fromCostTable;
 
   return loadCompanyCostFromOpenAi(companyIds);
 }
 
-async function loadCompanyCostFromOpenAi(companyIds: number[]): Promise<Map<number, CompanyCostSummary>> {
-  const result = new Map<number, CompanyCostSummary>();
+async function loadCompanyCostFromOpenAi(companyIds: string[]): Promise<Map<string, CompanyCostSummary>> {
+  const result = new Map<string, CompanyCostSummary>();
   if (!companyIds.length) return result;
 
   const openAiMeta = await getTableColumns('ai_site_openai_responses');
@@ -438,7 +464,7 @@ async function loadCompanyCostFromOpenAi(companyIds: number[]): Promise<Map<numb
 
   try {
     const { rows } = await db.query<{
-      company_id: number;
+      company_id: string | number;
       input_tokens: string | number;
       cached_input_tokens: string | number;
       output_tokens: string | number;
@@ -452,15 +478,15 @@ async function loadCompanyCostFromOpenAi(companyIds: number[]): Promise<Map<numb
           ${outputExpr} AS output_tokens,
           ${costExpr} AS cost_total_usd
         FROM ai_site_openai_responses
-        WHERE company_id = ANY($1::int[])
+        WHERE company_id = ANY($1::bigint[])
         GROUP BY company_id
       `,
       [companyIds],
     );
 
     for (const row of rows) {
-      const companyId = Number(row.company_id);
-      if (!Number.isFinite(companyId)) continue;
+      const companyId = parseIdString(row.company_id);
+      if (!companyId) continue;
 
       const inputTokens = Number(row.input_tokens ?? 0);
       const cachedInputTokens = Number(row.cached_input_tokens ?? 0);
@@ -483,8 +509,8 @@ async function loadCompanyCostFromOpenAi(companyIds: number[]): Promise<Map<numb
   return result;
 }
 
-async function loadCompanyCostFromCostTable(companyIds: number[]): Promise<Map<number, CompanyCostSummary>> {
-  const result = new Map<number, CompanyCostSummary>();
+async function loadCompanyCostFromCostTable(companyIds: string[]): Promise<Map<string, CompanyCostSummary>> {
+  const result = new Map<string, CompanyCostSummary>();
   if (!companyIds.length) return result;
 
   const costMeta = await getTableColumns('cost');
@@ -508,7 +534,7 @@ async function loadCompanyCostFromCostTable(companyIds: number[]): Promise<Map<n
 
   try {
     const { rows } = await db.query<{
-      company_id: number;
+      company_id: string | number;
       tokens_total: number | string;
       input_tokens: number | string;
       cached_input_tokens: number | string;
@@ -524,15 +550,15 @@ async function loadCompanyCostFromCostTable(companyIds: number[]): Promise<Map<n
           COALESCE(${outputExpr}, 0) AS output_tokens,
           COALESCE(${costExpr}, 0) AS cost_total_usd
         FROM ${quoteIdent(costMeta.tableName)}
-        WHERE company_id = ANY($1::int[])
+        WHERE company_id = ANY($1::bigint[])
         ORDER BY company_id, ${orderExpr}
       `,
       [companyIds],
     );
 
     for (const row of rows) {
-      const companyId = Number(row.company_id);
-      if (!Number.isFinite(companyId)) continue;
+      const companyId = parseIdString(row.company_id);
+      if (!companyId) continue;
       const inputTokens = Number(row.input_tokens ?? 0);
       const cachedInputTokens = Number(row.cached_input_tokens ?? 0);
       const outputTokens = Number(row.output_tokens ?? 0);
@@ -596,8 +622,8 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
 
   let parsRows: {
     inn: string;
-    company_id: number | null;
-    pars_id: number | null;
+    company_id: string | number | null;
+    pars_id: string | number | null;
     description: any;
     domain_1: any;
     domain_2: any;
@@ -654,8 +680,9 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
 
   if (!parsRows.length) return result;
 
-  const parsIds = parsRows.map((row) => row.pars_id).filter((id) => typeof id === 'number');
-  const companyIds = parsRows.map((row) => row.company_id).filter((id) => typeof id === 'number');
+  // BIGINT из pg может приходить строкой, поэтому ключи/фильтры ведём в string.
+  const parsIds = parsRows.map((row) => parseIdString(row.pars_id)).filter((id): id is string => !!id);
+  const companyIds = parsRows.map((row) => parseIdString(row.company_id)).filter((id): id is string => !!id);
 
   const parseArray = (val: any): any[] => {
     const parsed = parseJson(val);
@@ -785,12 +812,12 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
 
         if (openAiMeta.names.has('text_pars_id') && parsIds.length) {
           params.push(parsIds);
-          predicates.push(`text_pars_id = ANY($${params.length}::int[])`);
+          predicates.push(`text_pars_id = ANY($${params.length}::bigint[])`);
         }
 
         if (openAiMeta.names.has('company_id') && companyIds.length) {
           params.push(companyIds);
-          predicates.push(`company_id = ANY($${params.length}::int[])`);
+          predicates.push(`company_id = ANY($${params.length}::bigint[])`);
         }
 
         if (openAiMeta.names.has('domain') && domainValues.size) {
@@ -817,8 +844,8 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           for (const row of rows as any[]) {
             const keys: (string | null)[] = [];
 
-            if (row.text_pars_id != null) keys.push(`p:${row.text_pars_id}`);
-            if (row.company_id != null) keys.push(`c:${row.company_id}`);
+            if (row.text_pars_id != null) keys.push(`p:${String(row.text_pars_id)}`);
+            if (row.company_id != null) keys.push(`c:${String(row.company_id)}`);
 
             const domainKey = normalizeDomain((row as any).domain);
             if (domainKey) keys.push(`d:${domainKey}`);
@@ -859,7 +886,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
 
         if (prodclassMeta.names.has('text_pars_id') && parsIds.length) {
           params.push(parsIds);
-          predicates.push(`text_pars_id = ANY($${params.length}::int[])`);
+          predicates.push(`text_pars_id = ANY($${params.length}::bigint[])`);
         }
 
         if (predicates.length) {
@@ -873,7 +900,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
             params,
           );
           for (const row of rows as any[]) {
-            const key = row.text_pars_id != null ? `p:${row.text_pars_id}` : null;
+            const key = row.text_pars_id != null ? `p:${String(row.text_pars_id)}` : null;
             if (!key || prodclassMap.has(key)) continue;
             prodclassMap.set(key, row);
           }
@@ -907,12 +934,12 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
 
       if (goodsMeta.names.has('text_par_id') && parsIds.length) {
         params.push(parsIds);
-        predicates.push(`text_par_id = ANY($${params.length}::int[])`);
+        predicates.push(`text_par_id = ANY($${params.length}::bigint[])`);
       }
 
       if (goodsMeta.names.has('company_id') && companyIds.length) {
         params.push(companyIds);
-        predicates.push(`company_id = ANY($${params.length}::int[])`);
+        predicates.push(`company_id = ANY($${params.length}::bigint[])`);
       }
 
       if (predicates.length) {
@@ -928,9 +955,9 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         for (const row of rows as any[]) {
           const key =
             row.text_par_id != null
-              ? `p:${row.text_par_id}`
+              ? `p:${String(row.text_par_id)}`
               : row.company_id != null
-                ? `c:${row.company_id}`
+                ? `c:${String(row.company_id)}`
                 : null;
           if (!key) continue;
           const current = goodsMap.get(key) ?? [];
@@ -976,10 +1003,15 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
   }
 
   const equipmentMap = new Map<string, any[]>();
+  const textParCol = equipmentMeta.names.has('text_pars_id')
+    ? 'text_pars_id'
+    : equipmentMeta.names.has('text_par_id')
+      ? 'text_par_id'
+      : null;
   if (
     equipmentMeta.available &&
     equipmentMeta.tableName &&
-    (equipmentMeta.names.has('text_par_id') || equipmentMeta.names.has('company_id'))
+    (textParCol || equipmentMeta.names.has('company_id'))
   ) {
     try {
       const equipmentCols = [
@@ -990,21 +1022,21 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         equipmentMeta.names.has('match_id') ? 'match_id' : null,
         equipmentMeta.names.has('equipment_score') ? 'equipment_score' : null,
         equipmentMeta.names.has('text_vector') ? 'text_vector' : null,
-        equipmentMeta.names.has('text_par_id') ? 'text_par_id' : null,
+        textParCol,
         equipmentMeta.names.has('company_id') ? 'company_id' : null,
       ].filter(Boolean) as string[];
 
       const predicates: string[] = [];
       const params: any[] = [];
 
-      if (equipmentMeta.names.has('text_par_id') && parsIds.length) {
+      if (textParCol && parsIds.length) {
         params.push(parsIds);
-        predicates.push(`text_par_id = ANY($${params.length}::int[])`);
+        predicates.push(`${textParCol} = ANY($${params.length}::bigint[])`);
       }
 
       if (equipmentMeta.names.has('company_id') && companyIds.length) {
         params.push(companyIds);
-        predicates.push(`company_id = ANY($${params.length}::int[])`);
+        predicates.push(`company_id = ANY($${params.length}::bigint[])`);
       }
 
       if (predicates.length) {
@@ -1019,10 +1051,10 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
 
         for (const row of rows as any[]) {
           const key =
-            row.text_par_id != null
-              ? `p:${row.text_par_id}`
+            textParCol && row[textParCol] != null
+              ? `p:${String(row[textParCol])}`
               : row.company_id != null
-                ? `c:${row.company_id}`
+                ? `c:${String(row.company_id)}`
                 : null;
           if (!key) continue;
           const current = equipmentMap.get(key) ?? [];
@@ -1040,17 +1072,17 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       .map((d) => parseString(d))
       .filter((d): d is string => !!d);
 
-    const prodclassRow = prodclassMap.get(`p:${row.pars_id}`) ?? {};
-    const goodsRows = goodsMap.get(`p:${row.pars_id}`) ?? goodsMap.get(`c:${row.company_id}`) ?? [];
+    const prodclassRow = prodclassMap.get(`p:${String(row.pars_id)}`) ?? {};
+    const goodsRows = goodsMap.get(`p:${String(row.pars_id)}`) ?? goodsMap.get(`c:${String(row.company_id)}`) ?? [];
     const equipmentRows =
-      equipmentMap.get(`p:${row.pars_id}`) ?? equipmentMap.get(`c:${row.company_id}`) ?? [];
+      equipmentMap.get(`p:${String(row.pars_id)}`) ?? equipmentMap.get(`c:${String(row.company_id)}`) ?? [];
     const domainKeys = domains
       .map((d) => normalizeDomain(d))
       .filter((d): d is string => !!d);
     const domainMatch = domainKeys.map((key) => openAiMap.get(`d:${key}`)).find(Boolean);
     const openAiRow =
-      openAiMap.get(`p:${row.pars_id}`) ??
-      openAiMap.get(`c:${row.company_id}`) ??
+      openAiMap.get(`p:${String(row.pars_id)}`) ??
+      openAiMap.get(`c:${String(row.company_id)}`) ??
       domainMatch ??
       {};
 
@@ -1268,6 +1300,12 @@ function parseString(val: any): string | null {
     return trimmed;
   }
   return String(val ?? '').trim() || null;
+}
+
+function parseIdString(val: any): string | null {
+  const str = parseString(val);
+  if (!str) return null;
+  return /^-?\d+$/.test(str) ? str : null;
 }
 
 function parseNumber(val: any): number | null {
@@ -1768,12 +1806,12 @@ export async function GET(request: NextRequest) {
     ]);
 
     const inns = dataRes.rows.map((row: any) => row.inn).filter(Boolean);
-    const companyIds = new Map<string, number>();
+    const companyIds = new Map<string, string>();
     for (const row of dataRes.rows) {
       if (row.inn != null && row.company_id != null) {
         const inn = String(row.inn);
-        const cid = Number(row.company_id);
-        if (Number.isFinite(cid)) {
+        const cid = parseIdString(row.company_id);
+        if (cid) {
           companyIds.set(inn, cid);
         }
       }
@@ -1782,7 +1820,7 @@ export async function GET(request: NextRequest) {
     let responsiblesByInn = new Map<string, string>();
     let equipmentByInn = new Map<string, any[]>();
     let siteAnalyzerByInn = new Map<string, SiteAnalyzerFallback>();
-    let costsByCompanyId = new Map<number, CompanyCostSummary>();
+    let costsByCompanyId = new Map<string, CompanyCostSummary>();
 
     if (inns.length) {
       try {
@@ -1806,8 +1844,8 @@ export async function GET(request: NextRequest) {
       equipmentByInn = await getEquipmentByInn(inns);
       siteAnalyzerByInn = await loadSiteAnalyzerFallbacks(inns);
       siteAnalyzerByInn.forEach((fallback, inn) => {
-        const fallbackCompanyId = Number(fallback.companyId);
-        if (!Number.isFinite(fallbackCompanyId)) return;
+        const fallbackCompanyId = parseIdString(fallback.companyId);
+        if (!fallbackCompanyId) return;
         if (!companyIds.has(inn)) {
           companyIds.set(inn, fallbackCompanyId);
         }
@@ -2045,9 +2083,10 @@ export async function GET(request: NextRequest) {
         parseNumber((analysisInfo as any)?.attempts) ??
         parseNumber((analysisInfo as any)?.retry_count);
 
-      const companyId = row.company_id != null ? Number(row.company_id) : siteFallback?.companyId ?? null;
-      const numericCompanyId = Number(companyId);
-      const costSummary = Number.isFinite(numericCompanyId) ? costsByCompanyId.get(numericCompanyId) : null;
+      const companyIdRaw = row.company_id ?? siteFallback?.companyId ?? null;
+      const companyIdKey = parseIdString(companyIdRaw);
+      const numericCompanyId = parseNumber(companyIdRaw);
+      const costSummary = companyIdKey ? costsByCompanyId.get(companyIdKey) : null;
 
       return {
         ...core,
@@ -2084,11 +2123,11 @@ export async function GET(request: NextRequest) {
         queued_at: queuedAt,
         queued_by: queuedBy,
         responsible: responsiblesByInn.get(core.inn) ?? null,
-        tokens_total: costSummary?.tokens_total ?? 0,
-        input_tokens: costSummary?.input_tokens ?? 0,
-        cached_input_tokens: costSummary?.cached_input_tokens ?? 0,
-        output_tokens: costSummary?.output_tokens ?? 0,
-        cost_total_usd: costSummary?.cost_total_usd ?? 0,
+        tokens_total: costSummary?.tokens_total ?? null,
+        input_tokens: costSummary?.input_tokens ?? null,
+        cached_input_tokens: costSummary?.cached_input_tokens ?? null,
+        output_tokens: costSummary?.output_tokens ?? null,
+        cost_total_usd: costSummary?.cost_total_usd ?? null,
         analysis_cost: costSummary
           ? {
               tokens_total: costSummary.tokens_total,

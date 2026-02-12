@@ -19,7 +19,7 @@ function readEnv(names: string[]): string | null {
 }
 
 export function getAiIntegrationBase(): string | null {
-  const raw = readEnv(['AI_INTEGRATION_BASE', 'AI_ANALYZE_BASE', 'ANALYZE_BASE']);
+  const raw = readEnv(['AI_INTEGRATION_BASE_URL', 'AI_INTEGRATION_BASE', 'AI_ANALYZE_BASE', 'ANALYZE_BASE']);
   if (!raw) return null;
 
   try {
