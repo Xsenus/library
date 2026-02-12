@@ -333,10 +333,16 @@ function buildOptionalSelect(existing: Set<string>): SelectBuild {
   return { sql: parts.join(',\n        '), selected };
 }
 
+type Equipment = {
+  id: string;
+  equipment_name: string;
+  score: number | null;
+};
+
 async function getEquipmentByInn(
   inns: string[],
-): Promise<Map<string, any[]>> {
-  const result = new Map<string, any[]>();
+): Promise<Map<string, Equipment[]>> {
+  const result = new Map<string, Equipment[]>();
   if (!inns.length) return result;
 
   try {
@@ -360,52 +366,115 @@ async function getEquipmentByInn(
     const companyIds = Array.from(new Set(companyByInn.values()));
     if (!companyIds.length) return result;
 
-    const { rows } = await db.query<{
-      company_id: string | number;
-      id: string | number | null;
-      equipment_name: string | null;
-      score: string | number | null;
-      source: string | null;
-      hash_equipment: string | null;
-    }>(
-      `
-        SELECT
-          ea.company_id,
-          ea.id,
-          ea.equipment_name,
-          ea.score,
-          ea.source,
-          ie.hash_equipment
-        FROM "EQUIPMENT_ALL" ea
-        LEFT JOIN ib_equipment ie ON ie.id::bigint = ea.id::bigint
-        WHERE ea.company_id = ANY($1::bigint[])
-        ORDER BY ea.company_id, ea.score DESC NULLS LAST, ea.id DESC
-      `,
-      [companyIds],
-    );
+    const { names: equipmentColumns, available, tableName } = await getEquipmentColumns();
+    if (!available || !tableName) return result;
+
+    const equipmentColumnsLower = new Map(Array.from(equipmentColumns).map((column) => [column.toLowerCase(), column]));
+    const companyIdColumn = equipmentColumnsLower.get('company_id') ?? null;
+    const rowBasedColumns: Array<keyof Equipment | 'company_id'> = ['company_id', 'id', 'equipment_name', 'score'];
+    const isRowBased = rowBasedColumns.every((column) => equipmentColumnsLower.has(column));
+
+    if (!companyIdColumn) return result;
+
+    const tableSql = `public.${quoteIdent(tableName)}`;
+    let rows: Array<Record<string, unknown>> = [];
+
+    if (isRowBased) {
+      const queryResult = await db.query<{
+        company_id: string | number;
+        id: string | number | null;
+        equipment_name: string | null;
+        score: string | number | null;
+      }>(
+        `
+          SELECT company_id, id, equipment_name, score
+          FROM ${tableSql}
+          WHERE company_id = ANY($1::bigint[])
+          ORDER BY company_id, score DESC NULLS LAST, id DESC
+        `,
+        [companyIds],
+      );
+      rows = queryResult.rows;
+    } else {
+      const legacyJsonColumn = ['equipment_all', 'equipment', 'payload', 'data', 'items']
+        .map((column) => equipmentColumnsLower.get(column) ?? null)
+        .find(Boolean);
+      if (!legacyJsonColumn) return result;
+
+      const queryResult = await db.query<Record<string, unknown>>(
+        `
+          SELECT ${quoteIdent(companyIdColumn)} AS company_id, ${quoteIdent(legacyJsonColumn)} AS equipment_payload
+          FROM ${tableSql}
+          WHERE ${quoteIdent(companyIdColumn)} = ANY($1::bigint[])
+        `,
+        [companyIds],
+      );
+      rows = queryResult.rows;
+    }
 
     const innByCompanyId = new Map<string, string>();
     companyByInn.forEach((cid, inn) => innByCompanyId.set(cid, inn));
 
     for (const row of rows) {
-      const companyId = parseIdString(row.company_id);
+      const companyId = parseIdString(row.company_id as string | number | null);
       const inn = companyId ? innByCompanyId.get(companyId) : null;
       if (!inn) continue;
-      const equipmentName = parseString(row.equipment_name);
-      if (!equipmentName) continue;
 
-      const parsed = {
-        // BIGINT в pg возвращается как string — сохраняем id строкой,
-        // чтобы не терять точность и корректно формировать ссылку на карточку.
-        id: parseIdString(row.id),
-        name: equipmentName,
-        score: parseNumber(row.score),
-        source: parseString(row.source),
-        hash_equipment: parseString(row.hash_equipment),
-      };
+      if (isRowBased) {
+        const equipmentName = parseString((row as any).equipment_name);
+        const equipmentId = parseIdString((row as any).id);
+        if (!equipmentName || !equipmentId) continue;
+
+        const existing = result.get(inn) ?? [];
+        existing.push({
+          id: equipmentId,
+          equipment_name: equipmentName,
+          score: parseNumber((row as any).score),
+        });
+        result.set(inn, existing);
+        continue;
+      }
+
+      const payloadItems = normalizeEquipment((row as any).equipment_payload);
+      if (!payloadItems.length) continue;
+
       const existing = result.get(inn) ?? [];
-      existing.push(parsed);
-      result.set(inn, existing);
+      for (const payloadItem of payloadItems) {
+        const equipmentName =
+          parseString((payloadItem as any).equipment_name) ??
+          parseString((payloadItem as any).name) ??
+          parseString((payloadItem as any).equipment) ??
+          null;
+        const equipmentId =
+          parseIdString((payloadItem as any).id) ??
+          parseIdString((payloadItem as any).equipment_id) ??
+          parseIdString((payloadItem as any).equipmentId) ??
+          null;
+        if (!equipmentName || !equipmentId) continue;
+        existing.push({
+          id: equipmentId,
+          equipment_name: equipmentName,
+          score:
+            parseNumber((payloadItem as any).score) ??
+            parseNumber((payloadItem as any).equipment_score) ??
+            null,
+        });
+      }
+      if (existing.length) result.set(inn, existing);
+    }
+
+    for (const [inn, equipment] of result.entries()) {
+      const deduped = dedupeItems(equipment)
+        .sort((a, b) => {
+          const aScore = parseNumber(a.score);
+          const bScore = parseNumber(b.score);
+          if (aScore == null && bScore == null) return 0;
+          if (aScore == null) return 1;
+          if (bScore == null) return -1;
+          return bScore - aScore;
+        })
+        .slice(0, 10);
+      result.set(inn, deduped as Equipment[]);
     }
   } catch (error) {
     console.warn('Failed to load equipment_all data', error);
