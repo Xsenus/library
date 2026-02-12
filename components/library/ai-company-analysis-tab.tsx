@@ -135,6 +135,16 @@ type AiCompany = {
   queued_at?: string | null;
   queued_by?: string | null;
   responsible?: string | null;
+  tokens_total?: number | null;
+  input_tokens?: number | null;
+  cached_input_tokens?: number | null;
+  output_tokens?: number | null;
+  cost_total_usd?: number | null;
+  breakdown?: {
+    input_tokens?: number | null;
+    cached_input_tokens?: number | null;
+    output_tokens?: number | null;
+  } | null;
 };
 
 type FetchResponse = {
@@ -147,6 +157,12 @@ type FetchResponse = {
   integration?: AiIntegrationHealth | null;
 };
 
+type BillingResponse = {
+  month_to_date_spend_usd?: number | null;
+  budget_monthly_usd?: number | null;
+  remaining_usd?: number | null;
+};
+
 function formatRevenue(value: number | null | undefined): string {
   if (!value || !Number.isFinite(value)) return '—';
   return Math.round(value / 1_000_000).toLocaleString('ru-RU');
@@ -155,6 +171,16 @@ function formatRevenue(value: number | null | undefined): string {
 function formatEmployees(value: number | null | undefined): string {
   if (!value || !Number.isFinite(value)) return '—';
   return value.toLocaleString('ru-RU');
+}
+
+function formatUsd(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return `$${value.toFixed(4)}`;
+}
+
+function formatTokens(value: number | null | undefined): string {
+  if (value == null || !Number.isFinite(value)) return '0';
+  return Math.max(0, Math.floor(value)).toLocaleString('ru-RU');
 }
 
 function formatDate(iso: string | null | undefined): string {
@@ -952,6 +978,7 @@ export default function AiCompanyAnalysisTab() {
   const [available, setAvailable] = useState<AvailableMap>({});
   const [activeSummary, setActiveSummary] = useState<{ running: number; queued: number; total: number } | null>(null);
   const [integrationHealth, setIntegrationHealth] = useState<AiIntegrationHealth | null>(null);
+  const [billing, setBilling] = useState<BillingResponse | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const selectionAnchorInnRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1317,6 +1344,18 @@ export default function AiCompanyAnalysisTab() {
     [setCompanies],
   );
 
+  const fetchBilling = useCallback(async () => {
+    try {
+      const res = await fetch('/api/ai-analysis/billing', { cache: 'no-store' });
+      if (!res.ok) return;
+      const data = (await res.json().catch(() => null)) as BillingResponse | null;
+      if (!data) return;
+      setBilling(data);
+    } catch (error) {
+      console.error('Failed to load billing balance', error);
+    }
+  }, []);
+
   const fetchCompanies = useCallback(
     async (pageParam: number, pageSizeParam: number) => {
       setLoading(true);
@@ -1420,7 +1459,8 @@ export default function AiCompanyAnalysisTab() {
 
   useEffect(() => {
     fetchCompanies(page, pageSize);
-  }, [fetchCompanies, page, pageSize]);
+    fetchBilling();
+  }, [fetchBilling, fetchCompanies, page, pageSize]);
 
   useEffect(() => {
     if (lastFetchErrorAt == null) return undefined;
@@ -2609,6 +2649,10 @@ export default function AiCompanyAnalysisTab() {
                       {activeTotal > 0 && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
                     </span>
                   </div>
+                  <div className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
+                    <span className="text-muted-foreground">API: осталось</span>
+                    <span className="font-semibold">{formatUsd(billing?.remaining_usd)}</span>
+                  </div>
                 </div>
                 {(lastLoadedAt || integrationHost) && (
                   <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm text-foreground">
@@ -3069,6 +3113,15 @@ export default function AiCompanyAnalysisTab() {
                                   </span>
                                   <span>
                                     Ответственный: <span className="text-foreground">{responsibleLabel}</span>
+                                  </span>
+                                </div>
+                                <div className="flex flex-wrap gap-x-4 gap-y-2 text-[11px] text-muted-foreground">
+                                  <span>
+                                    Tokens: <span className="text-foreground">{formatTokens(company.tokens_total)}</span>
+                                    {' '}({formatTokens(company.input_tokens)} / {formatTokens(company.cached_input_tokens)} / {formatTokens(company.output_tokens)})
+                                  </span>
+                                  <span>
+                                    Cost: <span className="text-foreground">{formatUsd(company.cost_total_usd)}</span>
                                   </span>
                                 </div>
                                 <div className="flex items-center gap-3 rounded-md border border-border/50 bg-muted/20 px-3 py-2">
