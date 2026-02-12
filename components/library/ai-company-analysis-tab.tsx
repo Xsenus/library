@@ -370,6 +370,9 @@ type AiAnalyzerInfo = {
       url?: string | null;
       domain?: string | null;
       tnved_code?: string | null;
+      id?: string | number | null;
+      goods_type_id?: string | number | null;
+      match_id?: string | number | null;
       score?: number | null;
     }>;
     equipment?: Array<{
@@ -454,6 +457,9 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
     url?: string | null;
     domain?: string | null;
     tnved_code?: string | null;
+    id?: string | number | null;
+    goods_type_id?: string | number | null;
+    match_id?: string | number | null;
     score?: number | null;
   }> =>
     items.reduce<
@@ -463,6 +469,9 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
         url?: string | null;
         domain?: string | null;
         tnved_code?: string | null;
+        id?: string | number | null;
+        goods_type_id?: string | number | null;
+        match_id?: string | number | null;
         score?: number | null;
       }>
     >(
@@ -486,8 +495,11 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
             item.tn_ved ??
             item.code ??
             null;
+          const id = item.id ?? null;
+          const goods_type_id = item.goods_type_id ?? item.goods_type_ID ?? null;
+          const match_id = item.match_id ?? item.matchID ?? null;
           if (!name && !goods_group && !url) return acc;
-          acc.push({ name: name || goods_group || url || '—', goods_group, url, domain, tnved_code, score });
+          acc.push({ name: name || goods_group || url || '—', goods_group, url, domain, tnved_code, id, goods_type_id, match_id, score });
           return acc;
         }
 
