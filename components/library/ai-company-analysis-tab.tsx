@@ -1103,6 +1103,7 @@ export default function AiCompanyAnalysisTab() {
     }
   });
   const analyzerInfo = useMemo(() => (infoCompany ? normalizeAnalyzerInfo(infoCompany.analysis_info) : null), [infoCompany]);
+
   const analyzerSites = analyzerInfo?.ai?.sites ?? [];
   const analyzerProdclass = analyzerInfo?.ai?.prodclass ?? null;
   const analyzerProdclassByOkved = analyzerInfo?.ai?.prodclass_by_okved ?? null;
@@ -4065,7 +4066,7 @@ export default function AiCompanyAnalysisTab() {
 
                 <TabsContent
                   value="main"
-                  className="mt-0 hidden h-full min-h-0 flex-1 flex-col space-y-4 overflow-y-auto pr-1 data-[state=active]:flex"
+                  className="mt-0 hidden h-full min-h-0 flex-1 flex-col space-y-4 overflow-y-auto pr-1 pb-2 data-[state=active]:flex"
                 >
                 <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
                   <div className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Сводка по компании</div>
@@ -4165,11 +4166,13 @@ export default function AiCompanyAnalysisTab() {
                           </div>
                           {(item.code || item.score != null || item.source) && (
                             <div className="mt-1 flex flex-wrap gap-2">
-                              {item.code && (
-                                <Badge variant="outline" className="text-[12px]">
-                                  ТНВЭД {item.code}
-                                </Badge>
-                              )}
+                              {/*
+                                {item.code && (
+                                  <Badge variant="outline" className="text-[12px]">
+                                    ТНВЭД {item.code}
+                                  </Badge>
+                                )}
+                              */}
                               <Badge variant="outline" className="text-[12px]">
                                 Рейтинг {item.score != null ? formatSimilarityScore(item.score) ?? item.score : '—'}
                               </Badge>
