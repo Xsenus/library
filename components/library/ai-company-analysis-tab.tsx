@@ -3831,13 +3831,16 @@ export default function AiCompanyAnalysisTab() {
               )}
             </DialogHeader>
             {infoCompany && (
-              <Tabs defaultValue="main" className="flex h-full min-h-0 flex-col gap-4 text-sm">
+              <Tabs defaultValue="main" className="flex min-h-0 flex-1 flex-col gap-4 text-sm">
                 <TabsList className="grid w-full grid-cols-3 rounded-xl bg-muted/60 p-1">
                   <TabsTrigger value="main" className="rounded-lg data-[state=active]:shadow-sm">Основная информация</TabsTrigger>
                   <TabsTrigger value="logs" className="rounded-lg data-[state=active]:shadow-sm">Логи и запуск</TabsTrigger>
                   <TabsTrigger value="billing" className="rounded-lg data-[state=active]:shadow-sm">Расходы</TabsTrigger>
                 </TabsList>
-                <TabsContent value="logs" className="mt-0 flex min-h-0 flex-1 flex-col space-y-4 overflow-y-auto pr-1">
+                <TabsContent
+                  value="logs"
+                  className="mt-0 hidden h-full min-h-0 flex-1 flex-col space-y-4 overflow-y-auto pr-1 data-[state=active]:flex"
+                >
                 {(() => {
                   const steps = toPipelineSteps(infoCompany.analysis_pipeline);
                   const state = computeCompanyState(infoCompany);
@@ -4060,7 +4063,10 @@ export default function AiCompanyAnalysisTab() {
                   </div>
                 </TabsContent>
 
-                <TabsContent value="main" className="mt-0 flex-1 space-y-4 overflow-y-auto pr-1">
+                <TabsContent
+                  value="main"
+                  className="mt-0 hidden h-full min-h-0 flex-1 flex-col space-y-4 overflow-y-auto pr-1 data-[state=active]:flex"
+                >
                 <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
                   <div className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Сводка по компании</div>
                   <div className="grid gap-3 sm:grid-cols-2">
@@ -4190,7 +4196,10 @@ export default function AiCompanyAnalysisTab() {
 
                 </TabsContent>
 
-                <TabsContent value="billing" className="mt-0 flex flex-1 flex-col overflow-y-auto pr-1">
+                <TabsContent
+                  value="billing"
+                  className="mt-0 hidden h-full min-h-0 flex-1 flex-col overflow-y-auto pr-1 data-[state=active]:flex"
+                >
                 <div className="space-y-3 rounded-xl border bg-background/90 p-4 shadow-sm">
                   <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Расходы AI-интеграции</div>
                   <div className="grid gap-3 sm:grid-cols-2">
