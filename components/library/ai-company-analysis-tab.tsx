@@ -3837,7 +3837,7 @@ export default function AiCompanyAnalysisTab() {
                   <TabsTrigger value="logs">Логи и запуск</TabsTrigger>
                   <TabsTrigger value="billing">Расходы</TabsTrigger>
                 </TabsList>
-                <TabsContent value="main" className="mt-0 flex-1 space-y-4 overflow-y-auto">
+                <TabsContent value="logs" className="mt-0 flex min-h-0 flex-1 flex-col space-y-2 overflow-hidden">
                 {(() => {
                   const steps = toPipelineSteps(infoCompany.analysis_pipeline);
                   const state = computeCompanyState(infoCompany);
@@ -3971,7 +3971,7 @@ export default function AiCompanyAnalysisTab() {
 
                 </TabsContent>
 
-                <TabsContent value="logs" className="mt-0 flex min-h-0 flex-1 flex-col space-y-2 overflow-hidden">
+                <div className="space-y-2">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="uppercase">Логи задачи</span>
                     <Button
@@ -4059,7 +4059,7 @@ export default function AiCompanyAnalysisTab() {
                     )}
                   </div>
 
-                </TabsContent>
+                </div>
 
                 <TabsContent value="main" className="mt-0 flex-1 space-y-4 overflow-y-auto">
                 <div className="grid gap-2 sm:grid-cols-2">
@@ -4188,7 +4188,7 @@ export default function AiCompanyAnalysisTab() {
 
                 </TabsContent>
 
-                <TabsContent value="billing" className="mt-0 flex-1 space-y-4 overflow-y-auto">
+                <TabsContent value="billing" className="mt-0 flex flex-1 flex-col justify-start overflow-y-auto">
                 <div>
                   <div className="text-xs text-muted-foreground mb-1">Расходы AI-интеграции</div>
                   <div className="grid gap-2 sm:grid-cols-2">
