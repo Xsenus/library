@@ -3971,7 +3971,7 @@ export default function AiCompanyAnalysisTab() {
 
                 </TabsContent>
 
-                <TabsContent value="logs" className="mt-0 flex-1 space-y-2 overflow-y-auto">
+                <TabsContent value="logs" className="mt-0 flex min-h-0 flex-1 flex-col space-y-2 overflow-hidden">
                   <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
                     <span className="uppercase">Логи задачи</span>
                     <Button
@@ -4001,7 +4001,7 @@ export default function AiCompanyAnalysisTab() {
                     {logsError && <span className="text-destructive">{logsError}</span>}
                   </div>
 
-                  <div className="max-h-64 divide-y overflow-y-auto rounded-lg border bg-muted/30">
+                  <div className="min-h-0 flex-1 divide-y overflow-y-auto rounded-lg border bg-muted/30">
                     {logsLoading && !logs.length ? (
                       <div className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -4061,7 +4061,7 @@ export default function AiCompanyAnalysisTab() {
 
                 </TabsContent>
 
-                <TabsContent value="main" className="space-y-4 mt-0">
+                <TabsContent value="main" className="mt-0 flex-1 space-y-4 overflow-y-auto">
                 <div className="grid gap-2 sm:grid-cols-2">
                   <div>
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>
