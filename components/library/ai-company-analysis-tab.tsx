@@ -3817,7 +3817,7 @@ export default function AiCompanyAnalysisTab() {
         </Dialog>
 
         <Dialog open={!!infoCompany} onOpenChange={(open) => !open && setInfoCompany(null)}>
-          <DialogContent className="flex h-[85vh] w-full max-w-3xl flex-col overflow-hidden">
+          <DialogContent className="flex h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-background p-5 sm:p-6">
             <DialogHeader>
               <DialogTitle>
                 {formatCompanyDisplayName(infoCompany?.short_name, infoCompany?.company_id ?? null)} · ИНН{' '}
@@ -3831,13 +3831,13 @@ export default function AiCompanyAnalysisTab() {
               )}
             </DialogHeader>
             {infoCompany && (
-              <Tabs defaultValue="main" className="flex h-full flex-col space-y-4 text-sm">
-                <TabsList className="grid w-full grid-cols-3">
-                  <TabsTrigger value="main">Основная информация</TabsTrigger>
-                  <TabsTrigger value="logs">Логи и запуск</TabsTrigger>
-                  <TabsTrigger value="billing">Расходы</TabsTrigger>
+              <Tabs defaultValue="main" className="flex h-full min-h-0 flex-col gap-4 text-sm">
+                <TabsList className="grid w-full grid-cols-3 rounded-xl bg-muted/60 p-1">
+                  <TabsTrigger value="main" className="rounded-lg data-[state=active]:shadow-sm">Основная информация</TabsTrigger>
+                  <TabsTrigger value="logs" className="rounded-lg data-[state=active]:shadow-sm">Логи и запуск</TabsTrigger>
+                  <TabsTrigger value="billing" className="rounded-lg data-[state=active]:shadow-sm">Расходы</TabsTrigger>
                 </TabsList>
-                <TabsContent value="logs" className="mt-0 flex min-h-0 flex-1 flex-col space-y-2 overflow-hidden">
+                <TabsContent value="logs" className="mt-0 flex min-h-0 flex-1 flex-col space-y-4 overflow-y-auto pr-1">
                 {(() => {
                   const steps = toPipelineSteps(infoCompany.analysis_pipeline);
                   const state = computeCompanyState(infoCompany);
@@ -3887,7 +3887,7 @@ export default function AiCompanyAnalysisTab() {
                   const score = scoreRaw !== '—' ? scoreRaw : undefined;
 
                   return (
-                    <div className="space-y-3 rounded-lg border bg-muted/30 p-3">
+                    <div className="space-y-4 rounded-xl border bg-background/90 p-4 shadow-sm">
                       <div className="flex flex-wrap items-center gap-2">
                         <Badge variant={status.variant}>{status.label}</Badge>
                         {okvedFallbackUsed && (
@@ -3904,7 +3904,7 @@ export default function AiCompanyAnalysisTab() {
                         </span>
                       </div>
 
-                      <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-3">
+                      <div className="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
                         <div>
                           <div className="uppercase">Поставлено в очередь</div>
                           <div className="text-foreground">{queuedAt}</div>
@@ -3969,11 +3969,9 @@ export default function AiCompanyAnalysisTab() {
                   );
                 })()}
 
-                </TabsContent>
-
-                <div className="space-y-2">
-                  <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                    <span className="uppercase">Логи задачи</span>
+                  <div className="flex min-h-[280px] flex-col space-y-3 rounded-xl border bg-background/90 p-4 shadow-sm">
+                    <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                      <span className="uppercase">Логи задачи</span>
                     <Button
                       type="button"
                       size="sm"
@@ -4001,7 +3999,7 @@ export default function AiCompanyAnalysisTab() {
                     {logsError && <span className="text-destructive">{logsError}</span>}
                   </div>
 
-                  <div className="min-h-0 flex-1 divide-y overflow-y-auto rounded-lg border bg-muted/30">
+                  <div className="min-h-0 flex-1 divide-y overflow-y-auto rounded-lg border bg-muted/20">
                     {logsLoading && !logs.length ? (
                       <div className="flex items-center gap-2 px-3 py-4 text-sm text-muted-foreground">
                         <Loader2 className="h-4 w-4 animate-spin" />
@@ -4012,7 +4010,7 @@ export default function AiCompanyAnalysisTab() {
                         const dt = formatLogDate(log.created_at);
                         const summary = summarizePayload(log.payload);
                         return (
-                          <div key={log.id} className="space-y-1 px-3 py-2">
+                          <div key={log.id} className="space-y-1.5 px-3 py-2.5">
                             <div className="flex flex-wrap items-center gap-2 text-[11px] text-muted-foreground">
                               <Badge variant="outline" className="border-border/60 bg-background text-foreground">
                                 {describeLogEvent(log)}
@@ -4059,11 +4057,14 @@ export default function AiCompanyAnalysisTab() {
                     )}
                   </div>
 
-                </div>
+                  </div>
+                </TabsContent>
 
-                <TabsContent value="main" className="mt-0 flex-1 space-y-4 overflow-y-auto">
-                <div className="grid gap-2 sm:grid-cols-2">
-                  <div>
+                <TabsContent value="main" className="mt-0 flex-1 space-y-4 overflow-y-auto pr-1">
+                <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                  <div className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Сводка по компании</div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                  <div className="rounded-lg border bg-muted/20 p-3">
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>
                     <div className="space-y-1 font-medium">
                       {showOkvedFallbackBadge && (
@@ -4080,31 +4081,32 @@ export default function AiCompanyAnalysisTab() {
                       )}
                     </div>
                   </div>
-                  <div>
+                  <div className="rounded-lg border bg-muted/20 p-3">
                     <div className="text-xs text-muted-foreground">Основной ОКВЭД (DaData)</div>
                     <div className="font-medium">{infoCompany.main_okved || '—'}</div>
                   </div>
-                  <div>
+                  <div className="rounded-lg border bg-muted/20 p-3">
                     <div className="text-xs text-muted-foreground">Домен для парсинга</div>
                     <div className="font-medium">{analysisDomainValue || '—'}</div>
                   </div>
-                  <div>
+                  <div className="rounded-lg border bg-muted/20 p-3">
                     <div className="text-xs text-muted-foreground">
                       Соответствие ИИ-описания сайта и ОКВЭД
                     </div>
                     <div className="font-medium">{showOkvedFallbackBadge ? 'Оценки по сайту: —' : okvedMatchText || '—'}</div>
                   </div>
                 </div>
+                </div>
 
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">ИИ-описание сайта</div>
-                  <div className="rounded-md border bg-muted/30 p-3 text-sm whitespace-pre-wrap">
+                <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                  <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">ИИ-описание сайта</div>
+                  <div className="rounded-lg border bg-muted/20 p-3 text-sm whitespace-pre-wrap">
                     {analyzerDescriptionText || '—'}
                   </div>
                 </div>
 
-                <div>
-                  <div className="text-xs text-muted-foreground mb-2">Топ-10 оборудования</div>
+                <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                  <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Топ-10 оборудования</div>
                   {(() => {
                     const equipmentItems = topEquipment(infoCompany, analyzerInfo)
                       .map((item) => ({
@@ -4120,7 +4122,7 @@ export default function AiCompanyAnalysisTab() {
                     return (
                       <ul className="grid gap-2 sm:grid-cols-2">
                         {equipmentItems.map((item, idx) => (
-                          <li key={`${item.name}-${item.id ?? idx}`} className="rounded-md border bg-muted/30 p-3">
+                          <li key={`${item.name}-${item.id ?? idx}`} className="rounded-lg border bg-muted/20 p-3">
                             <div className="flex items-start justify-between gap-2">
                               <div className="font-medium text-foreground">{item.name}</div>
                               <Button asChild type="button" variant="link" className="h-auto p-0 text-xs">
@@ -4144,14 +4146,14 @@ export default function AiCompanyAnalysisTab() {
                   })()}
                 </div>
 
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">
+                <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                  <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Виды найденной продукции на сайте и ТНВЭД
                   </div>
                   {tnvedProducts(infoCompany, analyzerInfo).length ? (
                     <ul className="grid gap-2 sm:grid-cols-2">
                       {tnvedProducts(infoCompany, analyzerInfo).map((item, idx) => (
-                        <li key={`${item.name}-${item.id ?? idx}`} className="rounded-md border bg-muted/30 p-3">
+                        <li key={`${item.name}-${item.id ?? idx}`} className="rounded-lg border bg-muted/20 p-3">
                           <div className="flex items-start justify-between gap-2">
                             <div className="font-medium text-foreground">{item.name}</div>
                           </div>
@@ -4188,11 +4190,11 @@ export default function AiCompanyAnalysisTab() {
 
                 </TabsContent>
 
-                <TabsContent value="billing" className="mt-0 flex flex-1 flex-col justify-start overflow-y-auto">
-                <div>
-                  <div className="text-xs text-muted-foreground mb-1">Расходы AI-интеграции</div>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                <TabsContent value="billing" className="mt-0 flex flex-1 flex-col overflow-y-auto pr-1">
+                <div className="space-y-3 rounded-xl border bg-background/90 p-4 shadow-sm">
+                  <div className="text-xs font-medium uppercase tracking-wide text-muted-foreground">Расходы AI-интеграции</div>
+                  <div className="grid gap-3 sm:grid-cols-2">
+                    <div className="rounded-lg border bg-muted/20 p-3 text-sm">
                       <div className="text-xs text-muted-foreground">API баланс</div>
                       <div className="mt-1 space-y-1">
                         <div>Доступный баланс (USD): <span className="font-medium">{formatUsd(billing?.remaining_usd)}</span></div>
@@ -4200,7 +4202,7 @@ export default function AiCompanyAnalysisTab() {
                         <div>Потрачено за месяц (USD): <span className="font-medium">{formatUsd(billing?.spend_month_to_date_usd)}</span></div>
                       </div>
                     </div>
-                    <div className="rounded-md border bg-muted/30 p-3 text-sm">
+                    <div className="rounded-lg border bg-muted/20 p-3 text-sm">
                       <div className="text-xs text-muted-foreground">По компании</div>
                       <div className="mt-1 space-y-1">
                         <div>Всего токенов: <span className="font-medium">{formatOptionalTokens(infoCompany?.analysis_cost?.tokens_total ?? infoCompany?.tokens_total)}</span></div>
@@ -4208,6 +4210,7 @@ export default function AiCompanyAnalysisTab() {
                       </div>
                     </div>
                   </div>
+                  <div className="text-xs text-muted-foreground">Значения отображаются из последнего сохранённого результата анализа.</div>
                 </div>
 
                 </TabsContent>
