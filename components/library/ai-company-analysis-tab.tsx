@@ -90,6 +90,7 @@ type PipelineStep = { label: string; status?: string | null };
 type OkvedOption = { id: number; okved_code: string; okved_main: string };
 
 const QUEUE_STALE_MS = 120 * 60 * 1000;
+const OKVED_FALLBACK_DOMAIN = 'okved-fallback.local';
 
 type AiCompany = {
   inn: string;
@@ -2649,6 +2650,7 @@ export default function AiCompanyAnalysisTab() {
     analyzerInfo?.ai?.prodclass?.score_source ??
     null;
   const isFallbackBySource = scoreSource === 'okved_fallback';
+  const hasFallbackDomain = (infoCompany?.analysis_domain || '').toLowerCase() === OKVED_FALLBACK_DOMAIN;
   const hasSiteScores = [
     analyzerProdclass?.score,
     analyzerDescriptionScore,
@@ -2659,7 +2661,7 @@ export default function AiCompanyAnalysisTab() {
     infoCompany?.okved_score,
   ].some((value) => value != null);
   const isFallbackByNullScores = !hasSiteScores;
-  const showOkvedFallbackBadge = isFallbackBySource || isFallbackByNullScores;
+  const showOkvedFallbackBadge = isFallbackBySource || isFallbackByNullScores || hasFallbackDomain;
   const prodclassScoreText =
     formatMatchScore(prodclassScoreValue) ||
     formatMatchScore(analyzerProdclass?.score ?? null) ||
@@ -2675,12 +2677,14 @@ export default function AiCompanyAnalysisTab() {
   const okvedMatchText =
     formatMatchScore(analyzerDescriptionOkvedScore ?? null) ||
     formatMatchScore(analyzerOkvedScore ?? infoCompany?.okved_score ?? null);
-  const analysisDomainValue =
+  const analysisDomainValueRaw =
     infoCompany?.analysis_domain ||
     analyzerInfo?.company?.domain1_site ||
     analyzerInfo?.company?.domain2_site ||
     analyzerSites[0] ||
     null;
+  const analysisDomainValue =
+    analysisDomainValueRaw?.toLowerCase() === OKVED_FALLBACK_DOMAIN ? null : analysisDomainValueRaw;
   const analyzerDescriptionText =
     infoCompany?.analysis_description ||
     [analyzerInfo?.company?.domain1, analyzerInfo?.company?.domain2].filter(Boolean).join('\n') ||
@@ -4071,13 +4075,13 @@ export default function AiCompanyAnalysisTab() {
                 <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
                   <div className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Сводка по компании</div>
                   <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-lg border bg-muted/20 p-3">
+                  <div className="rounded-lg border bg-muted/20 p-3 text-center">
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>
                     <div className="space-y-1 font-medium">
                       {showOkvedFallbackBadge && (
                         <div className="text-sm text-amber-600">Класс определён по ОКВЭД (сайт недоступен)</div>
                       )}
-                      <div className="flex flex-wrap items-baseline gap-2">
+                      <div className="flex flex-wrap items-baseline justify-center gap-2">
                         <span className="text-base sm:text-lg">{showOkvedFallbackBadge ? 'Оценки по сайту: —' : prodclassScoreText || '—'}</span>
                         {!showOkvedFallbackBadge && prodclassRawScoreText && (
                           <span className="text-xs text-muted-foreground">(расчёт: {prodclassRawScoreText})</span>
@@ -4088,15 +4092,15 @@ export default function AiCompanyAnalysisTab() {
                       )}
                     </div>
                   </div>
-                  <div className="rounded-lg border bg-muted/20 p-3">
+                  <div className="rounded-lg border bg-muted/20 p-3 text-center">
                     <div className="text-xs text-muted-foreground">Основной ОКВЭД (DaData)</div>
                     <div className="font-medium">{infoCompany.main_okved || '—'}</div>
                   </div>
-                  <div className="rounded-lg border bg-muted/20 p-3">
+                  <div className="rounded-lg border bg-muted/20 p-3 text-center">
                     <div className="text-xs text-muted-foreground">Домен для парсинга</div>
                     <div className="font-medium">{analysisDomainValue || '—'}</div>
                   </div>
-                  <div className="rounded-lg border bg-muted/20 p-3">
+                  <div className="rounded-lg border bg-muted/20 p-3 text-center">
                     <div className="text-xs text-muted-foreground">
                       Соответствие ИИ-описания сайта и ОКВЭД
                     </div>
@@ -4129,23 +4133,25 @@ export default function AiCompanyAnalysisTab() {
                     return (
                       <ul className="grid gap-2 sm:grid-cols-2">
                         {equipmentItems.map((item, idx) => (
-                          <li key={`${item.name}-${item.id ?? idx}`} className="rounded-lg border bg-muted/20 p-3">
-                            <div className="flex items-start justify-between gap-2">
-                              <div className="font-medium text-foreground">{item.name}</div>
-                              <Button asChild type="button" variant="link" className="h-auto p-0 text-xs">
+                          <li
+                            key={`${item.name}-${item.id ?? idx}`}
+                            className="grid grid-cols-[1fr_auto] grid-rows-2 gap-x-2 rounded-lg border bg-muted/20 p-3"
+                          >
+                            <div className="row-span-2 flex items-center font-medium text-foreground">{item.name}</div>
+                            <div className="flex items-center justify-center">
+                              <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7">
                                 <a href={item.href ?? '#'} target="_blank" rel="noopener noreferrer">
-                                  карточка
-                                  <ExternalLink className="ml-1 h-3 w-3" />
+                                  <ExternalLink className="h-3.5 w-3.5" />
                                 </a>
                               </Button>
                             </div>
-                            {item.score != null && (
-                              <div className="mt-1 flex flex-wrap gap-2 text-[12px] text-muted-foreground">
+                            <div className="flex items-center justify-center">
+                              {item.score != null && (
                                 <Badge variant="outline" className="text-[12px]">
-                                  Рейтинг {formatSimilarityScore(item.score) ?? item.score}
+                                  {formatSimilarityScore(item.score) ?? item.score}
                                 </Badge>
-                              </div>
-                            )}
+                              )}
+                            </div>
                           </li>
                         ))}
                       </ul>
@@ -4160,34 +4166,46 @@ export default function AiCompanyAnalysisTab() {
                   {tnvedProducts(infoCompany, analyzerInfo).length ? (
                     <ul className="grid gap-2 sm:grid-cols-2">
                       {tnvedProducts(infoCompany, analyzerInfo).map((item, idx) => (
-                        <li key={`${item.name}-${item.id ?? idx}`} className="rounded-lg border bg-muted/20 p-3">
-                          <div className="flex items-start justify-between gap-2">
-                            <div className="font-medium text-foreground">{item.name}</div>
+                        <li
+                          key={`${item.name}-${item.id ?? idx}`}
+                          className="grid grid-cols-[1fr_auto] gap-x-2 rounded-lg border bg-muted/20 p-3"
+                        >
+                          <div
+                            className={cn(
+                              'row-span-2 flex items-center font-medium text-foreground',
+                              item.code ? 'row-span-3' : '',
+                            )}
+                          >
+                            {item.name}
                           </div>
                           {(item.code || item.score != null || item.source) && (
-                            <div className="mt-1 flex flex-wrap gap-2">
+                            <>
                               {/*
-                                {item.code && (
+                                <div className="flex items-center justify-center">
                                   <Badge variant="outline" className="text-[12px]">
                                     ТНВЭД {item.code}
                                   </Badge>
-                                )}
+                                </div>
                               */}
-                              <Badge variant="outline" className="text-[12px]">
-                                Рейтинг {item.score != null ? formatSimilarityScore(item.score) ?? item.score : '—'}
-                              </Badge>
-                              <Badge variant="outline" className="text-[12px]">
-                                Источник: {item.source === 'okved' ? 'ОКВЭД' : 'сайт'}
-                              </Badge>
-                              {item.score == null && (
-                                <Tooltip>
-                                  <TooltipTrigger asChild>
-                                    <Badge variant="outline" className="text-[12px]">?</Badge>
-                                  </TooltipTrigger>
-                                  <TooltipContent>не сматчено со справочником</TooltipContent>
-                                </Tooltip>
-                              )}
-                            </div>
+                              <div className="flex items-center justify-center">
+                                <Badge variant="outline" className="text-[12px]">
+                                  {item.score != null ? formatSimilarityScore(item.score) ?? item.score : '—'}
+                                </Badge>
+                              </div>
+                              <div className="flex items-center justify-center gap-2">
+                                <Badge variant="outline" className="text-[12px]">
+                                  Источник: {item.source === 'okved' ? 'ОКВЭД' : 'сайт'}
+                                </Badge>
+                                {item.score == null && (
+                                  <Tooltip>
+                                    <TooltipTrigger asChild>
+                                      <Badge variant="outline" className="text-[12px]">?</Badge>
+                                    </TooltipTrigger>
+                                    <TooltipContent>не сматчено со справочником</TooltipContent>
+                                  </Tooltip>
+                                )}
+                              </div>
+                            </>
                           )}
                         </li>
                       ))}
