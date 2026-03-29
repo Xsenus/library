@@ -1,4 +1,4 @@
-'use client';
+﻿'use client';
 
 import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
@@ -38,6 +38,7 @@ import {
 import AiSearchTab from '@/components/library/ai-search-tab';
 import AiCompanyAnalysisTab from '@/components/library/ai-company-analysis-tab';
 import AiDebugTab from '@/components/library/ai-debug-tab';
+import HistoryTab from '@/components/library/history-tab';
 import SquareImgButton from '@/components/library/square-img-button';
 
 interface ListState<T> {
@@ -55,7 +56,14 @@ type CleanScoreRowEx = CleanScoreRow & {
 export default function LibraryPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
-  type LibraryTab = 'library' | 'cleanscore' | 'okved' | 'aisearch' | 'aianalysis' | 'aidebug';
+  type LibraryTab =
+    | 'library'
+    | 'aisearch'
+    | 'history'
+    | 'cleanscore'
+    | 'okved'
+    | 'aianalysis'
+    | 'aidebug';
   const initialTab = (searchParams.get('tab') ?? 'library') as
     | LibraryTab;
 
@@ -936,7 +944,7 @@ export default function LibraryPage() {
             }}
             className="w-full">
             <div className="pb-1 md:pb-0">
-              <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1 sm:grid-cols-3 md:grid-cols-6">
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1 sm:grid-cols-4 md:grid-cols-7">
               <TabsList className="contents">
                 <TabsTrigger
                   value="library"
@@ -950,6 +958,34 @@ export default function LibraryPage() {
                     shadow-none transition
                   ">
                   Каталог
+                </TabsTrigger>
+
+                <TabsTrigger
+                  value="aisearch"
+                  onClick={(event) => handleOpenTabInNewPage(event, 'aisearch')}
+                  onAuxClick={(event) => handleOpenTabInNewPage(event, 'aisearch')}
+                  className="
+                    h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
+                    border border-transparent
+                    data-[state=active]:bg-background data-[state=active]:border-border
+                    data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
+                    shadow-none transition
+                  ">
+                  AI-поиск
+                </TabsTrigger>
+
+                <TabsTrigger
+                  value="history"
+                  onClick={(event) => handleOpenTabInNewPage(event, 'history')}
+                  onAuxClick={(event) => handleOpenTabInNewPage(event, 'history')}
+                  className="
+                    h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
+                    border border-transparent
+                    data-[state=active]:bg-background data-[state=active]:border-border
+                    data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
+                    shadow-none transition
+                  ">
+                  История
                 </TabsTrigger>
 
                 <TabsTrigger
@@ -1022,19 +1058,6 @@ export default function LibraryPage() {
                   AI-отладка
                 </TabsTrigger>
 
-                <TabsTrigger
-                  value="aisearch"
-                  onClick={(event) => handleOpenTabInNewPage(event, 'aisearch')}
-                  onAuxClick={(event) => handleOpenTabInNewPage(event, 'aisearch')}
-                  className="
-                    h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
-                    border border-transparent
-                    data-[state=active]:bg-background data-[state=active]:border-border
-                    data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
-                    shadow-none transition
-                  ">
-                  AI-поиск
-                </TabsTrigger>
               </TabsList>
             </div>
             </div>
@@ -1547,6 +1570,10 @@ export default function LibraryPage() {
 
             <TabsContent value="aisearch" className="mt-0">
               <AiSearchTab />
+            </TabsContent>
+
+            <TabsContent value="history" className="mt-0">
+              <HistoryTab isAdmin={isAdmin} />
             </TabsContent>
           </Tabs>
         </div>

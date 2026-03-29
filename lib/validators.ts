@@ -189,6 +189,18 @@ export const cleanScoreQuerySchema = z
     path: ['maxScore'],
   });
 
+export const historyRowSchema = cleanScoreRowSchema.extend({
+  open_at: z
+    .union([z.string(), z.date()])
+    .transform((v) => (v instanceof Date ? v.toISOString() : v)),
+});
+export type HistoryRow = z.infer<typeof historyRowSchema>;
+
+export const historyQuerySchema = paginationSchema.extend({
+  industryId: z.coerce.number().int().positive().optional().nullable(),
+});
+export type HistoryQuery = z.infer<typeof historyQuerySchema>;
+
 // OKVED (main list)
 export const okvedMainSchema = z.object({
   id: z.coerce.number(),
