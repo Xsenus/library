@@ -2009,7 +2009,12 @@ export default function AiCompanyAnalysisTab() {
       const res = await fetch('/api/ai-analysis/run', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ inns, mode: launchMode, steps: launchMode === 'steps' ? selectedSteps : undefined }),
+        body: JSON.stringify({
+          inns,
+          mode: launchMode,
+          steps: launchMode === 'steps' ? selectedSteps : undefined,
+          source: 'manual-bulk',
+        }),
       });
       const data = (await res.json().catch(() => null)) as { integration?: any; error?: string } | null;
       if (!res.ok) {
@@ -2122,6 +2127,7 @@ export default function AiCompanyAnalysisTab() {
             inns: [inn],
             mode: launchMode,
             steps: launchMode === 'steps' ? selectedSteps : undefined,
+            source: 'manual-play',
           }),
         });
         const data = (await res.json().catch(() => null)) as { integration?: any; error?: string } | null;
@@ -2185,6 +2191,7 @@ export default function AiCompanyAnalysisTab() {
             inns: [inn],
             mode: launchMode,
             steps: launchMode === 'steps' ? selectedSteps : undefined,
+            source: 'manual-queue',
           }),
         });
         const data = (await res.json().catch(() => null)) as { integration?: any; error?: string } | null;

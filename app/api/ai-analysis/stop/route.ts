@@ -47,6 +47,7 @@ async function ensureQueueTable() {
       queued_by text,
       payload jsonb,
       state text NOT NULL DEFAULT 'queued',
+      priority integer NOT NULL DEFAULT 100,
       lease_expires_at timestamptz,
       started_at timestamptz,
       last_error text
@@ -70,6 +71,10 @@ async function ensureQueueTable() {
   `);
   await dbBitrix.query(`
     ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS priority integer NOT NULL DEFAULT 100
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
       ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz
   `);
   await dbBitrix.query(`
@@ -82,7 +87,7 @@ async function ensureQueueTable() {
   `);
   await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_queued_at_idx
-      ON ai_analysis_queue (state, queued_at)
+      ON ai_analysis_queue (state, priority, queued_at)
   `);
   await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_lease_expires_at_idx

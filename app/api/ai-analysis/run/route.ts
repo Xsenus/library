@@ -14,6 +14,7 @@ import {
   isLaunchModeLocked,
 } from '@/lib/ai-analysis-config';
 import { setAiAnalysisQueueTrigger } from '@/lib/ai-analysis-queue-trigger';
+import { resolveAiAnalysisQueuePriority } from '@/lib/ai-analysis-queue-priority';
 import { DEFAULT_STEPS, type StepKey } from '@/lib/ai-analysis-types';
 import { getDadataColumns } from '@/lib/dadata-columns';
 
@@ -47,6 +48,7 @@ async function ensureQueueTable() {
       queued_by text,
       payload jsonb,
       state text NOT NULL DEFAULT 'queued',
+      priority integer NOT NULL DEFAULT 100,
       lease_expires_at timestamptz,
       started_at timestamptz,
       last_error text
@@ -70,6 +72,10 @@ async function ensureQueueTable() {
   `);
   await dbBitrix.query(`
     ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS priority integer NOT NULL DEFAULT 100
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
       ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz
   `);
   await dbBitrix.query(`
@@ -82,7 +88,7 @@ async function ensureQueueTable() {
   `);
   await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_queued_at_idx
-      ON ai_analysis_queue (state, queued_at)
+      ON ai_analysis_queue (state, priority, queued_at)
   `);
   await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_lease_expires_at_idx
@@ -199,18 +205,20 @@ async function removeFromQueue(inns: string[], states?: QueueState[]) {
 
 async function enqueueItem(inn: string, payload: Record<string, unknown>, queuedBy: string | null) {
   await ensureQueueTable();
+  const priority = resolveAiAnalysisQueuePriority(payload.source, Number(payload.count ?? 1));
   await dbBitrix.query(
-    `INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, lease_expires_at, started_at, last_error)
-     VALUES ($1, now(), $2, $3::jsonb, 'queued', NULL, NULL, NULL)
+    `INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, priority, lease_expires_at, started_at, last_error)
+     VALUES ($1, now(), $2, $3::jsonb, 'queued', $4, NULL, NULL, NULL)
      ON CONFLICT (inn) DO UPDATE
      SET queued_at = EXCLUDED.queued_at,
          queued_by = COALESCE(EXCLUDED.queued_by, ai_analysis_queue.queued_by),
          payload = EXCLUDED.payload,
          state = 'queued',
+         priority = EXCLUDED.priority,
          lease_expires_at = NULL,
          started_at = NULL,
          last_error = NULL`,
-    [inn, queuedBy, JSON.stringify(payload)],
+    [inn, queuedBy, JSON.stringify(payload), priority],
   );
 }
 
@@ -220,6 +228,7 @@ type QueueItem = {
   queued_at: string | null;
   queued_by: string | null;
   state: QueueState | null;
+  priority: number | null;
   lease_expires_at: string | null;
   started_at: string | null;
   last_error: string | null;
@@ -257,23 +266,24 @@ async function claimNextQueueItem(): Promise<QueueItem | null> {
           q.queued_at,
           q.queued_by,
           q.state,
+          q.priority,
           q.lease_expires_at,
           q.started_at,
           q.last_error,
           CASE WHEN q.state = 'running' THEN 0 ELSE 1 END AS lease_priority,
-          COALESCE(d.priority, 2) AS priority
+          COALESCE(d.retry_priority, 2) AS retry_priority
         FROM ai_analysis_queue q
         LEFT JOIN LATERAL (
           SELECT CASE
             WHEN ${incompleteOutcomeSql} OR ${incompleteProgressSql} OR ${failedStatusSql} THEN 0
             WHEN ${notStartedOutcomeSql} THEN 1
             ELSE 2
-          END AS priority
+          END AS retry_priority
           FROM dadata_result d
           WHERE d.inn = q.inn
         ) d ON TRUE
         WHERE q.state = 'queued' OR (q.state = 'running' AND q.lease_expires_at IS NOT NULL AND q.lease_expires_at < now())
-        ORDER BY lease_priority ASC, priority ASC, q.queued_at ASC
+        ORDER BY lease_priority ASC, q.priority ASC, retry_priority ASC, q.queued_at ASC
         LIMIT 1
         FOR UPDATE OF q SKIP LOCKED
       )
@@ -290,6 +300,7 @@ async function claimNextQueueItem(): Promise<QueueItem | null> {
         q.queued_at,
         q.queued_by,
         q.state,
+        q.priority,
         q.lease_expires_at,
         q.started_at,
         q.last_error,
@@ -1821,215 +1832,12 @@ export async function POST(request: NextRequest) {
       parse_site_okved_fallback: false,
       analyze_json_okved_fallback: false,
     };
+    const queuePriority = resolveAiAnalysisQueuePriority(source, inns.length);
 
     const isImmediateDebugStep =
       source === 'debug-step' && mode === 'steps' && inns.length === 1 && (steps?.length ?? 0) === 1;
-    const isImmediateFullRun = false;
-    const isImmediateSingleSteps = false;
 
-    if (isImmediateFullRun) {
-      const inn = inns[0];
-      const overallTimeoutMs = getOverallTimeoutMs();
-      const companyNameMap = await getCompanyNames([inn]);
-      const companyName = companyNameMap.get(inn);
 
-      await safeLog({
-        type: 'notification',
-        source: 'ai-integration',
-        companyId: inn,
-        companyName,
-        message: 'Запуск полного анализа без очереди',
-        payload: { requestedBy, source },
-      });
-
-      await markRunning(inn, 1);
-      const startedAt = Date.now();
-      const runResult = await runFullPipeline(inn, overallTimeoutMs);
-      const durationMs = Date.now() - startedAt;
-      const finalStatus: 'completed' | 'partial' | 'failed' =
-        runResult.ok ? 'completed' : runResult.outcome === 'partial' ? 'partial' : 'failed';
-
-      if (runResult.ok) {
-        await markFinished(inn, { status: 'completed', durationMs }, { attempts: 1 });
-        await safeLog({
-          type: 'notification',
-          source: 'ai-integration',
-          companyId: inn,
-          companyName,
-          notificationKey: 'analysis_success',
-          message: 'Полный анализ завершён (без очереди)',
-          payload: { status: runResult.status },
-        });
-      } else {
-        await markFinished(
-          inn,
-          { status: finalStatus, durationMs, progress: runResult.progress },
-          { attempts: 1, outcome: finalStatus === 'failed' ? 'failed' : 'partial' },
-        );
-        await safeLog({
-          type: finalStatus === 'partial' ? 'notification' : 'error',
-          source: 'ai-integration',
-          companyId: inn,
-          companyName,
-          message: `Полный анализ завершился ошибкой: ${runResult.error ?? 'unknown'}`,
-          payload: { status: runResult.status },
-        });
-      }
-
-      return NextResponse.json({
-        ok: runResult.ok,
-        status: runResult.status,
-        outcome: runResult.outcome,
-        error: runResult.error,
-        failedSteps: runResult.failedSteps,
-        mode,
-        steps,
-        integration: { base: integrationBase, mode, modeLocked, steps },
-      });
-    }
-
-    if (isImmediateSingleSteps) {
-      const inn = inns[0];
-      const stepsToRun = steps && steps.length ? steps : DEFAULT_STEPS;
-      const stepTimeoutMs = getStepTimeoutMs();
-      const overallTimeoutMs = getOverallTimeoutMs();
-      const companyNameMap = await getCompanyNames([inn]);
-      const companyName = companyNameMap.get(inn);
-      const columns = await getDadataColumns();
-      const hasProgressColumn = Boolean(columns.progress);
-
-      const updateProgress = async (value: number) => {
-        if (!hasProgressColumn) return;
-        await dbBitrix
-          .query(`UPDATE dadata_result SET "${columns.progress}" = $2 WHERE inn = $1`, [inn, value])
-          .catch((error) => console.warn('progress update failed', error));
-      };
-
-      await safeLog({
-        type: 'notification',
-        source: 'ai-integration',
-        companyId: inn,
-        companyName,
-        notificationKey: 'analysis_start',
-        message: 'Старт одиночного анализа (без очереди)',
-        payload: { steps: stepsToRun, mode },
-      });
-
-      await markRunning(inn, 1);
-
-      const runAllSteps = async (): Promise<RunResult> => {
-        const totalSteps = stepsToRun.length;
-        const completedSteps = new Set<StepKey>();
-        const runtimeFlags: StepRuntimeFlags = {
-          parseSiteOkvedFallback: false,
-          analyzeJsonOkvedFallback: false,
-        };
-        if (totalSteps === 0) {
-          return {
-            ok: true,
-            status: 200,
-            completedSteps: [],
-            parseSiteOkvedFallback: false,
-            analyzeJsonOkvedFallback: false,
-          };
-        }
-
-        let progress = 0;
-        await updateProgress(progress);
-
-        for (let idx = 0; idx < stepsToRun.length; idx++) {
-          const step = stepsToRun[idx];
-          const result = await runStep(inn, step, stepTimeoutMs, runtimeFlags);
-          if (result.ok) {
-            completedSteps.add(step);
-            if (step === 'parse_site' && result.okvedFallbackUsed) {
-              runtimeFlags.parseSiteOkvedFallback = true;
-            }
-            if (step === 'analyze_json' && result.okvedFallbackUsed) {
-              runtimeFlags.analyzeJsonOkvedFallback = true;
-            }
-            progress = completedSteps.size / totalSteps;
-            await updateProgress(progress);
-            continue;
-          }
-
-          return {
-            ok: false,
-            status: result.status,
-            error: result.error,
-            progress,
-            completedSteps: Array.from(completedSteps),
-            parseSiteOkvedFallback: runtimeFlags.parseSiteOkvedFallback,
-            analyzeJsonOkvedFallback: runtimeFlags.analyzeJsonOkvedFallback,
-          };
-        }
-
-        return {
-          ok: true,
-          status: 200,
-          progress: 1,
-          completedSteps: Array.from(completedSteps),
-          parseSiteOkvedFallback: runtimeFlags.parseSiteOkvedFallback,
-          analyzeJsonOkvedFallback: runtimeFlags.analyzeJsonOkvedFallback,
-        };
-      };
-
-      const startedAt = Date.now();
-      let timedResult: RunResult;
-      try {
-        timedResult = (await Promise.race([
-          runAllSteps(),
-          new Promise<{ ok: false; status: number; error: string }>((resolve) =>
-            setTimeout(() => resolve({ ok: false, status: 504, error: 'AI integration timed out' }), overallTimeoutMs),
-          ),
-        ])) as RunResult;
-      } catch (error: any) {
-        timedResult = { ok: false, status: 500, error: error?.message ?? 'AI integration run failed' };
-      }
-
-      const durationMs = Date.now() - startedAt;
-      if (timedResult.ok) {
-        await markFinished(inn, { status: 'completed', durationMs }, { attempts: 1 });
-        await safeLog({
-          type: 'notification',
-          source: 'ai-integration',
-          companyId: inn,
-          companyName,
-          notificationKey: 'analysis_success',
-          message: 'Полный анализ завершён (без очереди)',
-          payload: { status: timedResult.status },
-        });
-      } else {
-        await markFinished(
-          inn,
-          {
-            status: 'failed',
-            durationMs,
-            progress: timedResult.progress,
-          },
-          { attempts: 1, outcome: 'failed' },
-        );
-        await safeLog({
-          type: 'error',
-          source: 'ai-integration',
-          companyId: inn,
-          companyName,
-          message: `Полный анализ завершился ошибкой: ${timedResult.error ?? 'unknown'}`,
-          payload: { status: timedResult.status },
-        });
-      }
-
-      return NextResponse.json({
-        ok: timedResult.ok,
-        status: timedResult.status,
-        error: timedResult.error,
-        parseSiteOkvedFallback: timedResult.parseSiteOkvedFallback,
-        analyzeJsonOkvedFallback: timedResult.analyzeJsonOkvedFallback,
-        mode,
-        steps,
-        integration: { base: integrationBase, mode, modeLocked, steps },
-      });
-    }
 
     if (isImmediateDebugStep) {
       const inn = inns[0];
@@ -2072,26 +1880,27 @@ export async function POST(request: NextRequest) {
     const placeholders = inns.map((_, idx) => `($${idx + 1})`).join(', ');
 
     const sql = `
-      INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, lease_expires_at, started_at, last_error)
-      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb, 'queued', NULL, NULL, NULL
+      INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, priority, lease_expires_at, started_at, last_error)
+      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb, 'queued', $${inns.length + 3}, NULL, NULL, NULL
       FROM (VALUES ${placeholders}) AS v(inn_val)
       ON CONFLICT (inn) DO UPDATE
       SET queued_at = EXCLUDED.queued_at,
           queued_by = EXCLUDED.queued_by,
           payload = EXCLUDED.payload,
           state = 'queued',
+          priority = EXCLUDED.priority,
           lease_expires_at = NULL,
           started_at = NULL,
           last_error = NULL
     `;
 
-    await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload)]);
+    await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload), queuePriority]);
 
     await safeLog({
       type: 'notification',
       source: 'ai-integration',
       message: 'Компании поставлены в очередь на AI-анализ',
-      payload: { inns, requestedBy, mode, steps, source },
+      payload: { inns, requestedBy, mode, steps, source, queuePriority },
     });
 
     // Немедленно помечаем компании как поставленные в очередь, чтобы UI не ждал долгий запрос

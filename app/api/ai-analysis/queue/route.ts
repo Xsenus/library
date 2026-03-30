@@ -3,6 +3,7 @@ import { dbBitrix } from '@/lib/db-bitrix';
 import { getSession } from '@/lib/auth';
 import { getForcedLaunchMode, getForcedSteps } from '@/lib/ai-analysis-config';
 import { triggerAiAnalysisQueueProcessing } from '@/lib/ai-analysis-queue-trigger';
+import { resolveAiAnalysisQueuePriority } from '@/lib/ai-analysis-queue-priority';
 import { getDadataColumns } from '@/lib/dadata-columns';
 import type { StepKey } from '@/lib/ai-analysis-types';
 
@@ -45,6 +46,7 @@ async function ensureQueueTable() {
       queued_by text,
       payload jsonb,
       state text NOT NULL DEFAULT 'queued',
+      priority integer NOT NULL DEFAULT 100,
       lease_expires_at timestamptz,
       started_at timestamptz,
       last_error text
@@ -68,6 +70,10 @@ async function ensureQueueTable() {
   `);
   await dbBitrix.query(`
     ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS priority integer NOT NULL DEFAULT 100
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
       ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz
   `);
   await dbBitrix.query(`
@@ -80,7 +86,7 @@ async function ensureQueueTable() {
   `);
   await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_queued_at_idx
-      ON ai_analysis_queue (state, queued_at)
+      ON ai_analysis_queue (state, priority, queued_at)
   `);
   await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_lease_expires_at_idx
@@ -242,6 +248,7 @@ export async function GET(request: NextRequest) {
             q.inn,
             q.queued_at,
             q.queued_by,
+            q.priority AS queue_priority,
             ${optionalSelect.join(',\n            ')}
           FROM ai_analysis_queue q
           LEFT JOIN dadata_result d ON d.inn = q.inn
@@ -256,6 +263,7 @@ export async function GET(request: NextRequest) {
             q.inn,
             COALESCE(q.started_at, d.analysis_started_at, q.queued_at, now()) AS queued_at,
             q.queued_by,
+            q.priority AS queue_priority,
             ${optionalSelect.join(',\n            ')}
           FROM ai_analysis_queue q
           LEFT JOIN dadata_result d ON d.inn = q.inn
@@ -267,6 +275,7 @@ export async function GET(request: NextRequest) {
             d.inn,
             COALESCE(d.analysis_started_at, now()) AS queued_at,
             NULL::text AS queued_by,
+            NULL::int AS queue_priority,
             ${optionalSelect.join(',\n            ')}
           FROM dadata_result d
           LEFT JOIN ai_analysis_queue q ON q.inn = d.inn
@@ -281,7 +290,7 @@ export async function GET(request: NextRequest) {
         )
         SELECT *
         FROM combined
-        ORDER BY queued_at ASC
+        ORDER BY COALESCE(queue_priority, 1000) ASC, queued_at ASC
         LIMIT $1
       `,
       [limit],
@@ -429,23 +438,25 @@ export async function POST(request: NextRequest) {
       defer_count: 0,
       completed_steps: [],
     };
+    const queuePriority = resolveAiAnalysisQueuePriority(payload.source, inns.length);
 
     const placeholders = inns.map((_, i) => `($${i + 1})`).join(', ');
     const sql = `
-      INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, lease_expires_at, started_at, last_error)
-      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb, 'queued', NULL, NULL, NULL
+      INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, priority, lease_expires_at, started_at, last_error)
+      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb, 'queued', $${inns.length + 3}, NULL, NULL, NULL
       FROM (VALUES ${placeholders}) AS v(inn_val)
       ON CONFLICT (inn) DO UPDATE
       SET queued_at = EXCLUDED.queued_at,
           queued_by = EXCLUDED.queued_by,
           payload = EXCLUDED.payload,
           state = 'queued',
+          priority = EXCLUDED.priority,
           lease_expires_at = NULL,
           started_at = NULL,
           last_error = NULL
     `;
 
-    await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload)]);
+    await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload), queuePriority]);
     await markQueuedMany(inns);
     void triggerAiAnalysisQueueProcessing();
 
