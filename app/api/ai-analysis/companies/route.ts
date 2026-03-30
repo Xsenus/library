@@ -1289,7 +1289,7 @@ function buildActivitySql(optionalSelect: SelectBuild, queueAvailable: boolean, 
 
   const runningParts: string[] = [];
   if (statusCol) {
-    runningParts.push(`LOWER(COALESCE(d.${statusCol}, '')) SIMILAR TO '%(running|processing|in_progress|starting)%'`);
+    runningParts.push(`LOWER(COALESCE(d.${statusCol}, '')) SIMILAR TO '%(running|processing|in_progress|starting|stop_requested|stopping)%'`);
   }
   if (progressCol) {
     runningParts.push(`COALESCE(d.${progressCol}, 0) > 0 AND COALESCE(d.${progressCol}, 0) < 0.999`);

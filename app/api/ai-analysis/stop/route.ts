@@ -11,6 +11,7 @@ export const revalidate = 0;
 
 let ensuredCommands = false;
 let ensuredQueue = false;
+const QUEUE_STALE_INTERVAL = `120 minutes`;
 
 async function ensureCommandsTable() {
   if (ensuredCommands) return;
@@ -101,6 +102,60 @@ function normalizeInns(raw: any): string[] {
   );
 }
 
+async function findRunningInns(inns: string[]): Promise<string[]> {
+  if (!inns.length) return [];
+
+  const columns = await getDadataColumns();
+  const statusExpr = columns.status ? `LOWER(COALESCE("${columns.status}", ''))` : "''";
+  const progressExpr = columns.progress ? `COALESCE("${columns.progress}", 0)` : '0';
+  const startedExpr = columns.startedAt ? `"${columns.startedAt}"` : 'NULL';
+  const finishedExpr = columns.finishedAt ? `"${columns.finishedAt}"` : 'NULL';
+
+  const { rows } = await dbBitrix.query<{ inn: string }>(
+    `
+      SELECT inn
+      FROM dadata_result
+      WHERE inn = ANY($1::text[])
+        AND (
+          ${statusExpr} SIMILAR TO '%(running|processing|in_progress|starting|stop_requested|stopping)%'
+          OR (${finishedExpr} IS NULL AND ${progressExpr} > 0 AND ${progressExpr} < 0.999)
+          OR (${startedExpr} IS NOT NULL AND ${finishedExpr} IS NULL AND ${startedExpr} > now() - interval '${QUEUE_STALE_INTERVAL}')
+        )
+    `,
+    [inns],
+  );
+
+  return Array.from(new Set((rows ?? []).map((row) => row.inn).filter(Boolean)));
+}
+
+async function markStopRequested(inns: string[]) {
+  if (!inns.length) return;
+
+  const columns = await getDadataColumns();
+  if (!columns.status) {
+    console.warn('mark stop requested skipped: no status column in dadata_result');
+    return;
+  }
+
+  const sets = [`"${columns.status}" = 'stop_requested'`];
+
+  if (columns.finishedAt) {
+    sets.push(`"${columns.finishedAt}" = NULL`);
+  }
+
+  if (columns.outcome) {
+    sets.push(`"${columns.outcome}" = 'pending'`);
+  }
+
+  if (columns.okFlag) {
+    sets.push(`"${columns.okFlag}" = 0`);
+  }
+
+  const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = ANY($1::text[])`;
+
+  await dbBitrix.query(sql, [inns]).catch((error) => console.warn('mark stop requested failed', error));
+}
+
 export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => null)) as {
@@ -133,26 +188,40 @@ export async function POST(request: NextRequest) {
 
     let removed = 0;
     let running = 0;
+    let removedInns: string[] = [];
+    let runningInns: string[] = [];
     if (inns.length) {
       await ensureQueueTable();
       const res = await dbBitrix.query<{ inn: string }>(
         "DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state = 'queued' RETURNING inn",
         [inns],
       );
-      const removedInns = (res.rows ?? []).map((row) => row.inn).filter(Boolean);
+      removedInns = (res.rows ?? []).map((row) => row.inn).filter(Boolean);
       removed = res.rowCount ?? removedInns.length;
       payload.removed_from_queue = removed;
       const runningRes = await dbBitrix.query<{ inn: string }>(
         "SELECT inn FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state = 'running'",
         [inns],
       );
-      running = runningRes.rowCount ?? (runningRes.rows?.length ?? 0);
+      runningInns = Array.from(
+        new Set([
+          ...(runningRes.rows ?? []).map((row) => row.inn).filter(Boolean),
+          ...(await findRunningInns(inns.filter((inn) => !removedInns.includes(inn)))),
+        ]),
+      );
+      running = runningInns.length;
       payload.running_in_queue = running;
+      payload.removed_inns = removedInns;
+      payload.running_inns = runningInns;
 
       // Помечаем остановку в витрине, чтобы UI сразу отобразил финальный статус
       const columns = await getDadataColumns();
       if (columns.status && removedInns.length) {
         const sets = [`"${columns.status}" = 'stopped'`];
+
+        if (columns.outcome) {
+          sets.push(`"${columns.outcome}" = 'partial'`);
+        }
 
         if (columns.finishedAt) {
           sets.push(`"${columns.finishedAt}" = now()`);
@@ -171,6 +240,10 @@ export async function POST(request: NextRequest) {
         await dbBitrix.query(sql, [removedInns]).catch((error) => console.warn('mark stopped failed', error));
       } else if (!columns.status) {
         console.warn('mark stopped skipped: no status column in dadata_result');
+      }
+
+      if (runningInns.length) {
+        await markStopRequested(runningInns);
       }
     }
 
@@ -192,7 +265,7 @@ export async function POST(request: NextRequest) {
       payload,
     });
 
-    return NextResponse.json({ ok: true, removed, running });
+    return NextResponse.json({ ok: true, removed, running, removedInns, runningInns });
   } catch (e) {
     console.error('POST /api/ai-analysis/stop error', e);
     return NextResponse.json({ ok: false, error: 'Internal Server Error' }, { status: 500 });

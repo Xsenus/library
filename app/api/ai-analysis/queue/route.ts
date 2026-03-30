@@ -120,7 +120,7 @@ function normalizeRunningCondition(columns: Set<string>): string {
   const terminalOutcome = `LOWER(COALESCE(${outcome}, '')) SIMILAR TO '%(failed|partial|completed|stopped|cancel|done|finish|success)%'`;
 
   return `(
-    LOWER(COALESCE(${status}, '')) SIMILAR TO '%(running|processing|in_progress|starting)%'
+    LOWER(COALESCE(${status}, '')) SIMILAR TO '%(running|processing|in_progress|starting|stop_requested|stopping)%'
     OR (${finishedAt} IS NULL AND NOT (${terminalStatus} OR ${terminalOutcome}) AND ${progress} > 0 AND ${progress} < 0.999)
     OR (${startedAt} IS NOT NULL AND ${finishedAt} IS NULL AND ${startedAt} > now() - interval '${QUEUE_STALE_INTERVAL}')
   )`;
@@ -287,11 +287,17 @@ export async function GET(request: NextRequest) {
       [limit],
     );
 
-    const items = rows.map((row) => ({
-      ...row,
-      analysis_status: row.source === 'queue' ? 'queued' : row.source === 'running' ? 'running' : (row.analysis_status ?? 'running'),
-      analysis_outcome: row.source === 'queue' ? 'pending' : row.source === 'running' ? 'pending' : (row.analysis_outcome ?? 'pending'),
-    }));
+    const items = rows.map((row) => {
+      const normalizedStatus = String(row.analysis_status ?? '').toLowerCase();
+      const stopRequested =
+        row.source === 'running' && ['stop_requested', 'stop-requested', 'stopping'].some((token) => normalizedStatus.includes(token));
+
+      return {
+        ...row,
+        analysis_status: row.source === 'queue' ? 'queued' : stopRequested ? 'stop_requested' : 'running',
+        analysis_outcome: row.source === 'queue' ? 'pending' : 'pending',
+      };
+    });
 
     return NextResponse.json({ ok: true, items });
   } catch (error) {

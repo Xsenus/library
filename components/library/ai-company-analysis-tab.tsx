@@ -842,6 +842,11 @@ type OutcomeMeta = {
   badgeVariant: 'default' | 'secondary' | 'destructive' | 'outline';
 };
 
+function isStopRequestedStatus(status?: string | null): boolean {
+  const normalized = (status ?? '').toLowerCase();
+  return ['stop_requested', 'stop-requested', 'stopping'].some((token) => normalized.includes(token));
+}
+
 function computeCompanyState(company: AiCompany): CompanyState {
   const status = (company.analysis_status ?? '').toLowerCase();
   const outcome = (company.analysis_outcome ?? '').toLowerCase();
@@ -863,7 +868,7 @@ function computeCompanyState(company: AiCompany): CompanyState {
   const isTerminal = hasFinished || hasTerminalOutcome;
 
   const runningByStatus = status
-    ? ['running', 'processing', 'in_progress', 'starting'].some((s) => status.includes(s))
+    ? ['running', 'processing', 'in_progress', 'starting', 'stop_requested', 'stopping'].some((s) => status.includes(s))
     : false;
   const runningByProgress = progress != null && progress > 0 && progress < 0.999 && !hasFinished;
   const runningByTimeline =
@@ -975,6 +980,12 @@ function getStatusBadge(company: AiCompany, outcome: OutcomeMeta): {
   variant: 'default' | 'secondary' | 'destructive' | 'outline';
 } {
   const state = computeCompanyState(company);
+  if (isStopRequestedStatus(company.analysis_status)) {
+    return { label: 'Остановка запрошена', variant: 'outline' };
+  }
+  if (['stopped', 'cancelled', 'canceled'].some((token) => (company.analysis_status ?? '').toLowerCase().includes(token))) {
+    return { label: 'Остановлено', variant: 'outline' };
+  }
   if (state.running) {
     return { label: 'В процессе', variant: 'default' };
   }
@@ -994,6 +1005,9 @@ function isOkvedFallbackUsed(company: AiCompany, sites: string[]): boolean {
 function formatStatusLabel(status?: string | null): string {
   if (!status) return '—';
   const normalized = status.toLowerCase();
+  if (['stop_requested', 'stop-requested', 'stopping'].some((s) => normalized.includes(s))) {
+    return 'Остановка запрошена';
+  }
   if (['running', 'processing', 'in_progress', 'starting', 'active'].some((s) => normalized.includes(s))) {
     return 'Выполняется';
   }
@@ -1853,6 +1867,21 @@ export default function AiCompanyAnalysisTab() {
     });
   }, []);
 
+  const markStopRequested = useCallback((inns: string[]) => {
+    if (!inns.length) return;
+    const innSet = new Set(inns);
+    setCompanies((prev) =>
+      prev.map((company) => {
+        if (!innSet.has(company.inn)) return company;
+        return {
+          ...company,
+          analysis_status: 'stop_requested',
+          analysis_outcome: 'pending',
+        };
+      }),
+    );
+  }, []);
+
   useEffect(() => {
     // remove selections that are not in dataset anymore
     setSelected((prev) => {
@@ -2216,16 +2245,29 @@ export default function AiCompanyAnalysisTab() {
         body: JSON.stringify({ inns: activeInns }),
       });
       if (!res.ok) throw new Error(`Request failed with ${res.status}`);
-      const data = (await res.json().catch(() => null)) as { removed?: number } | null;
+      const data = (await res.json().catch(() => null)) as {
+        removed?: number;
+        running?: number;
+        removedInns?: string[];
+        runningInns?: string[];
+      } | null;
       const removed = typeof data?.removed === 'number' ? data.removed : null;
+      const running = typeof data?.running === 'number' ? data.running : null;
+      const removedInns = Array.isArray(data?.removedInns)
+        ? data?.removedInns?.map((inn) => String(inn ?? '').trim()).filter(Boolean) ?? []
+        : [];
+      const runningInns = Array.isArray(data?.runningInns)
+        ? data?.runningInns?.map((inn) => String(inn ?? '').trim()).filter(Boolean) ?? []
+        : [];
       const description =
-        removed != null
+        removed != null || running != null
           ? `Из очереди снято: ${removed}`
           : activeInns.length > 0
           ? `Для ${activeInns.length} ${activeInns.length === 1 ? 'компании' : 'компаний'}`
           : undefined;
       toast({ title: 'Отправлен сигнал остановки анализа', description });
-      markStopped(activeInns);
+      markStopped(removedInns);
+      markStopRequested(runningInns);
       setStopSignalAt(Date.now());
       autoRefreshDeadlineRef.current = 0;
       setAutoRefresh(false);
@@ -2241,7 +2283,7 @@ export default function AiCompanyAnalysisTab() {
     } finally {
       setStopLoading(false);
     }
-  }, [companies, toast, markStopped, fetchCompanies, page, pageSize]);
+  }, [companies, toast, markStopped, markStopRequested, fetchCompanies, page, pageSize]);
 
   const handleStopSingle = useCallback(
     async (inn: string) => {
@@ -2253,16 +2295,29 @@ export default function AiCompanyAnalysisTab() {
           body: JSON.stringify({ inns: [inn] }),
         });
         if (!res.ok) throw new Error(`Request failed with ${res.status}`);
-        const data = (await res.json().catch(() => null)) as { removed?: number } | null;
+        const data = (await res.json().catch(() => null)) as {
+          removed?: number;
+          running?: number;
+          removedInns?: string[];
+          runningInns?: string[];
+        } | null;
         const removed = typeof data?.removed === 'number' ? data.removed : null;
+        const running = typeof data?.running === 'number' ? data.running : null;
+        const removedInns = Array.isArray(data?.removedInns)
+          ? data?.removedInns?.map((value) => String(value ?? '').trim()).filter(Boolean) ?? []
+          : [];
+        const runningInns = Array.isArray(data?.runningInns)
+          ? data?.runningInns?.map((value) => String(value ?? '').trim()).filter(Boolean) ?? []
+          : [];
         toast({
           title: 'Отправлен сигнал остановки',
           description:
-            removed != null
+            removed != null || running != null
               ? `Снято из очереди: ${removed}`
               : 'Команда остановки отправлена для выбранной компании.',
         });
-        markStopped([inn]);
+        markStopped(removedInns);
+        markStopRequested(runningInns);
         fetchCompanies(page, pageSize);
       } catch (error) {
         console.error('Failed to stop single company', error);
@@ -2275,7 +2330,7 @@ export default function AiCompanyAnalysisTab() {
         setStopInn(null);
       }
     },
-    [toast, markStopped, fetchCompanies, page, pageSize],
+    [toast, markStopped, markStopRequested, fetchCompanies, page, pageSize],
   );
 
   const handleRemoveFromQueue = useCallback(
