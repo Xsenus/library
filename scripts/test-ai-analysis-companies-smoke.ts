@@ -259,7 +259,11 @@ async function main() {
     const fallbackCompany = await fetchCompany(FALLBACK_INN);
     assert.equal(fallbackCompany.analysis_status, 'completed');
     assert.equal(normalizeString(fallbackCompany.score_source), 'okved_fallback');
-    assert.equal(normalizeString(fallbackCompany.analysis_domain), OKVED_FALLBACK_DOMAIN);
+    assert.equal(
+      normalizeString(fallbackCompany.analysis_domain),
+      '',
+      'fallback case should hide internal fallback domain from public API',
+    );
     assert.equal(Number(fallbackCompany.prodclass_by_okved) > 0, true);
     assert.equal(Array.isArray(fallbackCompany.analysis_tnved) && fallbackCompany.analysis_tnved.length > 0, true);
 

@@ -19,11 +19,23 @@ export async function GET(_request: Request, { params }: RouteContext) {
     return NextResponse.json({ error: 'INN is required', items: [] }, { status: 400 });
   }
 
-  const res = await callAiIntegration(`/v1/equipment-selection/by-inn/${encodeURIComponent(inn)}`, {
-    method: 'GET',
-    cache: 'no-store',
-    timeoutMs: 20_000,
-  });
+  const snapshotRes = await callAiIntegration(
+    `/v1/equipment-selection/snapshot/by-inn/${encodeURIComponent(inn)}`,
+    {
+      method: 'GET',
+      cache: 'no-store',
+      timeoutMs: 20_000,
+    },
+  );
+
+  const res =
+    snapshotRes.ok || (snapshotRes.status && snapshotRes.status !== 404)
+      ? snapshotRes
+      : await callAiIntegration(`/v1/equipment-selection/by-inn/${encodeURIComponent(inn)}`, {
+        method: 'GET',
+        cache: 'no-store',
+        timeoutMs: 20_000,
+      });
 
   if (!res.ok) {
     return NextResponse.json({ error: res.error, items: [] }, { status: res.status || 502 });

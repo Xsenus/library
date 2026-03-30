@@ -1699,8 +1699,15 @@ export default function AiCompanyAnalysisTab() {
 
   useEffect(() => {
     fetchCompanies(page, pageSize);
+  }, [fetchCompanies, page, pageSize]);
+
+  useEffect(() => {
     fetchBilling();
-  }, [fetchBilling, fetchCompanies, page, pageSize]);
+    const billingTimer = window.setInterval(() => {
+      fetchBilling();
+    }, 60000);
+    return () => window.clearInterval(billingTimer);
+  }, [fetchBilling]);
 
   useEffect(() => {
     if (lastFetchErrorAt == null) return undefined;
