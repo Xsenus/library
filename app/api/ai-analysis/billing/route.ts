@@ -1,9 +1,21 @@
 import { NextResponse } from 'next/server';
+
+import { mergeBillingSnapshots, normalizeBillingPayload, type BillingSnapshot } from '@/lib/ai-analysis-billing';
 import { callAiIntegration } from '@/lib/ai-integration';
+import { db } from '@/lib/db';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
 export const revalidate = 0;
+
+type BillingSnapshotRow = {
+  billing_summary: unknown;
+  created_at: string | null;
+};
+
+type MonthSpendRow = {
+  spend_month_to_date_usd: number | string | null;
+};
 
 function toFiniteNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -16,26 +28,66 @@ function toFiniteNumber(value: unknown): number | null {
   return null;
 }
 
-function firstNumber(payload: Record<string, any>, keys: string[]): number | null {
-  for (const key of keys) {
-    const direct = toFiniteNumber(payload?.[key]);
-    if (direct != null) return direct;
-
-    const nested = payload?.data;
-    if (nested && typeof nested === 'object') {
-      const nestedValue = toFiniteNumber((nested as Record<string, any>)[key]);
-      if (nestedValue != null) return nestedValue;
-    }
-  }
-
-  return null;
+function buildLiveFallback(error: string | null | undefined): BillingSnapshot {
+  const normalizedError = error?.trim() || null;
+  return {
+    remaining_usd: null,
+    limit_usd: null,
+    spend_month_to_date_usd: null,
+    configured: normalizedError?.toLowerCase().includes('not configured') ? false : null,
+    error: normalizedError,
+    source: 'live',
+    last_snapshot_at: null,
+  };
 }
 
-export async function GET() {
+async function loadLatestBillingSnapshot(): Promise<BillingSnapshot | null> {
+  try {
+    const { rows } = await db.query<BillingSnapshotRow>(
+      `
+        SELECT billing_summary, created_at
+        FROM public.ai_site_openai_responses
+        WHERE billing_summary IS NOT NULL
+        ORDER BY created_at DESC NULLS LAST, id DESC NULLS LAST
+        LIMIT 1
+      `,
+    );
+
+    const row = rows[0];
+    if (!row) return null;
+    return normalizeBillingPayload(row.billing_summary, {
+      source: 'snapshot',
+      lastSnapshotAt: row.created_at,
+    });
+  } catch (error) {
+    console.warn('Failed to load AI billing snapshot', error);
+    return null;
+  }
+}
+
+async function loadMonthSpendUsd(): Promise<number | null> {
+  try {
+    const { rows } = await db.query<MonthSpendRow>(
+      `
+        SELECT COALESCE(SUM(cost_usd), 0)::numeric(12,6) AS spend_month_to_date_usd
+        FROM public.ai_site_openai_responses
+        WHERE cost_usd IS NOT NULL
+          AND created_at >= date_trunc('month', now())
+          AND created_at < date_trunc('month', now()) + interval '1 month'
+      `,
+    );
+    return toFiniteNumber(rows[0]?.spend_month_to_date_usd ?? null);
+  } catch (error) {
+    console.warn('Failed to load AI monthly spend fallback', error);
+    return null;
+  }
+}
+
+async function loadLiveBilling(): Promise<BillingSnapshot> {
   const requestInit = {
     method: 'GET',
     cache: 'no-store',
-    timeoutMs: 10000,
+    timeoutMs: 10_000,
   } as const;
 
   const primary = await callAiIntegration('/v1/billing/remaining', requestInit);
@@ -45,30 +97,28 @@ export async function GET() {
       : await callAiIntegration('/v1/billing', requestInit);
 
   if (!res.ok) {
-    return NextResponse.json(
-      {
-        error: res.error,
-        remaining_usd: null,
-        limit_usd: null,
-        spend_month_to_date_usd: null,
-      },
-      { status: res.status || 502 },
-    );
+    return buildLiveFallback(res.error);
   }
 
-  const payload = (res.data ?? {}) as Record<string, any>;
-
-  return NextResponse.json(
-    {
-      remaining_usd: firstNumber(payload, ['remaining_usd', 'remaining', 'balance_usd']),
-      limit_usd: firstNumber(payload, ['limit_usd', 'budget_monthly_usd', 'monthly_budget_usd', 'limit']),
-      spend_month_to_date_usd: firstNumber(payload, [
-        'spend_month_to_date_usd',
-        'month_to_date_spend_usd',
-        'spent_usd',
-        'spent',
-      ]),
-    },
-    { status: 200 },
+  return (
+    normalizeBillingPayload(res.data, {
+      source: 'live',
+    }) ?? buildLiveFallback(null)
   );
+}
+
+export async function GET() {
+  const [live, snapshot, monthSpendUsd] = await Promise.all([
+    loadLiveBilling(),
+    loadLatestBillingSnapshot(),
+    loadMonthSpendUsd(),
+  ]);
+
+  const merged = mergeBillingSnapshots({
+    live,
+    snapshot,
+    monthSpendUsd,
+  });
+
+  return NextResponse.json(merged, { status: 200 });
 }

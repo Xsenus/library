@@ -26,6 +26,8 @@ const GOODS_TEXT_KEYS = ['goods_type', 'goods', 'name', 'title', 'product', 'pro
 const EQUIPMENT_TEXT_KEYS = ['equipment', 'equipment_site', 'equipment_name', 'equipmentId', 'name', 'title', 'label', 'value', 'text'];
 const TNVED_TEXT_KEYS = ['name', 'goods_type', 'goods', 'title', 'product', 'product_name', 'goods_name', 'label', 'value', 'text', 'description'];
 const TNVED_CODE_KEYS = ['tnved_code', 'goods_type_code', 'tnved', 'code', 'tn_ved', 'tnvedCode'];
+const OKVED_FALLBACK_DOMAIN = 'okved-fallback.local';
+const OKVED_FALLBACK_SITE_TOKEN = 'okved://fallback';
 
 async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
   const now = Date.now();
@@ -1460,6 +1462,25 @@ function parseProgress(val: any): number | null {
   return null;
 }
 
+function isFallbackSiteMarker(value: any): boolean {
+  const str = parseString(value)?.trim().toLowerCase();
+  if (!str) return false;
+  return str === OKVED_FALLBACK_DOMAIN || str === OKVED_FALLBACK_SITE_TOKEN;
+}
+
+function sanitizeSites(values: string[] | null): string[] | null {
+  if (!Array.isArray(values)) return null;
+  const cleaned = values
+    .map((value) => parseString(value))
+    .filter((value): value is string => !!value && !isFallbackSiteMarker(value));
+  return cleaned.length ? cleaned : null;
+}
+
+function sanitizeAnalysisDomain(value: string | null): string | null {
+  if (!value || isFallbackSiteMarker(value)) return null;
+  return value;
+}
+
 function mergeAnalyzerInfo(
   base: any,
   extra: {
@@ -1481,8 +1502,10 @@ function mergeAnalyzerInfo(
 ) {
   const company = base?.company && typeof base.company === 'object' ? { ...base.company } : {};
   const ai = base?.ai && typeof base.ai === 'object' ? { ...base.ai } : {};
+  const sanitizedSites = sanitizeSites(extra.sites);
+  const sanitizedDomain = sanitizeAnalysisDomain(extra.domain);
 
-  if (!ai.sites && extra.sites?.length) ai.sites = extra.sites;
+  if (!ai.sites && sanitizedSites?.length) ai.sites = sanitizedSites;
   if (!ai.products && extra.tnved?.length) ai.products = extra.tnved;
   if (!ai.equipment && extra.equipment?.length) ai.equipment = extra.equipment;
 
@@ -1538,7 +1561,7 @@ function mergeAnalyzerInfo(
   }
 
   if (!company.domain1 && extra.description) company.domain1 = extra.description;
-  if (!company.domain1_site && extra.domain) company.domain1_site = extra.domain;
+  if (!company.domain1_site && sanitizedDomain) company.domain1_site = sanitizedDomain;
 
   const hasCompany = Object.keys(company).length > 0;
   const hasAi = Object.keys(ai).length > 0;
@@ -2076,10 +2099,11 @@ export async function GET(request: NextRequest) {
         null;
       const isOkvedFallback = scoreSource === 'okved_fallback' || !siteFallback?.domains?.length;
       const prodclassScoreValue = descriptionOkvedScore ?? okvedScore ?? siteFallback?.prodclassScore ?? null;
-      const domain =
+      const domain = sanitizeAnalysisDomain(
         parseString(row.analysis_domain) ||
-        (analysisInfo && parseString((analysisInfo as any)?.domain)) ||
-        (siteFallback?.domains?.[0] ?? null);
+          (analysisInfo && parseString((analysisInfo as any)?.domain)) ||
+          (siteFallback?.domains?.[0] ?? null),
+      );
 
       const equipmentCandidates = [
         // В приоритете — данные последнего анализа, сохранённые в dadata_result.
@@ -2129,12 +2153,13 @@ export async function GET(request: NextRequest) {
       const metaSites = parseStringArray(contacts?.webSites);
       const metaEmails = parseStringArray(contacts?.emails);
 
-      const sites =
+      const sites = sanitizeSites(
         metaSites ||
-        parseStringArray(row.sites) ||
-        parseStringArray((analysisInfo as any)?.sites) ||
-        parseStringArray(row.analysis_domain ? [row.analysis_domain] : null) ||
-        (siteFallback?.domains?.length ? siteFallback.domains : null);
+          parseStringArray(row.sites) ||
+          parseStringArray((analysisInfo as any)?.sites) ||
+          parseStringArray(row.analysis_domain ? [row.analysis_domain] : null) ||
+          (siteFallback?.domains?.length ? siteFallback.domains : null),
+      );
 
       const emails =
         metaEmails ||

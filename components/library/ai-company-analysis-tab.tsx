@@ -195,6 +195,27 @@ type BillingResponse = {
   spend_month_to_date_usd?: number | null;
   limit_usd?: number | null;
   remaining_usd?: number | null;
+  configured?: boolean | null;
+  error?: string | null;
+  source?: string | null;
+  last_snapshot_at?: string | null;
+};
+
+type EquipmentScoreTrace = {
+  equipment_id: string;
+  final_score?: number | null;
+  final_source?: string | null;
+  calculation_path?: string | null;
+  bd_score?: number | null;
+  vector_score?: number | null;
+  gen_score?: number | null;
+  factor?: number | null;
+  matched_site_equipment?: string | null;
+  matched_site_equipment_score?: number | null;
+};
+
+type EquipmentTraceResponse = {
+  items?: EquipmentScoreTrace[];
 };
 
 function formatEmployees(value: number | null | undefined): string {
@@ -326,12 +347,12 @@ function formatQueuePriorityLabel(priority: number | null | undefined): string {
 
 function formatQueueSourceLabel(source: string | null | undefined): string {
   const normalized = String(source ?? '').trim().toLowerCase();
-  if (!normalized) return 'Неизвестный источник';
-  if (normalized === 'manual-play' || normalized === 'play') return 'Play';
-  if (normalized === 'manual-queue' || normalized === 'queue-single') return 'Ручная очередь';
-  if (normalized === 'manual-bulk' || normalized === 'bulk') return 'Массовый запуск';
-  if (normalized === 'filter') return 'Фильтр';
-  if (normalized === 'debug-step') return 'Отладочный шаг';
+  if (!normalized) return '\u041D\u0435\u0438\u0437\u0432\u0435\u0441\u0442\u043D\u044B\u0439 \u0438\u0441\u0442\u043E\u0447\u043D\u0438\u043A';
+  if (normalized === 'manual-play' || normalized === 'play') return '\u0411\u044B\u0441\u0442\u0440\u044B\u0439 \u0437\u0430\u043F\u0443\u0441\u043A';
+  if (normalized === 'manual-queue' || normalized === 'queue-single') return '\u0420\u0443\u0447\u043D\u0430\u044F \u043E\u0447\u0435\u0440\u0435\u0434\u044C';
+  if (normalized === 'manual-bulk' || normalized === 'bulk') return '\u041C\u0430\u0441\u0441\u043E\u0432\u044B\u0439 \u0437\u0430\u043F\u0443\u0441\u043A';
+  if (normalized === 'filter') return '\u0414\u043E\u0431\u0430\u0432\u043B\u0435\u043D\u0438\u0435 \u043F\u043E \u0444\u0438\u043B\u044C\u0442\u0440\u0443';
+  if (normalized === 'debug-step') return '\u041E\u0442\u043B\u0430\u0434\u043E\u0447\u043D\u044B\u0439 \u0448\u0430\u0433';
   return normalized;
 }
 
@@ -346,6 +367,67 @@ function formatQueueRetryKind(kind: string | null | undefined): string | null {
   if (normalized === 'upstream_error') return 'ошибка upstream';
   if (normalized === 'partial') return 'частичный результат';
   if (normalized === 'terminal') return 'неретраимая ошибка';
+  return normalized;
+}
+
+function formatEquipmentCalcPath(path: string | null | undefined): string | null {
+  const normalized = String(path ?? '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === 'direct') return 'Прямой путь';
+  if (normalized === 'fallback') return 'Фолбэк по отрасли';
+  if (normalized === 'fallback_missing_industry') return 'Фолбэк без отрасли';
+  if (normalized === 'fallback_no_workshops') return 'Фолбэк без цехов';
+  return normalized;
+}
+
+function formatEquipmentSource(source: string | null | undefined): string | null {
+  const normalized = String(source ?? '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === '1way') return 'SCORE_E1';
+  if (normalized === '2way') return 'SCORE_E2';
+  if (normalized === '3way') return 'SCORE_E3';
+  return normalized.toUpperCase();
+}
+
+function formatBillingValue(value: number | null | undefined, fallback = '—'): string {
+  const formatted = formatUsd(value);
+  return formatted === '—' ? fallback : formatted;
+}
+
+function formatBillingBalanceLabel(billing?: BillingResponse | null): string {
+  if (!billing) return '\u2014';
+  if (billing.remaining_usd != null && Number.isFinite(billing.remaining_usd)) {
+    return formatUsd(billing.remaining_usd);
+  }
+  if (billing.configured === false) return '\u041D\u0435 \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043D\u043E';
+  if (billing.error) return '\u041E\u0448\u0438\u0431\u043A\u0430';
+  return '\u2014';
+}
+
+function formatBillingSourceLabel(source: string | null | undefined): string | null {
+  const parts = String(source ?? '')
+    .split(',')
+    .map((part) => part.trim().toLowerCase())
+    .filter(Boolean);
+  if (!parts.length) return null;
+
+  const labels = parts.map((part) => {
+    if (part === 'live') return 'live API';
+    if (part === 'snapshot') return '\u0421\u043D\u0438\u043C\u043E\u043A \u0438\u0437 \u0411\u0414';
+    if (part === 'db-month') return '\u0420\u0430\u0441\u0445\u043E\u0434\u044B \u0437\u0430 \u043C\u0435\u0441\u044F\u0446';
+    if (part === 'derived') return '\u0420\u0430\u0441\u0447\u0435\u0442\u043D\u044B\u0439 \u043E\u0441\u0442\u0430\u0442\u043E\u043A';
+    return part;
+  });
+
+  return labels.join(' + ');
+}
+
+function formatBillingErrorLabel(error: string | null | undefined): string | null {
+  const normalized = String(error ?? '').trim();
+  if (!normalized) return null;
+  if (normalized.toLowerCase().includes('openai_admin_key not configured')) {
+    return '\u0412 AI-\u0438\u043D\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u0438 \u043D\u0435 \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043D OPENAI_ADMIN_KEY, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0436\u0438\u0432\u043E\u0439 \u0431\u0430\u043B\u0430\u043D\u0441 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D.';
+  }
   return normalized;
 }
 
@@ -791,7 +873,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
 function toSiteArray(value: any): string[] {
   const normalized = toStringArray(value)
     .map((site) => normalizeSite(site))
-    .filter((site): site is string => !!site);
+    .filter((site): site is string => !!site && site.toLowerCase() !== OKVED_FALLBACK_DOMAIN);
 
   return Array.from(new Set(normalized)).sort((a, b) => a.localeCompare(b));
 }
@@ -821,7 +903,7 @@ function toPipelineSteps(raw: any): PipelineStep[] {
 }
 
 function getCurrentStage(steps: PipelineStep[], statusText?: string | null): string | null {
-  if (!steps.length) return statusText ?? null;
+  if (!steps.length) return formatStatusLabel(statusText ?? null);
   const active = steps.find((step) => {
     if (!step.status) return false;
     const normalized = step.status.toLowerCase();
@@ -829,10 +911,10 @@ function getCurrentStage(steps: PipelineStep[], statusText?: string | null): str
       normalized.includes(key),
     );
   });
-  if (active) return active.label;
+  if (active) return active.label || formatStatusLabel(active.status ?? statusText ?? null);
   const incomplete = steps.find((step) => !step.status || step.status.toLowerCase() !== 'done');
   if (incomplete) return incomplete.label;
-  return steps[steps.length - 1]?.label ?? statusText ?? null;
+  return steps[steps.length - 1]?.label ?? formatStatusLabel(statusText ?? null);
 }
 
 function toTimestamp(value: string | null | undefined): number | null {
@@ -1093,6 +1175,9 @@ export default function AiCompanyAnalysisTab() {
   const [activeSummary, setActiveSummary] = useState<{ running: number; queued: number; total: number } | null>(null);
   const [integrationHealth, setIntegrationHealth] = useState<AiIntegrationHealth | null>(null);
   const [billing, setBilling] = useState<BillingResponse | null>(null);
+  const [equipmentTraceById, setEquipmentTraceById] = useState<Record<string, EquipmentScoreTrace>>({});
+  const [equipmentTraceLoading, setEquipmentTraceLoading] = useState(false);
+  const [equipmentTraceError, setEquipmentTraceError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const selectionAnchorInnRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1205,6 +1290,7 @@ export default function AiCompanyAnalysisTab() {
     );
   });
   const lastInfoRefreshInn = useRef<string | null>(null);
+  const lastEquipmentTraceInn = useRef<string | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1463,12 +1549,61 @@ export default function AiCompanyAnalysisTab() {
   const fetchBilling = useCallback(async () => {
     try {
       const res = await fetch('/api/ai-analysis/billing', { cache: 'no-store' });
-      if (!res.ok) return;
       const data = (await res.json().catch(() => null)) as BillingResponse | null;
       if (!data) return;
       setBilling(data);
     } catch (error) {
       console.error('Failed to load billing balance', error);
+    }
+  }, []);
+
+  const fetchEquipmentTrace = useCallback(async (inn: string) => {
+    if (!inn) return;
+
+    lastEquipmentTraceInn.current = inn;
+    setEquipmentTraceLoading(true);
+    setEquipmentTraceError(null);
+
+    try {
+      const res = await fetch(`/api/ai-analysis/equipment-trace/${encodeURIComponent(inn)}`, {
+        cache: 'no-store',
+      });
+      const data = (await res.json().catch(() => null)) as EquipmentTraceResponse | { error?: string } | null;
+      if (!res.ok) {
+        throw new Error(
+          data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+            ? data.error
+            : `Request failed with ${res.status}`,
+        );
+      }
+
+      const items = Array.isArray((data as EquipmentTraceResponse | null)?.items)
+        ? ((data as EquipmentTraceResponse).items as EquipmentScoreTrace[])
+        : [];
+      const next = items.reduce<Record<string, EquipmentScoreTrace>>((acc, item) => {
+        const equipmentId = String(item?.equipment_id ?? '').trim();
+        if (!equipmentId) return acc;
+        acc[equipmentId] = item;
+        return acc;
+      }, {});
+
+      if (lastEquipmentTraceInn.current === inn) {
+        setEquipmentTraceById(next);
+      }
+    } catch (error) {
+      console.error('Failed to load equipment trace', error);
+      if (lastEquipmentTraceInn.current === inn) {
+        setEquipmentTraceById({});
+        setEquipmentTraceError(
+          error instanceof Error && error.message
+            ? error.message
+            : 'Не удалось загрузить историю расчета оборудования.',
+        );
+      }
+    } finally {
+      if (lastEquipmentTraceInn.current === inn) {
+        setEquipmentTraceLoading(false);
+      }
     }
   }, []);
 
@@ -2039,16 +2174,26 @@ export default function AiCompanyAnalysisTab() {
   useEffect(() => {
     if (!infoCompany) {
       lastInfoRefreshInn.current = null;
+      lastEquipmentTraceInn.current = null;
       setInfoRefreshing(false);
+      setEquipmentTraceById({});
+      setEquipmentTraceLoading(false);
+      setEquipmentTraceError(null);
       return;
     }
 
     const inn = String(infoCompany.inn ?? '').trim();
     if (!inn) return;
-    if (lastInfoRefreshInn.current === inn) return;
+    const shouldRefreshCompany = lastInfoRefreshInn.current !== inn;
+    const shouldRefreshTrace = lastEquipmentTraceInn.current !== inn;
 
-    refreshCompanyDetails(inn);
-  }, [infoCompany, refreshCompanyDetails]);
+    if (shouldRefreshCompany) {
+      refreshCompanyDetails(inn);
+    }
+    if (shouldRefreshTrace) {
+      fetchEquipmentTrace(inn);
+    }
+  }, [fetchEquipmentTrace, infoCompany, refreshCompanyDetails]);
 
   useEffect(() => {
     if (!infoCompany) {
@@ -2814,6 +2959,9 @@ export default function AiCompanyAnalysisTab() {
     null;
   const analysisDomainValue =
     analysisDomainValueRaw?.toLowerCase() === OKVED_FALLBACK_DOMAIN ? null : analysisDomainValueRaw;
+  const billingBalanceLabel = formatBillingBalanceLabel(billing);
+  const billingSourceLabel = formatBillingSourceLabel(billing?.source);
+  const billingErrorLabel = formatBillingErrorLabel(billing?.error);
   const analyzerDescriptionText =
     infoCompany?.analysis_description ||
     [analyzerInfo?.company?.domain1, analyzerInfo?.company?.domain2].filter(Boolean).join('\n') ||
@@ -2862,7 +3010,7 @@ export default function AiCompanyAnalysisTab() {
                   </div>
                   <div className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
                     <span className="text-muted-foreground">API: осталось</span>
-                    <span className="font-semibold">{formatUsd(billing?.remaining_usd)}</span>
+                    <span className="font-semibold">{billingBalanceLabel}</span>
                   </div>
                 </div>
                 {(lastLoadedAt || integrationHost) && (
@@ -3770,15 +3918,33 @@ export default function AiCompanyAnalysisTab() {
               </div>
               {queueSummary && !queueLoading && (
                 <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <Badge variant="secondary">Queued: {queueSummary.queued}</Badge>
-                  <Badge variant="secondary">Running: {queueSummary.running}</Badge>
-                  {queueSummary.stop_requested > 0 && (
-                    <Badge variant="outline">Stop requested: {queueSummary.stop_requested}</Badge>
+                  <Badge variant="secondary">{'\u0412 \u043E\u0447\u0435\u0440\u0435\u0434\u0438'}: {queueSummary!.queued}</Badge>
+                  <Badge variant="secondary">{'\u0412 \u0440\u0430\u0431\u043E\u0442\u0435'}: {queueSummary!.running}</Badge>
+                  {queueSummary!.stop_requested > 0 && (
+                    <Badge variant="outline">{'\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0430 \u0437\u0430\u043F\u0440\u043E\u0448\u0435\u043D\u0430'}: {queueSummary!.stop_requested}</Badge>
                   )}
-                  {queueSummary.expedited > 0 && <Badge variant="outline">Приоритетных: {queueSummary.expedited}</Badge>}
-                  {queueSummary.leased > 0 && <Badge variant="outline">Под lease: {queueSummary.leased}</Badge>}
-                  {queueSummary.retry_scheduled > 0 && (
-                    <Badge variant="outline">Ожидают retry: {queueSummary.retry_scheduled}</Badge>
+                  {queueSummary!.expedited > 0 && (
+                    <Badge variant="outline">{'\u0421 \u043F\u0440\u0438\u043E\u0440\u0438\u0442\u0435\u0442\u043E\u043C'}: {queueSummary!.expedited}</Badge>
+                  )}
+                  {queueSummary!.leased > 0 && (
+                    <Badge variant="outline">{'\u041F\u043E\u0434 \u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u043A\u043E\u0439'}: {queueSummary!.leased}</Badge>
+                  )}
+                  {queueSummary!.retry_scheduled > 0 && (
+                    <Badge variant="outline">{'\u041E\u0436\u0438\u0434\u0430\u044E\u0442 \u043F\u043E\u0432\u0442\u043E\u0440'}: {queueSummary!.retry_scheduled}</Badge>
+                  )}
+                </div>
+              )}
+              {false && queueSummary && !queueLoading && (
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <Badge variant="secondary">{'\u0412 \u043E\u0447\u0435\u0440\u0435\u0434\u0438'}: {queueSummary!.queued}</Badge>
+                  <Badge variant="secondary">{'\u0412 \u0440\u0430\u0431\u043E\u0442\u0435'}: {queueSummary!.running}</Badge>
+                  {queueSummary!.stop_requested > 0 && (
+                    <Badge variant="outline">{'\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0430 \u0437\u0430\u043F\u0440\u043E\u0448\u0435\u043D\u0430'}: {queueSummary!.stop_requested}</Badge>
+                  )}
+                  {queueSummary!.expedited > 0 && <Badge variant="outline">Приоритетных: {queueSummary!.expedited}</Badge>}
+                  {queueSummary!.leased > 0 && <Badge variant="outline">Под lease: {queueSummary!.leased}</Badge>}
+                  {queueSummary!.retry_scheduled > 0 && (
+                    <Badge variant="outline">Ожидают retry: {queueSummary!.retry_scheduled}</Badge>
                   )}
                 </div>
               )}
@@ -3820,14 +3986,14 @@ export default function AiCompanyAnalysisTab() {
                     return (
                       <div
                         key={`queue-${item.inn}`}
-                        className="flex flex-col gap-2 rounded-md border bg-background/70 p-3 md:flex-row md:items-center md:justify-between"
+                        className="grid gap-3 rounded-md border bg-background/80 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start"
                       >
                         <div className="space-y-1">
                           <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
                             <span>{itemCompanyLabel}</span>
                             <Badge variant={badge.variant}>{badge.label}</Badge>
                           </div>
-                          <div className="flex flex-wrap gap-3 text-xs text-muted-foreground">
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
                             <span>ИНН {item.inn}</span>
                             {queuedTime && <span>в очереди с {queuedTime}</span>}
                             <span>Попыток: {attempts}</span>
@@ -3838,10 +4004,22 @@ export default function AiCompanyAnalysisTab() {
                               {statusLabel}
                             </Badge>
                           </div>
-                          <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
+                            <span>{'\u0418\u0441\u0442\u043E\u0447\u043D\u0438\u043A'}: {queueSourceLabel}</span>
+                            <span>{'\u041F\u0440\u0438\u043E\u0440\u0438\u0442\u0435\u0442'}: {queuePriorityLabel}</span>
+                            {queueAttemptCount != null && (
+                              <span>{'\u041F\u043E\u043F\u044B\u0442\u043A\u0430 \u043E\u0447\u0435\u0440\u0435\u0434\u0438'}: {queueAttemptCount}</span>
+                            )}
+                            {queueRetries > 0 && <span>{'\u041F\u043E\u0432\u0442\u043E\u0440\u044B \u0432 \u043E\u0447\u0435\u0440\u0435\u0434\u0438'}: {queueRetries}</span>}
+                            {item.next_retry_at && <span>{'\u0421\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u043F\u043E\u0432\u0442\u043E\u0440 \u0432'} {nextRetryAt}</span>}
+                            {queueRetryKindLabel && <span>{'\u041F\u0440\u0438\u0447\u0438\u043D\u0430 \u043F\u043E\u0432\u0442\u043E\u0440\u0430'}: {queueRetryKindLabel}</span>}
+                            {item.queue_state === 'running' && item.lease_expires_at && <span>{'\u0411\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u043A\u0430 \u0434\u043E'} {leaseUntil}</span>}
+                            {queueErrorText && <span className="text-amber-600">{'\u041F\u043E\u0441\u043B\u0435\u0434\u043D\u044F\u044F \u043E\u0448\u0438\u0431\u043A\u0430'}: {queueErrorText}</span>}
+                          </div>
+                          <div className="hidden flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
                             <span>Источник: {queueSourceLabel}</span>
                             <span>Приоритет: {queuePriorityLabel}</span>
-                            {queueAttemptCount != null && <span>Queue-attempt: {queueAttemptCount}</span>}
+                            {queueAttemptCount != null && <span>РџРѕРїС‹С‚РєР° РѕС‡РµСЂРµРґРё: {queueAttemptCount}</span>}
                             {queueRetries > 0 && <span>Повторы в очереди: {queueRetries}</span>}
                             {item.next_retry_at && <span>Следующий retry в {nextRetryAt}</span>}
                             {queueRetryKindLabel && <span>Причина retry: {queueRetryKindLabel}</span>}
@@ -3849,7 +4027,7 @@ export default function AiCompanyAnalysisTab() {
                             {queueErrorText && <span className="text-amber-600">Последняя ошибка: {queueErrorText}</span>}
                           </div>
                         </div>
-                        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+                        <div className="flex flex-wrap items-center gap-2 md:justify-end md:self-center">
                           <Button
                             type="button"
                             variant="ghost"
@@ -4292,36 +4470,131 @@ export default function AiCompanyAnalysisTab() {
                         href: buildEquipmentCardHref(item),
                       }))
                       .filter((item) => Boolean(item.href));
+                    const traceStatusNote = equipmentTraceLoading ? (
+                      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>{'\u0417\u0430\u0433\u0440\u0443\u0436\u0430\u0435\u043C \u0438\u0441\u0442\u043E\u0440\u0438\u044E \u0440\u0430\u0441\u0447\u0435\u0442\u0430'}</span>
+                      </div>
+                    ) : equipmentTraceError ? (
+                      <div className="mb-2 text-xs text-amber-600">{equipmentTraceError}</div>
+                    ) : null;
 
                     if (!equipmentItems.length) {
+                      return (
+                        <div className="space-y-2">
+                          {traceStatusNote}
+                          <div className="text-muted-foreground">{'\u0414\u0430\u043D\u043D\u044B\u0435 \u043E\u0442\u0441\u0443\u0442\u0441\u0442\u0432\u0443\u044E\u0442'}</div>
+                        </div>
+                      );
+                    }
+
+                    if (false && !equipmentItems.length) {
                       return <div className="text-muted-foreground">Данные отсутствуют</div>;
                     }
 
                     return (
-                      <ul className="grid gap-2 sm:grid-cols-2">
-                        {equipmentItems.map((item, idx) => (
-                          <li
-                            key={`${item.name}-${item.id ?? idx}`}
-                            className="grid grid-cols-[1fr_auto] grid-rows-2 gap-x-2 rounded-lg border bg-muted/20 p-3"
-                          >
-                            <div className="row-span-2 flex items-center font-medium text-foreground">{item.name}</div>
-                            <div className="flex items-center justify-center">
-                              <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7">
-                                <a href={item.href ?? '#'} target="_blank" rel="noopener noreferrer">
-                                  <ExternalLink className="h-3.5 w-3.5" />
-                                </a>
-                              </Button>
-                            </div>
-                            <div className="flex items-center justify-center">
-                              {item.score != null && (
-                                <Badge variant="outline" className="text-[12px]">
-                                  {formatSimilarityScore(item.score) ?? item.score}
-                                </Badge>
+                      <div className="space-y-2">
+                        {traceStatusNote}
+                        <ul className="grid gap-2 sm:grid-cols-2">
+                        {equipmentItems.map((item, idx) => {
+                          const trace = item.id ? equipmentTraceById[item.id] : undefined;
+                          const scoreLabel =
+                            formatSimilarityScore(item.score ?? trace?.final_score ?? null) ??
+                            formatRawScore(item.score ?? trace?.final_score ?? null) ??
+                            'вЂ”';
+                          const matchedSiteEquipment = trace?.matched_site_equipment?.trim() || null;
+                          const matchedSiteScore = formatSimilarityScore(
+                            trace?.matched_site_equipment_score ?? trace?.vector_score ?? null,
+                          );
+                          const calcPathLabel = formatEquipmentCalcPath(trace?.calculation_path);
+                          const finalSourceLabel = formatEquipmentSource(trace?.final_source);
+
+                          return (
+                            <li
+                              key={`${item.name}-${item.id ?? idx}`}
+                              className="rounded-lg border bg-muted/20 p-3"
+                            >
+                              <div className="flex items-start justify-between gap-3">
+                                <div className="min-w-0 flex-1 space-y-1">
+                                  <div className="font-medium text-foreground">{item.name}</div>
+                                  {matchedSiteEquipment ? (
+                                    <div className="text-[11px] text-muted-foreground">
+                                      <span className="font-medium text-foreground/90">РќР°Р№РґРµРЅРѕ РЅР° СЃР°Р№С‚Рµ:</span>{' '}
+                                      {matchedSiteEquipment}
+                                      {matchedSiteScore ? ` (${matchedSiteScore})` : ''}
+                                    </div>
+                                  ) : showOkvedFallbackBadge ? (
+                                    <div className="text-[11px] text-muted-foreground">
+                                      <span className="font-medium text-foreground/90">РџРѕРґР±РѕСЂ:</span> РїРѕ РћРљР’Р­Р” (СЃР°Р№С‚ РЅРµРґРѕСЃС‚СѓРїРµРЅ)
+                                    </div>
+                                  ) : null}
+                                </div>
+                                <div className="flex shrink-0 items-center justify-end gap-2 self-start">
+                                  <Badge variant="outline" className="text-[12px]">
+                                    {scoreLabel}
+                                  </Badge>
+                                  <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7">
+                                    <a href={item.href ?? '#'} target="_blank" rel="noopener noreferrer">
+                                      <ExternalLink className="h-3.5 w-3.5" />
+                                    </a>
+                                  </Button>
+                                </div>
+                              </div>
+                              <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
+                                <div>
+                                  <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
+                                  {formatRawScore(trace?.bd_score) ?? '\u2014'}
+                                </div>
+                                <div>
+                                  <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
+                                  {formatRawScore(trace?.vector_score) ?? '\u2014'}
+                                </div>
+                                <div>
+                                  <span className="font-medium text-foreground/90">GEN:</span>{' '}
+                                  {formatRawScore(trace?.gen_score) ?? '\u2014'}
+                                </div>
+                                <div>
+                                  <span className="font-medium text-foreground/90">K:</span>{' '}
+                                  {formatRawScore(trace?.factor) ?? '\u2014'}
+                                </div>
+                              </div>
+                              <div className="hidden mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
+                                <div>
+                                  <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
+                                  {formatRawScore(trace?.bd_score) ?? 'вЂ”'}
+                                </div>
+                                <div>
+                                  <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
+                                  {formatRawScore(trace?.vector_score) ?? 'вЂ”'}
+                                </div>
+                                <div>
+                                  <span className="font-medium text-foreground/90">GEN:</span>{' '}
+                                  {formatRawScore(trace?.gen_score) ?? 'вЂ”'}
+                                </div>
+                                <div>
+                                  <span className="font-medium text-foreground/90">K:</span>{' '}
+                                  {formatRawScore(trace?.factor) ?? 'вЂ”'}
+                                </div>
+                              </div>
+                              {(calcPathLabel || finalSourceLabel) && (
+                                <div className="mt-2 flex flex-wrap gap-2">
+                                  {finalSourceLabel && (
+                                    <Badge variant="outline" className="text-[11px]">
+                                      {finalSourceLabel}
+                                    </Badge>
+                                  )}
+                                  {calcPathLabel && (
+                                    <Badge variant="outline" className="text-[11px]">
+                                      {calcPathLabel}
+                                    </Badge>
+                                  )}
+                                </div>
                               )}
-                            </div>
-                          </li>
-                        ))}
-                      </ul>
+                            </li>
+                          );
+                        })}
+                        </ul>
+                      </div>
                     );
                   })()}
                 </div>
@@ -4394,9 +4667,15 @@ export default function AiCompanyAnalysisTab() {
                     <div className="rounded-lg border bg-muted/20 p-3 text-sm">
                       <div className="text-xs text-muted-foreground">API баланс</div>
                       <div className="mt-1 space-y-1">
-                        <div>Доступный баланс (USD): <span className="font-medium">{formatUsd(billing?.remaining_usd)}</span></div>
-                        <div>Лимит (USD): <span className="font-medium">{formatUsd(billing?.limit_usd)}</span></div>
-                        <div>Потрачено за месяц (USD): <span className="font-medium">{formatUsd(billing?.spend_month_to_date_usd)}</span></div>
+                        <div>Доступный баланс (USD): <span className="font-medium">{billingBalanceLabel}</span></div>
+                        <div>Лимит (USD): <span className="font-medium">{formatBillingValue(billing?.limit_usd)}</span></div>
+                        <div>Потрачено за месяц (USD): <span className="font-medium">{formatBillingValue(billing?.spend_month_to_date_usd)}</span></div>
+                        {billingSourceLabel && (
+                          <div>Источник: <span className="font-medium">{billingSourceLabel}</span></div>
+                        )}
+                        {billing?.last_snapshot_at && (
+                          <div>Снимок: <span className="font-medium">{formatDate(billing.last_snapshot_at)} {formatTime(billing.last_snapshot_at)}</span></div>
+                        )}
                       </div>
                     </div>
                     <div className="rounded-lg border bg-muted/20 p-3 text-sm">
@@ -4407,7 +4686,14 @@ export default function AiCompanyAnalysisTab() {
                       </div>
                     </div>
                   </div>
-                  <div className="text-xs text-muted-foreground">Значения отображаются из последнего сохранённого результата анализа.</div>
+                  {billingErrorLabel && (
+                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
+                      {billingErrorLabel}
+                    </div>
+                  )}
+                  <div className="text-xs text-muted-foreground">
+                    Значения берутся из live API, последнего сохранённого снимка анализа и fallback-агрегации по расходам за месяц.
+                  </div>
                 </div>
 
                 </TabsContent>
