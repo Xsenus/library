@@ -4500,8 +4500,8 @@ export default function AiCompanyAnalysisTab() {
                           );
                           const calcPathLabel = formatEquipmentCalcPath(trace?.calculation_path);
                           const finalSourceLabel = formatEquipmentSource(trace?.final_source);
-                          // 2way/1way paths do not expose a dedicated vector score.
-                          // Reuse the active multiplier so the visible formula stays meaningful.
+                          // Prefer the explicit upstream trace field and keep a legacy fallback
+                          // while older integration deployments are still being rolled forward.
                           const displayVectorScore = trace?.vector_score ?? trace?.gen_score ?? null;
                           const displayFinalScore = trace?.final_score ?? item.score ?? null;
                           const hasTraceBreakdown = [

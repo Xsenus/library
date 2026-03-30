@@ -82,9 +82,12 @@ export function normalizeEquipmentTracePayload(payload: unknown): EquipmentScore
     const equipmentId = normalizeId(item.id ?? item.equipment_id);
     if (!equipmentId) continue;
     const target = ensure(equipmentId);
-    target.bd_score = toFiniteNumber(item.equipment_score_max);
-    target.gen_score = toFiniteNumber(item.score_1 ?? item.SCORE_1);
+    target.bd_score = toFiniteNumber(item.db_score ?? item.equipment_score_max);
+    target.gen_score = toFiniteNumber(item.gen_score ?? item.score_1 ?? item.SCORE_1);
     target.factor = toFiniteNumber(item.factor);
+    if (target.final_score == null) {
+      target.final_score = toFiniteNumber(item.final_score ?? item.score_e1 ?? item.SCORE_E1);
+    }
     target.calculation_path = toText(item.path);
   }
 
@@ -92,7 +95,7 @@ export function normalizeEquipmentTracePayload(payload: unknown): EquipmentScore
     const equipmentId = normalizeId(item.equipment_id ?? item.id);
     if (!equipmentId) continue;
     const target = ensure(equipmentId);
-    const scoreE2 = toFiniteNumber(item.score_e2 ?? item.SCORE_E2);
+    const scoreE2 = toFiniteNumber(item.final_score ?? item.score_e2 ?? item.SCORE_E2);
     const currentFinal = toFiniteNumber(target.final_score);
 
     if (target.calculation_path == null || (currentFinal != null && scoreE2 != null && scoreE2 >= currentFinal - 1e-9)) {
@@ -100,13 +103,19 @@ export function normalizeEquipmentTracePayload(payload: unknown): EquipmentScore
     }
 
     if (target.bd_score == null) {
-      target.bd_score = toFiniteNumber(item.crore_3 ?? item.CRORE_3);
+      target.bd_score = toFiniteNumber(item.db_score ?? item.crore_3 ?? item.CRORE_3);
+    }
+    if (target.vector_score == null) {
+      target.vector_score = toFiniteNumber(item.vector_score ?? item.crore_2 ?? item.CRORE_2);
     }
     if (target.gen_score == null) {
-      target.gen_score = toFiniteNumber(item.crore_2 ?? item.CRORE_2);
+      target.gen_score = toFiniteNumber(item.gen_score ?? item.crore_2 ?? item.CRORE_2);
     }
     if (target.factor == null) {
       target.factor = 1;
+    }
+    if (target.final_score == null) {
+      target.final_score = scoreE2;
     }
   }
 
@@ -114,7 +123,10 @@ export function normalizeEquipmentTracePayload(payload: unknown): EquipmentScore
     const equipmentId = normalizeId(item.equipment_id ?? item.id);
     if (!equipmentId) continue;
     const target = ensure(equipmentId);
-    target.vector_score = toFiniteNumber(item.equipment_score);
+    target.vector_score = toFiniteNumber(item.vector_score ?? item.equipment_score);
+    if (target.final_score == null) {
+      target.final_score = toFiniteNumber(item.final_score ?? item.score_e3 ?? item.SCORE_E3);
+    }
   }
 
   for (const item of siteEquipment) {
