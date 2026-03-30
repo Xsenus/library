@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
 import { getSession } from '@/lib/auth';
 import { getForcedLaunchMode, getForcedSteps } from '@/lib/ai-analysis-config';
+import { triggerAiAnalysisQueueProcessing } from '@/lib/ai-analysis-queue-trigger';
 import { getDadataColumns } from '@/lib/dadata-columns';
 import type { StepKey } from '@/lib/ai-analysis-types';
 
@@ -42,7 +43,11 @@ async function ensureQueueTable() {
       inn text PRIMARY KEY,
       queued_at timestamptz NOT NULL DEFAULT now(),
       queued_by text,
-      payload jsonb
+      payload jsonb,
+      state text NOT NULL DEFAULT 'queued',
+      lease_expires_at timestamptz,
+      started_at timestamptz,
+      last_error text
     )
   `);
   await dbBitrix.query(`
@@ -56,6 +61,30 @@ async function ensureQueueTable() {
   await dbBitrix.query(`
     ALTER TABLE ai_analysis_queue
       ADD COLUMN IF NOT EXISTS payload jsonb
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'queued'
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS started_at timestamptz
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS last_error text
+  `);
+  await dbBitrix.query(`
+    CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_queued_at_idx
+      ON ai_analysis_queue (state, queued_at)
+  `);
+  await dbBitrix.query(`
+    CREATE INDEX IF NOT EXISTS ai_analysis_queue_lease_expires_at_idx
+      ON ai_analysis_queue (lease_expires_at)
   `);
 }
 
@@ -87,19 +116,13 @@ function normalizeRunningCondition(columns: Set<string>): string {
   const progress = columns.has('analysis_progress') ? 'COALESCE(d.analysis_progress, 0)' : '0';
   const startedAt = columns.has('analysis_started_at') ? 'd.analysis_started_at' : 'NULL';
   const finishedAt = columns.has('analysis_finished_at') ? 'd.analysis_finished_at' : 'NULL';
-  const analysisOk = columns.has('analysis_ok') ? 'COALESCE(d.analysis_ok, 0)' : '0';
-  const serverError = columns.has('server_error') ? 'COALESCE(d.server_error, 0)' : '0';
-  const noValidSite = columns.has('no_valid_site') ? 'COALESCE(d.no_valid_site, 0)' : '0';
-
-  const terminalCondition = `(${finishedAt} IS NOT NULL OR ${analysisOk} = 1 OR ${serverError} = 1 OR ${noValidSite} = 1 OR LOWER(COALESCE(${status}, '')) SIMILAR TO '%(failed|error|stopped|cancel|done|finish|success|complete|completed|partial)%' OR LOWER(COALESCE(${outcome}, '')) SIMILAR TO '%(failed|partial|completed|stopped|cancel|done|finish|success)%')`;
+  const terminalStatus = `LOWER(COALESCE(${status}, '')) SIMILAR TO '%(failed|error|stopped|cancel|done|finish|success|complete|completed|partial)%'`;
+  const terminalOutcome = `LOWER(COALESCE(${outcome}, '')) SIMILAR TO '%(failed|partial|completed|stopped|cancel|done|finish|success)%'`;
 
   return `(
-    NOT ${terminalCondition}
-    AND (
-      LOWER(COALESCE(${status}, '')) SIMILAR TO '%(running|processing|in_progress|starting)%'
-      OR (${progress} > 0 AND ${progress} < 0.999)
-      OR (${startedAt} IS NOT NULL AND ${finishedAt} IS NULL AND ${startedAt} > now() - interval '${QUEUE_STALE_INTERVAL}')
-    )
+    LOWER(COALESCE(${status}, '')) SIMILAR TO '%(running|processing|in_progress|starting)%'
+    OR (${finishedAt} IS NULL AND NOT (${terminalStatus} OR ${terminalOutcome}) AND ${progress} > 0 AND ${progress} < 0.999)
+    OR (${startedAt} IS NOT NULL AND ${finishedAt} IS NULL AND ${startedAt} > now() - interval '${QUEUE_STALE_INTERVAL}')
   )`;
 }
 
@@ -155,6 +178,14 @@ async function markQueuedMany(inns: string[]) {
     sets.push(`"${columns.progress}" = NULL`);
   }
 
+  if (columns.okFlag) {
+    sets.push(`"${columns.okFlag}" = 0`);
+  }
+
+  if (columns.serverError) {
+    sets.push(`"${columns.serverError}" = 0`);
+  }
+
   if (columns.outcome) {
     sets.push(`"${columns.outcome}" = 'pending'`);
   }
@@ -202,13 +233,6 @@ export async function GET(request: NextRequest) {
     const columns = await getExistingColumns();
     const optionalSelect = buildOptionalSelect(columns, 'd');
     const runningCondition = normalizeRunningCondition(columns);
-    const queueStatus = columns.has('analysis_status') ? 'd.analysis_status' : "''";
-    const queueOutcome = columns.has('analysis_outcome') ? 'd.analysis_outcome' : "''";
-    const queueFinishedAt = columns.has('analysis_finished_at') ? 'd.analysis_finished_at' : 'NULL';
-    const queueAnalysisOk = columns.has('analysis_ok') ? 'COALESCE(d.analysis_ok, 0)' : '0';
-    const queueServerError = columns.has('server_error') ? 'COALESCE(d.server_error, 0)' : '0';
-    const queueNoValidSite = columns.has('no_valid_site') ? 'COALESCE(d.no_valid_site, 0)' : '0';
-    const queueTerminalCondition = `(${queueFinishedAt} IS NOT NULL OR ${queueAnalysisOk} = 1 OR ${queueServerError} = 1 OR ${queueNoValidSite} = 1 OR LOWER(COALESCE(${queueStatus}, '')) SIMILAR TO '%(failed|error|stopped|cancel|done|finish|success|complete|completed|partial)%' OR LOWER(COALESCE(${queueOutcome}, '')) SIMILAR TO '%(failed|partial|completed|stopped|cancel|done|finish|success)%')`;
 
     const { rows } = await dbBitrix.query(
       `
@@ -222,8 +246,20 @@ export async function GET(request: NextRequest) {
           FROM ai_analysis_queue q
           LEFT JOIN dadata_result d ON d.inn = q.inn
           WHERE
+            q.state = 'queued'
+            AND
             q.queued_at > now() - interval '${QUEUE_STALE_INTERVAL}'
-            AND NOT ${queueTerminalCondition}
+        ),
+        queue_running_items AS (
+          SELECT
+            'running'::text AS source,
+            q.inn,
+            COALESCE(q.started_at, d.analysis_started_at, q.queued_at, now()) AS queued_at,
+            q.queued_by,
+            ${optionalSelect.join(',\n            ')}
+          FROM ai_analysis_queue q
+          LEFT JOIN dadata_result d ON d.inn = q.inn
+          WHERE q.state = 'running'
         ),
         running_items AS (
           SELECT
@@ -239,6 +275,8 @@ export async function GET(request: NextRequest) {
         combined AS (
           SELECT * FROM queue_items
           UNION ALL
+          SELECT * FROM queue_running_items
+          UNION ALL
           SELECT * FROM running_items
         )
         SELECT *
@@ -251,8 +289,8 @@ export async function GET(request: NextRequest) {
 
     const items = rows.map((row) => ({
       ...row,
-      analysis_status: row.analysis_status ?? (row.source === 'queue' ? 'queued' : row.analysis_status),
-      analysis_outcome: row.analysis_outcome ?? (row.source === 'queue' ? 'pending' : row.analysis_outcome),
+      analysis_status: row.source === 'queue' ? 'queued' : row.source === 'running' ? 'running' : (row.analysis_status ?? 'running'),
+      analysis_outcome: row.source === 'queue' ? 'pending' : row.source === 'running' ? 'pending' : (row.analysis_outcome ?? 'pending'),
     }));
 
     return NextResponse.json({ ok: true, items });
@@ -343,14 +381,14 @@ export async function POST(request: NextRequest) {
     const countSql = `
       SELECT COUNT(*)::int AS cnt
       FROM dadata_result d
-      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn
+      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn AND q.state = 'queued'
       ${whereSql}
     `;
 
     const dataSql = `
       SELECT d.inn
       FROM dadata_result d
-      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn
+      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn AND q.state = 'queued'
       ${whereSql}
       ORDER BY COALESCE(q.queued_at, d.analysis_started_at) NULLS LAST, d.inn
       LIMIT $${idx}
@@ -388,17 +426,22 @@ export async function POST(request: NextRequest) {
 
     const placeholders = inns.map((_, i) => `($${i + 1})`).join(', ');
     const sql = `
-      INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload)
-      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb
+      INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, lease_expires_at, started_at, last_error)
+      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb, 'queued', NULL, NULL, NULL
       FROM (VALUES ${placeholders}) AS v(inn_val)
       ON CONFLICT (inn) DO UPDATE
       SET queued_at = EXCLUDED.queued_at,
           queued_by = EXCLUDED.queued_by,
-          payload = EXCLUDED.payload
+          payload = EXCLUDED.payload,
+          state = 'queued',
+          lease_expires_at = NULL,
+          started_at = NULL,
+          last_error = NULL
     `;
 
     await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload)]);
     await markQueuedMany(inns);
+    void triggerAiAnalysisQueueProcessing();
 
     return NextResponse.json({ ok: true, queued: inns.length, total });
   } catch (error) {
@@ -423,11 +466,18 @@ export async function DELETE(request: NextRequest) {
 
     await ensureQueueTable();
 
-    const deleteRes = await dbBitrix.query<{ count: string }>(
-      `DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) RETURNING 1`,
+    const deleteRes = await dbBitrix.query<{ inn: string }>(
+      `DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state = 'queued' RETURNING inn`,
       [inns],
     );
-    const removed = deleteRes.rowCount ?? Number(deleteRes.rows?.length ?? 0);
+    const removedInns = (deleteRes.rows ?? []).map((row) => row.inn).filter(Boolean);
+    const removed = deleteRes.rowCount ?? removedInns.length;
+
+    const runningRes = await dbBitrix.query<{ inn: string }>(
+      `SELECT inn FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state = 'running'`,
+      [inns],
+    );
+    const running = runningRes.rowCount ?? (runningRes.rows?.length ?? 0);
 
     const columns = await getDadataColumns();
     const updates: string[] = [];
@@ -441,11 +491,11 @@ export async function DELETE(request: NextRequest) {
 
     if (updates.length) {
       await dbBitrix
-        .query(`UPDATE dadata_result SET ${updates.join(', ')} WHERE inn = ANY($1::text[])`, [inns])
+        .query(`UPDATE dadata_result SET ${updates.join(', ')} WHERE inn = ANY($1::text[])`, [removedInns])
         .catch((error) => console.warn('queue delete: failed to reset dadata_result', error));
     }
 
-    return NextResponse.json({ ok: true, removed });
+    return NextResponse.json({ ok: true, removed, running });
   } catch (error) {
     console.error('DELETE /api/ai-analysis/queue error', error);
     return NextResponse.json({ ok: false, error: 'Internal Server Error' }, { status: 500 });

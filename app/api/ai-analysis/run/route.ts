@@ -13,6 +13,7 @@ import {
   getStepTimeoutMs,
   isLaunchModeLocked,
 } from '@/lib/ai-analysis-config';
+import { setAiAnalysisQueueTrigger } from '@/lib/ai-analysis-queue-trigger';
 import { DEFAULT_STEPS, type StepKey } from '@/lib/ai-analysis-types';
 import { getDadataColumns } from '@/lib/dadata-columns';
 
@@ -29,6 +30,9 @@ const RETRY_DELAY_MS = 2000;
 const MAX_COMPANY_ATTEMPTS = 3;
 const MAX_FAILURE_STREAK = 5;
 const STALE_QUEUE_MS = 2 * 60 * 60 * 1000;
+const QUEUE_LEASE_MS = 10 * 60 * 1000;
+const QUEUE_HEARTBEAT_MS = 60 * 1000;
+const QUEUE_LEASE_INTERVAL = `${Math.max(1, Math.ceil(QUEUE_LEASE_MS / 60_000))} minutes`;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -41,7 +45,11 @@ async function ensureQueueTable() {
       inn text PRIMARY KEY,
       queued_at timestamptz NOT NULL DEFAULT now(),
       queued_by text,
-      payload jsonb
+      payload jsonb,
+      state text NOT NULL DEFAULT 'queued',
+      lease_expires_at timestamptz,
+      started_at timestamptz,
+      last_error text
     )
   `);
   await dbBitrix.query(`
@@ -55,6 +63,30 @@ async function ensureQueueTable() {
   await dbBitrix.query(`
     ALTER TABLE ai_analysis_queue
       ADD COLUMN IF NOT EXISTS payload jsonb
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'queued'
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS started_at timestamptz
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS last_error text
+  `);
+  await dbBitrix.query(`
+    CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_queued_at_idx
+      ON ai_analysis_queue (state, queued_at)
+  `);
+  await dbBitrix.query(`
+    CREATE INDEX IF NOT EXISTS ai_analysis_queue_lease_expires_at_idx
+      ON ai_analysis_queue (lease_expires_at)
   `);
   ensuredQueue = true;
 }
@@ -146,28 +178,55 @@ function normalizeInns(raw: any): string[] {
   );
 }
 
-async function removeFromQueue(inns: string[]) {
-  if (!inns.length) return;
+type QueueState = 'queued' | 'running';
+
+async function removeFromQueue(inns: string[], states?: QueueState[]) {
+  if (!inns.length) return [] as string[];
   await ensureQueueTable();
-  await dbBitrix.query('DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[])', [inns]);
+  if (states?.length) {
+    const res = await dbBitrix.query<{ inn: string }>(
+      'DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state = ANY($2::text[]) RETURNING inn',
+      [inns, states],
+    );
+    return (res.rows ?? []).map((row) => row.inn).filter(Boolean);
+  }
+  const res = await dbBitrix.query<{ inn: string }>(
+    'DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) RETURNING inn',
+    [inns],
+  );
+  return (res.rows ?? []).map((row) => row.inn).filter(Boolean);
 }
 
 async function enqueueItem(inn: string, payload: Record<string, unknown>, queuedBy: string | null) {
   await ensureQueueTable();
   await dbBitrix.query(
-    `INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload)
-     VALUES ($1, now(), $2, $3::jsonb)
+    `INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, lease_expires_at, started_at, last_error)
+     VALUES ($1, now(), $2, $3::jsonb, 'queued', NULL, NULL, NULL)
      ON CONFLICT (inn) DO UPDATE
      SET queued_at = EXCLUDED.queued_at,
          queued_by = COALESCE(EXCLUDED.queued_by, ai_analysis_queue.queued_by),
-         payload = EXCLUDED.payload`,
+         payload = EXCLUDED.payload,
+         state = 'queued',
+         lease_expires_at = NULL,
+         started_at = NULL,
+         last_error = NULL`,
     [inn, queuedBy, JSON.stringify(payload)],
   );
 }
 
-type QueueItem = { inn: string; payload: Record<string, unknown> | null; queued_at: string | null; queued_by: string | null };
+type QueueItem = {
+  inn: string;
+  payload: Record<string, unknown> | null;
+  queued_at: string | null;
+  queued_by: string | null;
+  state: QueueState | null;
+  lease_expires_at: string | null;
+  started_at: string | null;
+  last_error: string | null;
+  previous_state: QueueState | null;
+};
 
-async function dequeueNext(): Promise<QueueItem | null> {
+async function claimNextQueueItem(): Promise<QueueItem | null> {
   await ensureQueueTable();
   const columns = await getDadataColumns();
 
@@ -197,6 +256,11 @@ async function dequeueNext(): Promise<QueueItem | null> {
           q.payload,
           q.queued_at,
           q.queued_by,
+          q.state,
+          q.lease_expires_at,
+          q.started_at,
+          q.last_error,
+          CASE WHEN q.state = 'running' THEN 0 ELSE 1 END AS lease_priority,
           COALESCE(d.priority, 2) AS priority
         FROM ai_analysis_queue q
         LEFT JOIN LATERAL (
@@ -208,14 +272,28 @@ async function dequeueNext(): Promise<QueueItem | null> {
           FROM dadata_result d
           WHERE d.inn = q.inn
         ) d ON TRUE
-        ORDER BY priority ASC, q.queued_at ASC
+        WHERE q.state = 'queued' OR (q.state = 'running' AND q.lease_expires_at IS NOT NULL AND q.lease_expires_at < now())
+        ORDER BY lease_priority ASC, priority ASC, q.queued_at ASC
         LIMIT 1
         FOR UPDATE OF q SKIP LOCKED
       )
-      DELETE FROM ai_analysis_queue q
-      USING next_item
+      UPDATE ai_analysis_queue q
+      SET
+        state = 'running',
+        started_at = now(),
+        lease_expires_at = now() + interval '${QUEUE_LEASE_INTERVAL}'
+      FROM next_item
       WHERE q.inn = next_item.inn
-      RETURNING q.inn, q.payload, q.queued_at, q.queued_by
+      RETURNING
+        q.inn,
+        q.payload,
+        q.queued_at,
+        q.queued_by,
+        q.state,
+        q.lease_expires_at,
+        q.started_at,
+        q.last_error,
+        next_item.state AS previous_state
     `,
   );
   return res.rows?.[0] ?? null;
@@ -223,19 +301,59 @@ async function dequeueNext(): Promise<QueueItem | null> {
 
 async function cleanupStaleQueueItems() {
   await ensureQueueTable();
-  const cutoff = new Date(Date.now() - STALE_QUEUE_MS).toISOString();
+  const reclaimed = await dbBitrix.query<QueueItem>(
+    `
+      UPDATE ai_analysis_queue
+      SET
+        state = 'queued',
+        lease_expires_at = NULL,
+        started_at = NULL,
+        last_error = COALESCE(last_error, 'Queue lease expired before task completion')
+      WHERE
+        state = 'running'
+        AND lease_expires_at IS NOT NULL
+        AND lease_expires_at < now()
+      RETURNING
+        inn,
+        payload,
+        queued_at,
+        queued_by,
+        state,
+        lease_expires_at,
+        started_at,
+        last_error,
+        'running'::text AS previous_state
+    `,
+  );
+
+  if (reclaimed.rows?.length) {
+    await safeLog({
+      type: 'notification',
+      source: 'ai-integration',
+      message: 'Найдены задачи с протухшим lease, они возвращены в очередь',
+      payload: { inns: reclaimed.rows.map((row) => row.inn) },
+    });
+  }
+
   const res = await dbBitrix.query<QueueItem>(
     `
       DELETE FROM ai_analysis_queue
       WHERE
-        queued_at < $1
-        OR (
-          payload ? 'defer_count'
-          AND COALESCE(NULLIF(payload->>'defer_count', ''), '0')::int >= $2
-        )
-      RETURNING inn, payload, queued_at, queued_by
+        state = 'queued'
+        AND payload ? 'defer_count'
+        AND COALESCE(NULLIF(payload->>'defer_count', ''), '0')::int >= $1
+      RETURNING
+        inn,
+        payload,
+        queued_at,
+        queued_by,
+        state,
+        lease_expires_at,
+        started_at,
+        last_error,
+        state AS previous_state
     `,
-    [cutoff, MAX_COMPANY_ATTEMPTS],
+    [MAX_COMPANY_ATTEMPTS],
   );
 
   if (!res.rows?.length) return;
@@ -258,8 +376,32 @@ async function cleanupStaleQueueItems() {
     type: 'notification',
     source: 'ai-integration',
     message: 'Удалены зависшие элементы из очереди AI-анализа',
-    payload: { inns: staleInns, cutoff },
+    payload: { inns: staleInns },
   });
+}
+
+async function refreshQueueLease(inn: string) {
+  await ensureQueueTable();
+  await dbBitrix.query(
+    `
+      UPDATE ai_analysis_queue
+      SET lease_expires_at = now() + interval '${QUEUE_LEASE_INTERVAL}'
+      WHERE inn = $1 AND state = 'running'
+    `,
+    [inn],
+  );
+}
+
+function startQueueLeaseHeartbeat(inn: string) {
+  const timer = setInterval(() => {
+    void refreshQueueLease(inn).catch((error) => console.warn(`queue lease heartbeat failed for ${inn}`, error));
+  }, QUEUE_HEARTBEAT_MS);
+
+  if (typeof (timer as NodeJS.Timeout).unref === 'function') {
+    timer.unref();
+  }
+
+  return () => clearInterval(timer);
 }
 
 async function getCompanyNames(inns: string[]): Promise<Map<string, string>> {
@@ -926,6 +1068,10 @@ async function markRunning(inn: string, attempt?: number) {
     sets.push(`"${columns.progress}" = 0`);
   }
 
+  if (columns.okFlag) {
+    sets.push(`"${columns.okFlag}" = 0`);
+  }
+
   if (columns.serverError) {
     sets.push(`"${columns.serverError}" = 0`);
   }
@@ -954,6 +1100,14 @@ async function markQueued(inn: string) {
 
   if (columns.finishedAt) {
     sets.push(`"${columns.finishedAt}" = NULL`);
+  }
+
+  if (columns.okFlag) {
+    sets.push(`"${columns.okFlag}" = 0`);
+  }
+
+  if (columns.serverError) {
+    sets.push(`"${columns.serverError}" = 0`);
   }
 
   if (columns.outcome) {
@@ -990,6 +1144,14 @@ async function markQueuedMany(inns: string[]) {
 
   if (columns.progress) {
     sets.push(`"${columns.progress}" = NULL`);
+  }
+
+  if (columns.okFlag) {
+    sets.push(`"${columns.okFlag}" = 0`);
+  }
+
+  if (columns.serverError) {
+    sets.push(`"${columns.serverError}" = 0`);
   }
 
   if (columns.outcome) {
@@ -1124,8 +1286,10 @@ async function consumeStopSignals(existing?: Set<string>) {
   const unique = Array.from(new Set(requested));
   const fresh = unique.filter((inn) => !stopSet.has(inn));
   if (fresh.length) {
-    await removeFromQueue(fresh);
-    await markStopped(fresh);
+    const removedQueued = await removeFromQueue(fresh, ['queued']);
+    if (removedQueued.length) {
+      await markStopped(removedQueued);
+    }
     fresh.forEach((inn) => stopSet.add(inn));
   }
 
@@ -1224,7 +1388,7 @@ async function runFullPipeline(inn: string, timeoutMs: number): Promise<RunResul
 
 async function hasQueuedItems(): Promise<boolean> {
   await ensureQueueTable();
-  const res = await dbBitrix.query('SELECT 1 FROM ai_analysis_queue LIMIT 1');
+  const res = await dbBitrix.query(`SELECT 1 FROM ai_analysis_queue WHERE state IN ('queued', 'running') LIMIT 1`);
   return (res.rowCount ?? 0) > 0;
 }
 
@@ -1248,7 +1412,7 @@ async function processQueue(lockClient: PoolClient) {
   let stopRequests = new Set<string>();
   const failedSequence = new Set<string>();
 
-  while ((item = await dequeueNext())) {
+  while ((item = await claimNextQueueItem())) {
     const stopSignals = await consumeStopSignals(stopRequests);
     stopRequests = stopSignals.stopSet;
     if (stopSignals.freshStops.length) {
@@ -1267,6 +1431,8 @@ async function processQueue(lockClient: PoolClient) {
         companyId: item.inn,
         message: 'Анализ пропущен из-за запроса на остановку',
       });
+      await removeFromQueue([item.inn]);
+      await markStopped([item.inn]);
       continue;
     }
 
@@ -1289,6 +1455,16 @@ async function processQueue(lockClient: PoolClient) {
     const companyName = companyNameMap.get(inn);
     const startedAt = Date.now();
 
+    if (item.previous_state === 'running') {
+      await safeLog({
+        type: 'notification',
+        source: 'ai-integration',
+        companyId: inn,
+        companyName,
+        message: 'Задача восстановлена после истечения lease и возвращена в выполнение',
+      });
+    }
+
     const stopCheckBeforeRun = await consumeStopSignals(stopRequests);
     stopRequests = stopCheckBeforeRun.stopSet;
     if (stopRequests.has(inn)) {
@@ -1300,6 +1476,7 @@ async function processQueue(lockClient: PoolClient) {
         message: 'Анализ отменён перед запуском по запросу пользователя',
         payload: { stopRequested: true },
       });
+      await removeFromQueue([inn]);
       await markStopped([inn]);
       continue;
     }
@@ -1314,6 +1491,7 @@ async function processQueue(lockClient: PoolClient) {
 
     const columns = await getDadataColumns();
     await markRunning(inn, attemptNo);
+    const stopLeaseHeartbeat = startQueueLeaseHeartbeat(inn);
 
     const runInn = async () => {
       if (modeFromPayload === 'steps' && stepsFromPayload) {
@@ -1391,7 +1569,7 @@ async function processQueue(lockClient: PoolClient) {
         error: error?.message ?? 'AI integration run failed',
       };
     } finally {
-      await removeFromQueue([inn]);
+      stopLeaseHeartbeat();
     }
 
     const stopSignalsAfterRun = await consumeStopSignals(stopRequests);
@@ -1405,6 +1583,7 @@ async function processQueue(lockClient: PoolClient) {
         message: 'Анализ остановлен по запросу пользователя',
         payload: { stopRequested: true },
       });
+      await removeFromQueue([inn]);
       await markStopped([inn]);
       continue;
     }
@@ -1434,6 +1613,7 @@ async function processQueue(lockClient: PoolClient) {
         message: 'Анализ остановлен: слишком много ошибок подряд',
         payload: { streak: Array.from(failedSequence), limit: MAX_FAILURE_STREAK },
       });
+      await removeFromQueue([inn]);
       break;
     }
 
@@ -1471,6 +1651,7 @@ async function processQueue(lockClient: PoolClient) {
       timedResult.ok ? 'completed' : timedResult.outcome === 'partial' ? 'partial' : 'failed';
     if (timedResult.ok) {
       await markFinished(inn, { status: 'completed', durationMs }, { attempts: attemptNo });
+      await removeFromQueue([inn]);
       await safeLog({
         type: 'notification',
         source: 'ai-integration',
@@ -1489,6 +1670,7 @@ async function processQueue(lockClient: PoolClient) {
         },
         { attempts: attemptNo, outcome: finalStatus === 'failed' ? 'failed' : 'partial' },
       );
+      await removeFromQueue([inn]);
       await safeLog({
         type: finalStatus === 'partial' ? 'notification' : 'error',
         source: 'ai-integration',
@@ -1534,6 +1716,8 @@ async function triggerQueueProcessing() {
 
   return queueRunnerPromise;
 }
+
+setAiAnalysisQueueTrigger(triggerQueueProcessing);
 
 export async function POST(request: NextRequest) {
   try {
@@ -1889,13 +2073,17 @@ export async function POST(request: NextRequest) {
     const placeholders = inns.map((_, idx) => `($${idx + 1})`).join(', ');
 
     const sql = `
-      INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload)
-      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb
+      INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, lease_expires_at, started_at, last_error)
+      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb, 'queued', NULL, NULL, NULL
       FROM (VALUES ${placeholders}) AS v(inn_val)
       ON CONFLICT (inn) DO UPDATE
       SET queued_at = EXCLUDED.queued_at,
           queued_by = EXCLUDED.queued_by,
-          payload = EXCLUDED.payload
+          payload = EXCLUDED.payload,
+          state = 'queued',
+          lease_expires_at = NULL,
+          started_at = NULL,
+          last_error = NULL
     `;
 
     await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload)]);

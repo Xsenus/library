@@ -1330,7 +1330,9 @@ function buildActivitySql(optionalSelect: SelectBuild, queueAvailable: boolean, 
 
   const runningSql = runningParts.length ? runningParts.map((part) => `(${part})`).join(' OR ') : 'FALSE';
   const queuedSql = queuedParts.length ? queuedParts.map((part) => `(${part})`).join(' OR ') : 'FALSE';
-  const queueJoinSql = queueAvailable ? `\n      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn` : '';
+  const queueJoinSql = queueAvailable
+    ? `\n      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn AND COALESCE(to_jsonb(q)->>'state', 'queued') = 'queued'`
+    : '';
 
   return `
     SELECT
@@ -1839,7 +1841,9 @@ export async function GET(request: NextRequest) {
 
     const optionalSql = optionalSelect.sql ? `,\n        ${optionalSelect.sql}` : '';
     const queueSelectSql = queueAvailable ? `,\n        q.queued_at,\n        q.queued_by` : '';
-    const queueJoinSql = queueAvailable ? `\n      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn` : '';
+    const queueJoinSql = queueAvailable
+      ? `\n      LEFT JOIN ai_analysis_queue q ON q.inn = d.inn AND COALESCE(to_jsonb(q)->>'state', 'queued') = 'queued'`
+      : '';
 
     const dataSql = `
       SELECT

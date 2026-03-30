@@ -44,7 +44,11 @@ async function ensureQueueTable() {
       inn text PRIMARY KEY,
       queued_at timestamptz NOT NULL DEFAULT now(),
       queued_by text,
-      payload jsonb
+      payload jsonb,
+      state text NOT NULL DEFAULT 'queued',
+      lease_expires_at timestamptz,
+      started_at timestamptz,
+      last_error text
     )
   `);
   await dbBitrix.query(`
@@ -58,6 +62,30 @@ async function ensureQueueTable() {
   await dbBitrix.query(`
     ALTER TABLE ai_analysis_queue
       ADD COLUMN IF NOT EXISTS payload jsonb
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS state text NOT NULL DEFAULT 'queued'
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS started_at timestamptz
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS last_error text
+  `);
+  await dbBitrix.query(`
+    CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_queued_at_idx
+      ON ai_analysis_queue (state, queued_at)
+  `);
+  await dbBitrix.query(`
+    CREATE INDEX IF NOT EXISTS ai_analysis_queue_lease_expires_at_idx
+      ON ai_analysis_queue (lease_expires_at)
   `);
   ensuredQueue = true;
 }
@@ -104,18 +132,26 @@ export async function POST(request: NextRequest) {
     };
 
     let removed = 0;
+    let running = 0;
     if (inns.length) {
       await ensureQueueTable();
       const res = await dbBitrix.query<{ inn: string }>(
-        'DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) RETURNING inn',
+        "DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state = 'queued' RETURNING inn",
         [inns],
       );
-      removed = res.rowCount ?? 0;
+      const removedInns = (res.rows ?? []).map((row) => row.inn).filter(Boolean);
+      removed = res.rowCount ?? removedInns.length;
       payload.removed_from_queue = removed;
+      const runningRes = await dbBitrix.query<{ inn: string }>(
+        "SELECT inn FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state = 'running'",
+        [inns],
+      );
+      running = runningRes.rowCount ?? (runningRes.rows?.length ?? 0);
+      payload.running_in_queue = running;
 
       // Помечаем остановку в витрине, чтобы UI сразу отобразил финальный статус
       const columns = await getDadataColumns();
-      if (columns.status) {
+      if (columns.status && removedInns.length) {
         const sets = [`"${columns.status}" = 'stopped'`];
 
         if (columns.finishedAt) {
@@ -132,8 +168,8 @@ export async function POST(request: NextRequest) {
 
         const sql = `UPDATE dadata_result SET ${sets.join(', ')} WHERE inn = ANY($1::text[])`;
 
-        await dbBitrix.query(sql, [inns]).catch((error) => console.warn('mark stopped failed', error));
-      } else {
+        await dbBitrix.query(sql, [removedInns]).catch((error) => console.warn('mark stopped failed', error));
+      } else if (!columns.status) {
         console.warn('mark stopped skipped: no status column in dadata_result');
       }
     }
@@ -156,7 +192,7 @@ export async function POST(request: NextRequest) {
       payload,
     });
 
-    return NextResponse.json({ ok: true, removed });
+    return NextResponse.json({ ok: true, removed, running });
   } catch (e) {
     console.error('POST /api/ai-analysis/stop error', e);
     return NextResponse.json({ ok: false, error: 'Internal Server Error' }, { status: 500 });
