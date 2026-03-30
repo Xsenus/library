@@ -7,7 +7,12 @@ import {
 } from '@/lib/validators';
 import { getAiIntegrationHealth } from '@/lib/ai-integration';
 import { refreshCompanyContacts } from '@/lib/company-contacts';
-import { extractMeaningfulText, parseDisplayString } from '@/lib/ai-analysis-value-normalizer';
+import {
+  extractMeaningfulText,
+  normalizeOkvedEntries,
+  parseDisplayString,
+  stripLargeAnalysisFields,
+} from '@/lib/ai-analysis-value-normalizer';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -784,7 +789,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           parseNumber((item as any).match_score);
 
         if (!name && id == null) return acc;
-        acc.push({ name: name || (id != null ? String(id) : '—'), id, score, text_vector: (item as any).text_vector ?? null });
+        acc.push({ name: name || (id != null ? String(id) : '—'), id, score });
         return acc;
       }
 
@@ -814,7 +819,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           parseNumber((item as any).match_score);
 
         if (!name && id == null) return acc;
-        acc.push({ name: name || (id != null ? String(id) : '—'), id, score, text_vector: (item as any).text_vector ?? null });
+        acc.push({ name: name || (id != null ? String(id) : '—'), id, score });
         return acc;
       }
 
@@ -988,7 +993,6 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         goodsMeta.names.has('goods_type_id') ? 'goods_type_id' : null,
         goodsMeta.names.has('match_id') ? 'match_id' : null,
         goodsMeta.names.has('goods_types_score') ? 'goods_types_score' : null,
-        goodsMeta.names.has('text_vector') ? 'text_vector' : null,
         goodsMeta.names.has('text_par_id') ? 'text_par_id' : null,
         goodsMeta.names.has('company_id') ? 'company_id' : null,
       ].filter(Boolean) as string[];
@@ -1085,7 +1089,6 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         equipmentMeta.names.has('equipmentId') ? 'equipmentId' : null,
         equipmentMeta.names.has('match_id') ? 'match_id' : null,
         equipmentMeta.names.has('equipment_score') ? 'equipment_score' : null,
-        equipmentMeta.names.has('text_vector') ? 'text_vector' : null,
         textParCol,
         equipmentMeta.names.has('company_id') ? 'company_id' : null,
       ].filter(Boolean) as string[];
@@ -1210,7 +1213,6 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           parseNumber(g.goods_types_score) ??
           parseNumber((g as any).score) ??
           parseNumber((g as any).match_score),
-        text_vector: g.text_vector ?? null,
         source: 'site',
       })),
       equipment: fallbackEquipment.map((eq) => ({
@@ -1227,7 +1229,6 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           parseNumber(eq.equipment_score) ??
           parseNumber((eq as any).score) ??
           parseNumber((eq as any).match_score),
-        text_vector: eq.text_vector ?? null,
         source: 'site',
       })),
     };
@@ -1427,29 +1428,8 @@ function parseStringArray(val: any): string[] | null {
 }
 
 function parseOkvedCodeArray(val: any): string[] | null {
-  if (val == null) return null;
-  const raw = Array.isArray(val) ? val : parseJson(val);
-  if (!raw) return null;
-
-  if (!Array.isArray(raw)) {
-    const single =
-      extractMeaningfulText(raw, {
-        preferredKeys: ['code', 'okved_code', 'value', 'label', 'name', 'title', 'text'],
-      }) ?? parseString(raw);
-    return single ? [single] : null;
-  }
-
-  const values = raw
-    .map((item) => {
-      if (item == null) return null;
-      if (typeof item === 'string') return item.trim();
-      return extractMeaningfulText(item, {
-        preferredKeys: ['code', 'okved_code', 'value', 'label', 'name', 'title', 'text'],
-      });
-    })
-    .filter((value): value is string => !!value);
-
-  return values.length ? Array.from(new Set(values)) : null;
+  const entries = normalizeOkvedEntries(Array.isArray(val) ? val : parseJson(val));
+  return entries.length ? entries.map((entry) => entry.code) : null;
 }
 
 function parsePipeline(val: any): any {
@@ -1603,13 +1583,10 @@ function normalizeEquipment(raw: any): any[] {
         parseNumber((item as any).match_score) ??
         null;
 
-      const normalized: any = { ...item };
+      const normalized: any = stripLargeAnalysisFields({ ...item });
       if (name) normalized.name = name;
       if (id != null) normalized.id = id;
       if (score != null && normalized.score == null) normalized.score = score;
-      if (normalized.text_vector == null && (item as any).text_vector != null) {
-        normalized.text_vector = (item as any).text_vector;
-      }
 
       acc.push(normalized);
       return acc;
@@ -1652,7 +1629,7 @@ function normalizeTnved(raw: any): any[] {
 
     if (!name && !tnvedCode && id == null) return acc;
 
-    const normalized: any = { ...(item as any) };
+    const normalized: any = stripLargeAnalysisFields({ ...(item as any) });
     if (id != null) normalized.id = id;
     if (name) normalized.name = name;
     if (tnvedCode) normalized.tnved_code = tnvedCode;
@@ -1999,7 +1976,7 @@ export async function GET(request: NextRequest) {
     };
 
     for (const row of dataRes.rows) {
-      const analysisInfo = parseJson(row.analysis_info);
+      const analysisInfo = stripLargeAnalysisFields(parseJson(row.analysis_info));
       collectProdclassId(row.prodclass_by_okved);
       collectProdclassId((analysisInfo as any)?.prodclass_by_okved);
       collectProdclassId((analysisInfo as any)?.ai?.prodclass_by_okved);
@@ -2024,10 +2001,11 @@ export async function GET(request: NextRequest) {
       const contacts = contactsByInn.get(core.inn);
       const siteFallback = siteAnalyzerByInn.get(core.inn);
 
-      const analysisInfo = parseJson(row.analysis_info);
+      const analysisInfo = stripLargeAnalysisFields(parseJson(row.analysis_info));
       const mainOkved =
         parseString(row.main_okved) ||
         parseString((analysisInfo as any)?.main_okved);
+      const okvedEntries = normalizeOkvedEntries(parseJson(row.okveds));
       const okvedList = parseOkvedCodeArray(row.okveds);
 
       const startedAt = parseIso(row.analysis_started_at);
@@ -2111,7 +2089,9 @@ export async function GET(request: NextRequest) {
         ...(siteFallback?.equipment?.filter((item) => item && (item.name || item.id)) ?? []),
         ...(equipmentByInn.get(core.inn) ?? []),
       ].filter(Boolean);
-      const equipment = dedupeItems(equipmentCandidates);
+      const equipment = dedupeItems(equipmentCandidates).map((item) =>
+        item && typeof item === 'object' ? stripLargeAnalysisFields(item) : item,
+      );
 
       const tnvedCandidates = [
         ...(siteFallback?.goods?.filter((item) => item && (item.name || item.id)) ?? []),
@@ -2121,9 +2101,14 @@ export async function GET(request: NextRequest) {
       let tnved = dedupeItems(tnvedCandidates);
 
       if (!tnved.length) {
-        const okvedSource = okvedList && okvedList.length ? okvedList : mainOkved ? [mainOkved] : null;
-        if (okvedSource?.length) {
-          tnved = okvedSource.map((code) => ({ name: code, tnved_code: code, source: 'okved' }));
+        if (okvedEntries.length) {
+          tnved = okvedEntries.map((entry) => ({
+            name: entry.name ?? entry.code,
+            tnved_code: entry.code,
+            source: 'okved',
+          }));
+        } else if (mainOkved) {
+          tnved = [{ name: mainOkved, tnved_code: mainOkved, source: 'okved' }];
         }
       }
 
@@ -2132,7 +2117,7 @@ export async function GET(request: NextRequest) {
         const id = parseNumber((item as any).id) ?? parseNumber((item as any).goods_type_id) ?? null;
         const source = parseString((item as any).source) ?? ((item as any).score == null ? 'okved' : 'site');
         return {
-          ...(item as any),
+          ...stripLargeAnalysisFields(item as any),
           id,
           name: extractMeaningfulText(item, { preferredKeys: TNVED_TEXT_KEYS }) ?? (id != null ? String(id) : '—'),
           tnved_code:
@@ -2156,7 +2141,7 @@ export async function GET(request: NextRequest) {
         parseStringArray(row.emails) ||
         parseStringArray((analysisInfo as any)?.emails);
 
-      const mergedAnalyzer = mergeAnalyzerInfo(analysisInfo, {
+      const mergedAnalyzer = stripLargeAnalysisFields(mergeAnalyzerInfo(analysisInfo, {
         sites,
         description,
         domain,
@@ -2179,7 +2164,7 @@ export async function GET(request: NextRequest) {
                 source: isOkvedFallback ? 'okved' : 'site',
               }
             : null,
-      });
+      }));
       const pipeline = parsePipeline(row.analysis_pipeline || (analysisInfo as any)?.pipeline);
 
       const score =
@@ -2291,3 +2276,4 @@ export async function GET(request: NextRequest) {
     );
   }
 }
+

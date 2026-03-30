@@ -1,7 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { extractMeaningfulText, parseDisplayString } from '../lib/ai-analysis-value-normalizer';
+import {
+  extractMeaningfulText,
+  normalizeOkvedEntries,
+  parseDisplayString,
+  stripLargeAnalysisFields,
+} from '../lib/ai-analysis-value-normalizer';
 
 test('parseDisplayString does not stringify plain objects into object placeholder', () => {
   assert.equal(parseDisplayString('[object Object]'), null);
@@ -46,4 +51,39 @@ test('extractMeaningfulText skips object placeholders and finds nested tnved cod
     }),
     '8479.89.970.8',
   );
+});
+
+test('normalizeOkvedEntries preserves code and human readable names', () => {
+  const entries = normalizeOkvedEntries([
+    { code: '49.20', name: 'Грузовые железнодорожные перевозки', main: true },
+    { code: '16.10', name: 'Распиловка и строгание древесины', main: false },
+  ]);
+
+  assert.deepEqual(entries, [
+    { code: '49.20', name: 'Грузовые железнодорожные перевозки', main: true },
+    { code: '16.10', name: 'Распиловка и строгание древесины', main: false },
+  ]);
+});
+
+test('stripLargeAnalysisFields removes vectors and raw prompt payloads recursively', () => {
+  const sanitized = stripLargeAnalysisFields({
+    name: 'Товар',
+    text_vector: '[1,2,3]',
+    nested: {
+      prompt_raw: 'very long prompt',
+      product: {
+        name: 'Вложенный товар',
+        embedding: [0.1, 0.2],
+      },
+    },
+  });
+
+  assert.deepEqual(sanitized, {
+    name: 'Товар',
+    nested: {
+      product: {
+        name: 'Вложенный товар',
+      },
+    },
+  });
 });
