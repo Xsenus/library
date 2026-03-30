@@ -7,6 +7,7 @@ export type AiAnalysisQueueWatchdogSnapshot = {
   runnerActive?: boolean;
   queuedCount: number;
   nextLeaseMs?: number | null;
+  nextRetryMs?: number | null;
 };
 
 export function resolveAiAnalysisQueueWatchdogDelay(
@@ -29,8 +30,13 @@ export function resolveAiAnalysisQueueWatchdogDelay(
     return retryMs;
   }
 
-  if (snapshot.nextLeaseMs != null && Number.isFinite(Number(snapshot.nextLeaseMs))) {
-    return Math.max(minDelayMs, Math.floor(Number(snapshot.nextLeaseMs)) + graceMs);
+  const wakeCandidates = [snapshot.nextLeaseMs, snapshot.nextRetryMs]
+    .map((value) => (value != null && Number.isFinite(Number(value)) ? Math.floor(Number(value)) : null))
+    .filter((value): value is number => value != null);
+
+  const nextWakeMs = wakeCandidates.length ? Math.min(...wakeCandidates) : null;
+  if (nextWakeMs != null) {
+    return Math.max(minDelayMs, nextWakeMs + graceMs);
   }
 
   return null;

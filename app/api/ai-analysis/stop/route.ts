@@ -49,9 +49,12 @@ async function ensureQueueTable() {
       payload jsonb,
       state text NOT NULL DEFAULT 'queued',
       priority integer NOT NULL DEFAULT 100,
+      attempt_count integer NOT NULL DEFAULT 0,
+      next_retry_at timestamptz,
       lease_expires_at timestamptz,
       started_at timestamptz,
-      last_error text
+      last_error text,
+      last_error_kind text
     )
   `);
   await dbBitrix.query(`
@@ -76,6 +79,14 @@ async function ensureQueueTable() {
   `);
   await dbBitrix.query(`
     ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS next_retry_at timestamptz
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
       ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz
   `);
   await dbBitrix.query(`
@@ -87,8 +98,16 @@ async function ensureQueueTable() {
       ADD COLUMN IF NOT EXISTS last_error text
   `);
   await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS last_error_kind text
+  `);
+  await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_queued_at_idx
       ON ai_analysis_queue (state, priority, queued_at)
+  `);
+  await dbBitrix.query(`
+    CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_retry_priority_idx
+      ON ai_analysis_queue (state, next_retry_at, priority, queued_at)
   `);
   await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_lease_expires_at_idx

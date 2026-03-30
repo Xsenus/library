@@ -4,6 +4,7 @@ export type AiAnalysisQueueSummaryItem = {
   analysis_status?: string | null;
   queue_priority?: number | null;
   queue_state?: string | null;
+  next_retry_at?: string | null;
   lease_expires_at?: string | null;
   queue_source?: string | null;
   source?: string | null;
@@ -21,6 +22,7 @@ export type AiAnalysisQueueSummary = {
   stop_requested: number;
   expedited: number;
   leased: number;
+  retry_scheduled: number;
   source_counts: AiAnalysisQueueSourceCount[];
 };
 
@@ -36,6 +38,7 @@ export function buildAiAnalysisQueueSummary(
     stop_requested: 0,
     expedited: 0,
     leased: 0,
+    retry_scheduled: 0,
   };
 
   for (const item of items) {
@@ -55,6 +58,13 @@ export function buildAiAnalysisQueueSummary(
 
     if (Number.isFinite(item.queue_priority) && Number(item.queue_priority) <= expeditedPriority) {
       summary.expedited += 1;
+    }
+
+    if (item.queue_state === 'queued' && item.next_retry_at) {
+      const nextRetryMs = Date.parse(item.next_retry_at);
+      if (Number.isFinite(nextRetryMs) && nextRetryMs > Date.now()) {
+        summary.retry_scheduled += 1;
+      }
     }
 
     if (item.queue_state === 'running' && item.lease_expires_at) {

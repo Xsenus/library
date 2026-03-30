@@ -51,6 +51,18 @@ test('resolveAiAnalysisQueueWatchdogDelay delays until next lease expiration plu
   );
 });
 
+test('resolveAiAnalysisQueueWatchdogDelay also wakes up for the next scheduled retry', () => {
+  assert.equal(
+    resolveAiAnalysisQueueWatchdogDelay({
+      runnerActive: false,
+      queuedCount: 0,
+      nextLeaseMs: 12_000,
+      nextRetryMs: 2_000,
+    }),
+    2_000 + QUEUE_WATCHDOG_GRACE_MS,
+  );
+});
+
 test('shouldReuseAiAnalysisQueueWatchdog only reuses earlier or close due timers', () => {
   assert.equal(shouldReuseAiAnalysisQueueWatchdog(10_000, 10_100), true);
   assert.equal(shouldReuseAiAnalysisQueueWatchdog(10_000, 10_000), true);

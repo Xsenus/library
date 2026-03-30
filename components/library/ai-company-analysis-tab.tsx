@@ -146,10 +146,13 @@ type AiCompany = {
   cost_total_usd?: number | null;
   queue_state?: string | null;
   queue_priority?: number | null;
+  queue_attempt_count?: number | null;
   queue_started_at?: string | null;
   queue_source?: string | null;
   queue_last_error?: string | null;
+  queue_last_error_kind?: string | null;
   queue_defer_count?: number | null;
+  next_retry_at?: string | null;
   lease_expires_at?: string | null;
   analysis_cost?: {
     tokens_total?: number | null;
@@ -174,6 +177,7 @@ type QueueSummary = {
   stop_requested: number;
   expedited: number;
   leased: number;
+  retry_scheduled: number;
   source_counts: QueueSourceCount[];
 };
 
@@ -328,6 +332,20 @@ function formatQueueSourceLabel(source: string | null | undefined): string {
   if (normalized === 'manual-bulk' || normalized === 'bulk') return 'Массовый запуск';
   if (normalized === 'filter') return 'Фильтр';
   if (normalized === 'debug-step') return 'Отладочный шаг';
+  return normalized;
+}
+
+function formatQueueRetryKind(kind: string | null | undefined): string | null {
+  const normalized = String(kind ?? '').trim().toLowerCase();
+  if (!normalized) return null;
+  if (normalized === 'timeout') return 'таймаут';
+  if (normalized === 'rate_limited') return 'лимит запросов';
+  if (normalized === 'health') return 'health-check';
+  if (normalized === 'network') return 'сеть';
+  if (normalized === 'upstream_unavailable') return 'upstream недоступен';
+  if (normalized === 'upstream_error') return 'ошибка upstream';
+  if (normalized === 'partial') return 'частичный результат';
+  if (normalized === 'terminal') return 'неретраимая ошибка';
   return normalized;
 }
 
@@ -1043,6 +1061,9 @@ function isOkvedFallbackUsed(company: AiCompany, sites: string[]): boolean {
 function formatStatusLabel(status?: string | null): string {
   if (!status) return '—';
   const normalized = status.toLowerCase();
+  if (normalized.includes('retry')) {
+    return 'Ожидает retry';
+  }
   if (['stop_requested', 'stop-requested', 'stopping'].some((s) => normalized.includes(s))) {
     return 'Остановка запрошена';
   }
@@ -3756,6 +3777,9 @@ export default function AiCompanyAnalysisTab() {
                   )}
                   {queueSummary.expedited > 0 && <Badge variant="outline">Приоритетных: {queueSummary.expedited}</Badge>}
                   {queueSummary.leased > 0 && <Badge variant="outline">Под lease: {queueSummary.leased}</Badge>}
+                  {queueSummary.retry_scheduled > 0 && (
+                    <Badge variant="outline">Ожидают retry: {queueSummary.retry_scheduled}</Badge>
+                  )}
                 </div>
               )}
               <div className="max-h-[420px] space-y-2 overflow-y-auto rounded-md border bg-muted/20 p-3">
@@ -3780,7 +3804,13 @@ export default function AiCompanyAnalysisTab() {
                     const score = formatAnalysisScore(item.analysis_score);
                     const queuePriorityLabel = formatQueuePriorityLabel(item.queue_priority);
                     const queueSourceLabel = formatQueueSourceLabel(item.queue_source);
+                    const queueRetryKindLabel = formatQueueRetryKind(item.queue_last_error_kind);
                     const leaseUntil = formatTime(item.lease_expires_at ?? null);
+                    const nextRetryAt = formatTime(item.next_retry_at ?? null);
+                    const queueAttemptCount =
+                      item.queue_attempt_count != null && Number.isFinite(item.queue_attempt_count)
+                        ? Math.max(0, Math.floor(item.queue_attempt_count))
+                        : null;
                     const queueRetries =
                       item.queue_defer_count != null && Number.isFinite(item.queue_defer_count)
                         ? Math.max(0, Math.floor(item.queue_defer_count))
@@ -3811,7 +3841,10 @@ export default function AiCompanyAnalysisTab() {
                           <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
                             <span>Источник: {queueSourceLabel}</span>
                             <span>Приоритет: {queuePriorityLabel}</span>
+                            {queueAttemptCount != null && <span>Queue-attempt: {queueAttemptCount}</span>}
                             {queueRetries > 0 && <span>Повторы в очереди: {queueRetries}</span>}
+                            {item.next_retry_at && <span>Следующий retry в {nextRetryAt}</span>}
+                            {queueRetryKindLabel && <span>Причина retry: {queueRetryKindLabel}</span>}
                             {item.queue_state === 'running' && item.lease_expires_at && <span>Lease до {leaseUntil}</span>}
                             {queueErrorText && <span className="text-amber-600">Последняя ошибка: {queueErrorText}</span>}
                           </div>

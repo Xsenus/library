@@ -9,6 +9,7 @@ test('buildAiAnalysisQueueSummary counts queued running and stop requested items
       analysis_status: 'queued',
       queue_priority: 10,
       queue_state: 'queued',
+      next_retry_at: null,
       queue_source: 'manual-play',
       source: 'manual-play',
     },
@@ -16,6 +17,7 @@ test('buildAiAnalysisQueueSummary counts queued running and stop requested items
       analysis_status: 'running',
       queue_priority: 60,
       queue_state: 'running',
+      next_retry_at: null,
       lease_expires_at: '2026-03-30T10:00:00.000Z',
       queue_source: 'manual-bulk',
       source: 'manual-bulk',
@@ -24,6 +26,7 @@ test('buildAiAnalysisQueueSummary counts queued running and stop requested items
       analysis_status: 'stop_requested',
       queue_priority: 80,
       queue_state: 'running',
+      next_retry_at: null,
       queue_source: 'manual-queue',
       source: 'manual-queue',
     },
@@ -36,6 +39,7 @@ test('buildAiAnalysisQueueSummary counts queued running and stop requested items
     stop_requested: 1,
     expedited: 1,
     leased: 1,
+    retry_scheduled: 0,
     source_counts: [
       { source: 'manual-bulk', count: 1 },
       { source: 'manual-play', count: 1 },
@@ -50,6 +54,7 @@ test('buildAiAnalysisQueueSummary falls back to unknown source when source is em
       analysis_status: 'queued',
       queue_priority: 50,
       queue_state: 'queued',
+      next_retry_at: null,
       queue_source: '',
       source: '',
     },
@@ -58,4 +63,20 @@ test('buildAiAnalysisQueueSummary falls back to unknown source when source is em
   assert.equal(summary.total, 1);
   assert.equal(summary.queued, 1);
   assert.deepEqual(summary.source_counts, [{ source: 'unknown', count: 1 }]);
+});
+
+test('buildAiAnalysisQueueSummary counts delayed retries separately', () => {
+  const futureIso = new Date(Date.now() + 60_000).toISOString();
+  const summary = buildAiAnalysisQueueSummary([
+    {
+      analysis_status: 'queued',
+      queue_priority: 40,
+      queue_state: 'queued',
+      next_retry_at: futureIso,
+      queue_source: 'manual-play',
+    },
+  ]);
+
+  assert.equal(summary.total, 1);
+  assert.equal(summary.retry_scheduled, 1);
 });

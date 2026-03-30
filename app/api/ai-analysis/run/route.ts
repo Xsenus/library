@@ -15,9 +15,8 @@ import {
 } from '@/lib/ai-analysis-config';
 import { setAiAnalysisQueueTrigger, setAiAnalysisQueueWatchdogSync } from '@/lib/ai-analysis-queue-trigger';
 import { resolveAiAnalysisQueuePriority } from '@/lib/ai-analysis-queue-priority';
+import { classifyAiAnalysisRetry } from '@/lib/ai-analysis-queue-retry';
 import {
-  QUEUE_WATCHDOG_RETRY_MS,
-  QUEUE_WATCHDOG_GRACE_MS,
   resolveAiAnalysisQueueWatchdogDelay,
   shouldReuseAiAnalysisQueueWatchdog,
 } from '@/lib/ai-analysis-queue-watchdog';
@@ -42,6 +41,7 @@ const STALE_QUEUE_MS = 2 * 60 * 60 * 1000;
 const QUEUE_LEASE_MS = 10 * 60 * 1000;
 const QUEUE_HEARTBEAT_MS = 60 * 1000;
 const QUEUE_LEASE_INTERVAL = `${Math.max(1, Math.ceil(QUEUE_LEASE_MS / 60_000))} minutes`;
+const QUEUE_RETRY_STATUS = 'retry_scheduled';
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -57,9 +57,12 @@ async function ensureQueueTable() {
       payload jsonb,
       state text NOT NULL DEFAULT 'queued',
       priority integer NOT NULL DEFAULT 100,
+      attempt_count integer NOT NULL DEFAULT 0,
+      next_retry_at timestamptz,
       lease_expires_at timestamptz,
       started_at timestamptz,
-      last_error text
+      last_error text,
+      last_error_kind text
     )
   `);
   await dbBitrix.query(`
@@ -84,6 +87,14 @@ async function ensureQueueTable() {
   `);
   await dbBitrix.query(`
     ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS next_retry_at timestamptz
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
       ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz
   `);
   await dbBitrix.query(`
@@ -95,8 +106,16 @@ async function ensureQueueTable() {
       ADD COLUMN IF NOT EXISTS last_error text
   `);
   await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS last_error_kind text
+  `);
+  await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_queued_at_idx
       ON ai_analysis_queue (state, priority, queued_at)
+  `);
+  await dbBitrix.query(`
+    CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_retry_priority_idx
+      ON ai_analysis_queue (state, next_retry_at, priority, queued_at)
   `);
   await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_lease_expires_at_idx
@@ -205,17 +224,24 @@ function scheduleQueueWatchdog(delayMs: number) {
 async function syncQueueWatchdog() {
   await ensureQueueTable();
 
-  const res = await dbBitrix.query<{ queued_count: number; next_lease_ms: number | null }>(
+  const res = await dbBitrix.query<{ queued_count: number; next_lease_ms: number | null; next_retry_ms: number | null }>(
     `
       SELECT
-        COUNT(*) FILTER (WHERE state = 'queued')::int AS queued_count,
+        COUNT(*) FILTER (WHERE state = 'queued' AND (next_retry_at IS NULL OR next_retry_at <= now()))::int AS queued_count,
         MIN(
           CASE
             WHEN state = 'running' AND lease_expires_at IS NOT NULL
               THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (lease_expires_at - now())) * 1000))::bigint
             ELSE NULL
           END
-        )::bigint AS next_lease_ms
+        )::bigint AS next_lease_ms,
+        MIN(
+          CASE
+            WHEN state = 'queued' AND next_retry_at IS NOT NULL AND next_retry_at > now()
+              THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (next_retry_at - now())) * 1000))::bigint
+            ELSE NULL
+          END
+        )::bigint AS next_retry_ms
       FROM ai_analysis_queue
       WHERE state IN ('queued', 'running')
     `,
@@ -223,11 +249,13 @@ async function syncQueueWatchdog() {
 
   const queuedCount = Number(res.rows?.[0]?.queued_count ?? 0);
   const nextLeaseMs = res.rows?.[0]?.next_lease_ms;
+  const nextRetryMs = res.rows?.[0]?.next_retry_ms;
 
   const nextDelayMs = resolveAiAnalysisQueueWatchdogDelay({
     runnerActive: Boolean(queueRunnerPromise),
     queuedCount,
     nextLeaseMs,
+    nextRetryMs,
   });
 
   if (nextDelayMs != null) {
@@ -279,18 +307,62 @@ async function enqueueItem(inn: string, payload: Record<string, unknown>, queued
   await ensureQueueTable();
   const priority = resolveAiAnalysisQueuePriority(payload.source, Number(payload.count ?? 1));
   await dbBitrix.query(
-    `INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, priority, lease_expires_at, started_at, last_error)
-     VALUES ($1, now(), $2, $3::jsonb, 'queued', $4, NULL, NULL, NULL)
+    `INSERT INTO ai_analysis_queue (
+       inn,
+       queued_at,
+       queued_by,
+       payload,
+       state,
+       priority,
+       attempt_count,
+       next_retry_at,
+       lease_expires_at,
+       started_at,
+       last_error,
+       last_error_kind
+     )
+     VALUES ($1, now(), $2, $3::jsonb, 'queued', $4, 0, NULL, NULL, NULL, NULL, NULL)
      ON CONFLICT (inn) DO UPDATE
      SET queued_at = EXCLUDED.queued_at,
          queued_by = COALESCE(EXCLUDED.queued_by, ai_analysis_queue.queued_by),
          payload = EXCLUDED.payload,
          state = 'queued',
          priority = EXCLUDED.priority,
+         attempt_count = 0,
+         next_retry_at = NULL,
          lease_expires_at = NULL,
          started_at = NULL,
-         last_error = NULL`,
+         last_error = NULL,
+         last_error_kind = NULL`,
     [inn, queuedBy, JSON.stringify(payload), priority],
+  );
+}
+
+async function rescheduleQueueItem(
+  inn: string,
+  options: {
+    payload: Record<string, unknown>;
+    nextRetryAt: string;
+    lastError: string | null;
+    lastErrorKind: string;
+  },
+) {
+  await ensureQueueTable();
+  await dbBitrix.query(
+    `
+      UPDATE ai_analysis_queue
+      SET
+        queued_at = now(),
+        payload = $2::jsonb,
+        state = 'queued',
+        next_retry_at = $3::timestamptz,
+        lease_expires_at = NULL,
+        started_at = NULL,
+        last_error = $4,
+        last_error_kind = $5
+      WHERE inn = $1
+    `,
+    [inn, JSON.stringify(options.payload), options.nextRetryAt, options.lastError, options.lastErrorKind],
   );
 }
 
@@ -301,9 +373,12 @@ type QueueItem = {
   queued_by: string | null;
   state: QueueState | null;
   priority: number | null;
+  attempt_count: number | null;
+  next_retry_at: string | null;
   lease_expires_at: string | null;
   started_at: string | null;
   last_error: string | null;
+  last_error_kind: string | null;
   previous_state: QueueState | null;
 };
 
@@ -339,9 +414,12 @@ async function claimNextQueueItem(): Promise<QueueItem | null> {
           q.queued_by,
           q.state,
           q.priority,
+          q.attempt_count,
+          q.next_retry_at,
           q.lease_expires_at,
           q.started_at,
           q.last_error,
+          q.last_error_kind,
           CASE WHEN q.state = 'running' THEN 0 ELSE 1 END AS lease_priority,
           COALESCE(d.retry_priority, 2) AS retry_priority
         FROM ai_analysis_queue q
@@ -354,7 +432,12 @@ async function claimNextQueueItem(): Promise<QueueItem | null> {
           FROM dadata_result d
           WHERE d.inn = q.inn
         ) d ON TRUE
-        WHERE q.state = 'queued' OR (q.state = 'running' AND q.lease_expires_at IS NOT NULL AND q.lease_expires_at < now())
+        WHERE
+          (
+            q.state = 'queued'
+            AND (q.next_retry_at IS NULL OR q.next_retry_at <= now())
+          )
+          OR (q.state = 'running' AND q.lease_expires_at IS NOT NULL AND q.lease_expires_at < now())
         ORDER BY lease_priority ASC, q.priority ASC, retry_priority ASC, q.queued_at ASC
         LIMIT 1
         FOR UPDATE OF q SKIP LOCKED
@@ -363,6 +446,11 @@ async function claimNextQueueItem(): Promise<QueueItem | null> {
       SET
         state = 'running',
         started_at = now(),
+        attempt_count = CASE
+          WHEN next_item.state = 'running' THEN GREATEST(1, COALESCE(q.attempt_count, 0))
+          ELSE GREATEST(0, COALESCE(q.attempt_count, 0)) + 1
+        END,
+        next_retry_at = NULL,
         lease_expires_at = now() + interval '${QUEUE_LEASE_INTERVAL}'
       FROM next_item
       WHERE q.inn = next_item.inn
@@ -373,9 +461,12 @@ async function claimNextQueueItem(): Promise<QueueItem | null> {
         q.queued_by,
         q.state,
         q.priority,
+        q.attempt_count,
+        q.next_retry_at,
         q.lease_expires_at,
         q.started_at,
         q.last_error,
+        q.last_error_kind,
         next_item.state AS previous_state
     `,
   );
@@ -402,9 +493,12 @@ async function cleanupStaleQueueItems() {
         queued_at,
         queued_by,
         state,
+        attempt_count,
+        next_retry_at,
         lease_expires_at,
         started_at,
         last_error,
+        last_error_kind,
         'running'::text AS previous_state
     `,
   );
@@ -423,17 +517,25 @@ async function cleanupStaleQueueItems() {
       DELETE FROM ai_analysis_queue
       WHERE
         state = 'queued'
-        AND payload ? 'defer_count'
-        AND COALESCE(NULLIF(payload->>'defer_count', ''), '0')::int >= $1
+        AND GREATEST(
+          COALESCE(attempt_count, 0),
+          CASE
+            WHEN payload ? 'defer_count' THEN COALESCE(NULLIF(payload->>'defer_count', ''), '0')::int
+            ELSE 0
+          END
+        ) >= $1
       RETURNING
         inn,
         payload,
         queued_at,
         queued_by,
         state,
+        attempt_count,
+        next_retry_at,
         lease_expires_at,
         started_at,
         last_error,
+        last_error_kind,
         state AS previous_state
     `,
     [MAX_COMPANY_ATTEMPTS],
@@ -447,7 +549,7 @@ async function cleanupStaleQueueItems() {
     staleInns.push(inn);
     const deferCountRaw = row.payload && typeof row.payload === 'object' ? (row.payload as any).defer_count : null;
     const deferCount = Number.isFinite(deferCountRaw) ? Number(deferCountRaw) : 0;
-    const attempts = Math.max(1, deferCount + 1);
+    const attempts = Math.max(1, Number(row.attempt_count ?? 0) || deferCount + 1);
     await markFinished(
       inn,
       { status: 'failed', durationMs: 0 },
@@ -1168,14 +1270,17 @@ async function markRunning(inn: string, attempt?: number) {
   await dbBitrix.query(sql, params).catch((error) => console.warn('mark running failed', error));
 }
 
-async function markQueued(inn: string) {
+async function markQueued(
+  inn: string,
+  options?: { status?: 'queued' | 'retry_scheduled'; attempts?: number; resetAttempts?: boolean },
+) {
   const columns = await getDadataColumns();
   if (!columns.status) {
     console.warn('mark queued skipped: no status column in dadata_result');
     return;
   }
 
-  const sets = [`"${columns.status}" = 'queued'`];
+  const sets = [`"${columns.status}" = '${options?.status ?? 'queued'}'`];
 
   if (columns.startedAt) {
     sets.push(`"${columns.startedAt}" = NULL`);
@@ -1197,7 +1302,9 @@ async function markQueued(inn: string) {
     sets.push(`"${columns.outcome}" = 'pending'`);
   }
 
-  if (columns.attempts) {
+  if (columns.attempts && Number.isFinite(options?.attempts)) {
+    sets.push(`"${columns.attempts}" = ${Math.max(0, Math.floor(Number(options?.attempts)))}`);
+  } else if (columns.attempts && options?.resetAttempts !== false) {
     sets.push(`"${columns.attempts}" = 0`);
   }
 
@@ -1533,7 +1640,7 @@ async function processQueue(lockClient: PoolClient) {
     const deferCount = Number.isFinite((payload as any).defer_count)
       ? Number((payload as any).defer_count)
       : 0;
-    const attemptNo = Math.max(1, deferCount + 1);
+    const attemptNo = Math.max(1, Number(item.attempt_count ?? 0) || deferCount + 1);
     const companyNameMap = await getCompanyNames([inn]);
     const companyName = companyNameMap.get(inn);
     const startedAt = Date.now();
@@ -1671,7 +1778,16 @@ async function processQueue(lockClient: PoolClient) {
       continue;
     }
 
-    const shouldRetry = !timedResult.ok && attemptNo < MAX_COMPANY_ATTEMPTS;
+    const retryDecision = !timedResult.ok
+      ? classifyAiAnalysisRetry({
+          status: timedResult.status,
+          error: timedResult.error ?? null,
+          outcome: timedResult.outcome ?? 'failed',
+          attempt: attemptNo,
+          maxAttempts: MAX_COMPANY_ATTEMPTS,
+        })
+      : null;
+    const shouldRetry = Boolean(retryDecision?.retryable && retryDecision.nextDelayMs != null);
     if (timedResult.ok) {
       failedSequence.clear();
     } else {
@@ -1706,6 +1822,7 @@ async function processQueue(lockClient: PoolClient) {
         (modeFromPayload === 'steps' && stepsFromPayload
           ? normalizeSteps(payload.completed_steps, [])
           : []);
+      const nextRetryAt = new Date(Date.now() + Number(retryDecision?.nextDelayMs ?? 0)).toISOString();
 
       const nextPayload = {
         ...payload,
@@ -1722,10 +1839,22 @@ async function processQueue(lockClient: PoolClient) {
         companyId: inn,
         companyName,
         message: `Анализ отложен после ошибки (попытка ${attemptNo + 1}/${MAX_COMPANY_ATTEMPTS})`,
-        payload: { error: timedResult.error, status: timedResult.status },
+        payload: {
+          error: timedResult.error,
+          status: timedResult.status,
+          retry_kind: retryDecision?.kind,
+          retry_reason: retryDecision?.reason,
+          next_retry_at: nextRetryAt,
+          next_retry_in_ms: retryDecision?.nextDelayMs,
+        },
       });
-      await markQueued(inn);
-      await enqueueItem(inn, nextPayload, item.queued_by);
+      await rescheduleQueueItem(inn, {
+        payload: nextPayload,
+        nextRetryAt,
+        lastError: timedResult.error ?? retryDecision?.reason ?? null,
+        lastErrorKind: retryDecision?.kind ?? 'terminal',
+      });
+      await markQueued(inn, { status: QUEUE_RETRY_STATUS, attempts: attemptNo, resetAttempts: false });
       continue;
     }
 
@@ -1950,8 +2079,21 @@ export async function POST(request: NextRequest) {
     const placeholders = inns.map((_, idx) => `($${idx + 1})`).join(', ');
 
     const sql = `
-      INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, priority, lease_expires_at, started_at, last_error)
-      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb, 'queued', $${inns.length + 3}, NULL, NULL, NULL
+      INSERT INTO ai_analysis_queue (
+        inn,
+        queued_at,
+        queued_by,
+        payload,
+        state,
+        priority,
+        attempt_count,
+        next_retry_at,
+        lease_expires_at,
+        started_at,
+        last_error,
+        last_error_kind
+      )
+      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb, 'queued', $${inns.length + 3}, 0, NULL, NULL, NULL, NULL, NULL
       FROM (VALUES ${placeholders}) AS v(inn_val)
       ON CONFLICT (inn) DO UPDATE
       SET queued_at = EXCLUDED.queued_at,
@@ -1959,9 +2101,12 @@ export async function POST(request: NextRequest) {
           payload = EXCLUDED.payload,
           state = 'queued',
           priority = EXCLUDED.priority,
+          attempt_count = 0,
+          next_retry_at = NULL,
           lease_expires_at = NULL,
           started_at = NULL,
-          last_error = NULL
+          last_error = NULL,
+          last_error_kind = NULL
     `;
 
     await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload), queuePriority]);

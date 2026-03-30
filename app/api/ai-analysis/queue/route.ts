@@ -47,9 +47,12 @@ async function ensureQueueTable() {
       payload jsonb,
       state text NOT NULL DEFAULT 'queued',
       priority integer NOT NULL DEFAULT 100,
+      attempt_count integer NOT NULL DEFAULT 0,
+      next_retry_at timestamptz,
       lease_expires_at timestamptz,
       started_at timestamptz,
-      last_error text
+      last_error text,
+      last_error_kind text
     )
   `);
   await dbBitrix.query(`
@@ -74,6 +77,14 @@ async function ensureQueueTable() {
   `);
   await dbBitrix.query(`
     ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS attempt_count integer NOT NULL DEFAULT 0
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS next_retry_at timestamptz
+  `);
+  await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
       ADD COLUMN IF NOT EXISTS lease_expires_at timestamptz
   `);
   await dbBitrix.query(`
@@ -85,8 +96,16 @@ async function ensureQueueTable() {
       ADD COLUMN IF NOT EXISTS last_error text
   `);
   await dbBitrix.query(`
+    ALTER TABLE ai_analysis_queue
+      ADD COLUMN IF NOT EXISTS last_error_kind text
+  `);
+  await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_queued_at_idx
       ON ai_analysis_queue (state, priority, queued_at)
+  `);
+  await dbBitrix.query(`
+    CREATE INDEX IF NOT EXISTS ai_analysis_queue_state_retry_priority_idx
+      ON ai_analysis_queue (state, next_retry_at, priority, queued_at)
   `);
   await dbBitrix.query(`
     CREATE INDEX IF NOT EXISTS ai_analysis_queue_lease_expires_at_idx
@@ -250,9 +269,12 @@ export async function GET(request: NextRequest) {
             q.queued_by,
             q.state AS queue_state,
             q.priority AS queue_priority,
+            q.attempt_count AS queue_attempt_count,
+            q.next_retry_at,
             q.lease_expires_at,
             q.started_at AS queue_started_at,
             q.last_error AS queue_last_error,
+            q.last_error_kind AS queue_last_error_kind,
             COALESCE(NULLIF(q.payload->>'source', ''), 'unknown') AS queue_source,
             COALESCE(NULLIF(q.payload->>'defer_count', ''), '0')::int AS queue_defer_count,
             ${optionalSelect.join(',\n            ')}
@@ -271,9 +293,12 @@ export async function GET(request: NextRequest) {
             q.queued_by,
             q.state AS queue_state,
             q.priority AS queue_priority,
+            q.attempt_count AS queue_attempt_count,
+            q.next_retry_at,
             q.lease_expires_at,
             q.started_at AS queue_started_at,
             q.last_error AS queue_last_error,
+            q.last_error_kind AS queue_last_error_kind,
             COALESCE(NULLIF(q.payload->>'source', ''), 'unknown') AS queue_source,
             COALESCE(NULLIF(q.payload->>'defer_count', ''), '0')::int AS queue_defer_count,
             ${optionalSelect.join(',\n            ')}
@@ -289,9 +314,12 @@ export async function GET(request: NextRequest) {
             NULL::text AS queued_by,
             NULL::text AS queue_state,
             NULL::int AS queue_priority,
+            NULL::int AS queue_attempt_count,
+            NULL::timestamptz AS next_retry_at,
             NULL::timestamptz AS lease_expires_at,
             NULL::timestamptz AS queue_started_at,
             NULL::text AS queue_last_error,
+            NULL::text AS queue_last_error_kind,
             NULL::text AS queue_source,
             NULL::int AS queue_defer_count,
             ${optionalSelect.join(',\n            ')}
@@ -308,7 +336,7 @@ export async function GET(request: NextRequest) {
         )
         SELECT *
         FROM combined
-        ORDER BY COALESCE(queue_priority, 1000) ASC, queued_at ASC
+        ORDER BY COALESCE(queue_priority, 1000) ASC, COALESCE(next_retry_at, queued_at) ASC, queued_at ASC
         LIMIT $1
       `,
       [limit],
@@ -318,10 +346,12 @@ export async function GET(request: NextRequest) {
       const normalizedStatus = String(row.analysis_status ?? '').toLowerCase();
       const stopRequested =
         row.source === 'running' && ['stop_requested', 'stop-requested', 'stopping'].some((token) => normalizedStatus.includes(token));
+      const nextRetryTs = row.next_retry_at ? Date.parse(String(row.next_retry_at)) : Number.NaN;
+      const retryScheduled = row.source === 'queue' && Number.isFinite(nextRetryTs) && nextRetryTs > Date.now();
 
       return {
         ...row,
-        analysis_status: row.source === 'queue' ? 'queued' : stopRequested ? 'stop_requested' : 'running',
+        analysis_status: row.source === 'queue' ? (retryScheduled ? 'retry_scheduled' : 'queued') : stopRequested ? 'stop_requested' : 'running',
         analysis_outcome: row.source === 'queue' ? 'pending' : 'pending',
       };
     });
@@ -470,8 +500,21 @@ export async function POST(request: NextRequest) {
 
     const placeholders = inns.map((_, i) => `($${i + 1})`).join(', ');
     const sql = `
-      INSERT INTO ai_analysis_queue (inn, queued_at, queued_by, payload, state, priority, lease_expires_at, started_at, last_error)
-      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb, 'queued', $${inns.length + 3}, NULL, NULL, NULL
+      INSERT INTO ai_analysis_queue (
+        inn,
+        queued_at,
+        queued_by,
+        payload,
+        state,
+        priority,
+        attempt_count,
+        next_retry_at,
+        lease_expires_at,
+        started_at,
+        last_error,
+        last_error_kind
+      )
+      SELECT v.inn_val, now(), $${inns.length + 1}, $${inns.length + 2}::jsonb, 'queued', $${inns.length + 3}, 0, NULL, NULL, NULL, NULL, NULL
       FROM (VALUES ${placeholders}) AS v(inn_val)
       ON CONFLICT (inn) DO UPDATE
       SET queued_at = EXCLUDED.queued_at,
@@ -479,9 +522,12 @@ export async function POST(request: NextRequest) {
           payload = EXCLUDED.payload,
           state = 'queued',
           priority = EXCLUDED.priority,
+          attempt_count = 0,
+          next_retry_at = NULL,
           lease_expires_at = NULL,
           started_at = NULL,
-          last_error = NULL
+          last_error = NULL,
+          last_error_kind = NULL
     `;
 
     await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload), queuePriority]);
