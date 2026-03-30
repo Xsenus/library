@@ -12,6 +12,7 @@
     "start": "next start",
     "start:port": "next start -p ${PORT:-8090}",
     "lint": "next lint",
+    "test": "tsx --test tests/*.test.ts",
     "postinstall": "next telemetry disable",
     "backfill:equipment-hash": "node scripts/backfill-equipment-hashes.js"
   },
@@ -81,6 +82,7 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/pg": "^8.15.5"
+    "@types/pg": "^8.15.5",
+    "tsx": "^4.21.0"
   }
 }

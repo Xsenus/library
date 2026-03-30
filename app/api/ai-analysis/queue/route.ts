@@ -4,6 +4,7 @@ import { getSession } from '@/lib/auth';
 import { getForcedLaunchMode, getForcedSteps } from '@/lib/ai-analysis-config';
 import { syncAiAnalysisQueueWatchdog, triggerAiAnalysisQueueProcessing } from '@/lib/ai-analysis-queue-trigger';
 import { resolveAiAnalysisQueuePriority } from '@/lib/ai-analysis-queue-priority';
+import { buildAiAnalysisQueueSummary } from '@/lib/ai-analysis-queue-summary';
 import { getDadataColumns } from '@/lib/dadata-columns';
 import type { StepKey } from '@/lib/ai-analysis-types';
 
@@ -12,8 +13,6 @@ export const runtime = 'nodejs';
 export const revalidate = 0;
 
 const QUEUE_STALE_INTERVAL = `120 minutes`;
-const EXPEDITED_QUEUE_PRIORITY = 20;
-
 type OptionalColumnSpec = {
   alias: string;
   candidates: string[];
@@ -327,30 +326,7 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    const sourceCounts = new Map<string, number>();
-    const summary = items.reduce(
-      (acc, item) => {
-        const status = String(item.analysis_status ?? '').toLowerCase();
-        const source = String(item.queue_source ?? item.source ?? 'unknown').trim() || 'unknown';
-        sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
-        acc.total += 1;
-        if (status.includes('stop_requested')) {
-          acc.stop_requested += 1;
-        } else if (status.includes('running')) {
-          acc.running += 1;
-        } else {
-          acc.queued += 1;
-        }
-        if (Number.isFinite(item.queue_priority) && Number(item.queue_priority) <= EXPEDITED_QUEUE_PRIORITY) {
-          acc.expedited += 1;
-        }
-        if (item.queue_state === 'running' && item.lease_expires_at) {
-          acc.leased += 1;
-        }
-        return acc;
-      },
-      { total: 0, queued: 0, running: 0, stop_requested: 0, expedited: 0, leased: 0 },
-    );
+    const summary = buildAiAnalysisQueueSummary(items);
 
     void syncAiAnalysisQueueWatchdog();
 
@@ -359,9 +335,6 @@ export async function GET(request: NextRequest) {
       items,
       summary: {
         ...summary,
-        source_counts: Array.from(sourceCounts.entries())
-          .map(([source, count]) => ({ source, count }))
-          .sort((a, b) => a.source.localeCompare(b.source, 'ru')),
       },
     });
   } catch (error) {

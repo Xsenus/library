@@ -15,6 +15,12 @@ import {
 } from '@/lib/ai-analysis-config';
 import { setAiAnalysisQueueTrigger, setAiAnalysisQueueWatchdogSync } from '@/lib/ai-analysis-queue-trigger';
 import { resolveAiAnalysisQueuePriority } from '@/lib/ai-analysis-queue-priority';
+import {
+  QUEUE_WATCHDOG_RETRY_MS,
+  QUEUE_WATCHDOG_GRACE_MS,
+  resolveAiAnalysisQueueWatchdogDelay,
+  shouldReuseAiAnalysisQueueWatchdog,
+} from '@/lib/ai-analysis-queue-watchdog';
 import { DEFAULT_STEPS, type StepKey } from '@/lib/ai-analysis-types';
 import { getDadataColumns } from '@/lib/dadata-columns';
 
@@ -36,8 +42,6 @@ const STALE_QUEUE_MS = 2 * 60 * 60 * 1000;
 const QUEUE_LEASE_MS = 10 * 60 * 1000;
 const QUEUE_HEARTBEAT_MS = 60 * 1000;
 const QUEUE_LEASE_INTERVAL = `${Math.max(1, Math.ceil(QUEUE_LEASE_MS / 60_000))} minutes`;
-const QUEUE_WATCHDOG_RETRY_MS = 1500;
-const QUEUE_WATCHDOG_GRACE_MS = 1500;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -182,7 +186,7 @@ function scheduleQueueWatchdog(delayMs: number) {
   const safeDelayMs = Math.max(1000, Math.floor(delayMs));
   const dueAtMs = Date.now() + safeDelayMs;
 
-  if (queueWatchdogTimer && queueWatchdogDueAtMs != null && queueWatchdogDueAtMs <= dueAtMs + 250) {
+  if (shouldReuseAiAnalysisQueueWatchdog(queueWatchdogDueAtMs, dueAtMs)) {
     return;
   }
 
@@ -200,11 +204,6 @@ function scheduleQueueWatchdog(delayMs: number) {
 
 async function syncQueueWatchdog() {
   await ensureQueueTable();
-
-  if (queueRunnerPromise) {
-    clearQueueWatchdog();
-    return;
-  }
 
   const res = await dbBitrix.query<{ queued_count: number; next_lease_ms: number | null }>(
     `
@@ -225,13 +224,14 @@ async function syncQueueWatchdog() {
   const queuedCount = Number(res.rows?.[0]?.queued_count ?? 0);
   const nextLeaseMs = res.rows?.[0]?.next_lease_ms;
 
-  if (queuedCount > 0) {
-    scheduleQueueWatchdog(QUEUE_WATCHDOG_RETRY_MS);
-    return;
-  }
+  const nextDelayMs = resolveAiAnalysisQueueWatchdogDelay({
+    runnerActive: Boolean(queueRunnerPromise),
+    queuedCount,
+    nextLeaseMs,
+  });
 
-  if (nextLeaseMs != null && Number.isFinite(Number(nextLeaseMs))) {
-    scheduleQueueWatchdog(Number(nextLeaseMs) + QUEUE_WATCHDOG_GRACE_MS);
+  if (nextDelayMs != null) {
+    scheduleQueueWatchdog(nextDelayMs);
     return;
   }
 
