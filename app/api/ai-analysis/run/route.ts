@@ -1824,9 +1824,8 @@ export async function POST(request: NextRequest) {
 
     const isImmediateDebugStep =
       source === 'debug-step' && mode === 'steps' && inns.length === 1 && (steps?.length ?? 0) === 1;
-
-    const isImmediateFullRun = !isDebugRequest && mode === 'full' && inns.length === 1;
-    const isImmediateSingleSteps = !isDebugRequest && mode === 'steps' && inns.length === 1;
+    const isImmediateFullRun = false;
+    const isImmediateSingleSteps = false;
 
     if (isImmediateFullRun) {
       const inn = inns[0];

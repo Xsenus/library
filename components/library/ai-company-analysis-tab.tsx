@@ -2113,7 +2113,7 @@ export default function AiCompanyAnalysisTab() {
         return;
       }
       setRunInn(inn);
-      markRunning([inn]);
+      markQueued([inn]);
       try {
         const res = await fetch('/api/ai-analysis/run', {
           method: 'POST',
@@ -2131,7 +2131,7 @@ export default function AiCompanyAnalysisTab() {
         }
         const note = integrationSummaryText(data?.integration);
         toast({
-          title: 'Анализ запущен без очереди',
+          title: 'Анализ поставлен в очередь запуска',
           description: note && note.length > 0 ? note : `Компания ${inn}`,
         });
         fetchCompanies(page, pageSize);
@@ -2157,7 +2157,7 @@ export default function AiCompanyAnalysisTab() {
       page,
       pageSize,
       scheduleAutoRefresh,
-      markRunning,
+      markQueued,
       integrationSummaryText,
       launchMode,
       selectedSteps,
@@ -3172,7 +3172,7 @@ export default function AiCompanyAnalysisTab() {
                           ? 'Анализ выполняется'
                           : state.queued
                           ? 'Компания уже в очереди'
-                          : 'Запустить без очереди';
+                          : 'Поставить в очередь и запустить обработку';
                         const queueTooltip = integrationOffline
                           ? integrationHealth?.detail
                             ? `AI integration недоступна: ${integrationHealth.detail}`
