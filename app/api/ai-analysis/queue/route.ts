@@ -12,6 +12,7 @@ export const runtime = 'nodejs';
 export const revalidate = 0;
 
 const QUEUE_STALE_INTERVAL = `120 minutes`;
+const EXPEDITED_QUEUE_PRIORITY = 20;
 
 type OptionalColumnSpec = {
   alias: string;
@@ -248,7 +249,13 @@ export async function GET(request: NextRequest) {
             q.inn,
             q.queued_at,
             q.queued_by,
+            q.state AS queue_state,
             q.priority AS queue_priority,
+            q.lease_expires_at,
+            q.started_at AS queue_started_at,
+            q.last_error AS queue_last_error,
+            COALESCE(NULLIF(q.payload->>'source', ''), 'unknown') AS queue_source,
+            COALESCE(NULLIF(q.payload->>'defer_count', ''), '0')::int AS queue_defer_count,
             ${optionalSelect.join(',\n            ')}
           FROM ai_analysis_queue q
           LEFT JOIN dadata_result d ON d.inn = q.inn
@@ -263,7 +270,13 @@ export async function GET(request: NextRequest) {
             q.inn,
             COALESCE(q.started_at, d.analysis_started_at, q.queued_at, now()) AS queued_at,
             q.queued_by,
+            q.state AS queue_state,
             q.priority AS queue_priority,
+            q.lease_expires_at,
+            q.started_at AS queue_started_at,
+            q.last_error AS queue_last_error,
+            COALESCE(NULLIF(q.payload->>'source', ''), 'unknown') AS queue_source,
+            COALESCE(NULLIF(q.payload->>'defer_count', ''), '0')::int AS queue_defer_count,
             ${optionalSelect.join(',\n            ')}
           FROM ai_analysis_queue q
           LEFT JOIN dadata_result d ON d.inn = q.inn
@@ -275,7 +288,13 @@ export async function GET(request: NextRequest) {
             d.inn,
             COALESCE(d.analysis_started_at, now()) AS queued_at,
             NULL::text AS queued_by,
+            NULL::text AS queue_state,
             NULL::int AS queue_priority,
+            NULL::timestamptz AS lease_expires_at,
+            NULL::timestamptz AS queue_started_at,
+            NULL::text AS queue_last_error,
+            NULL::text AS queue_source,
+            NULL::int AS queue_defer_count,
             ${optionalSelect.join(',\n            ')}
           FROM dadata_result d
           LEFT JOIN ai_analysis_queue q ON q.inn = d.inn
@@ -308,10 +327,44 @@ export async function GET(request: NextRequest) {
       };
     });
 
-    return NextResponse.json({ ok: true, items });
+    const sourceCounts = new Map<string, number>();
+    const summary = items.reduce(
+      (acc, item) => {
+        const status = String(item.analysis_status ?? '').toLowerCase();
+        const source = String(item.queue_source ?? item.source ?? 'unknown').trim() || 'unknown';
+        sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
+        acc.total += 1;
+        if (status.includes('stop_requested')) {
+          acc.stop_requested += 1;
+        } else if (status.includes('running')) {
+          acc.running += 1;
+        } else {
+          acc.queued += 1;
+        }
+        if (Number.isFinite(item.queue_priority) && Number(item.queue_priority) <= EXPEDITED_QUEUE_PRIORITY) {
+          acc.expedited += 1;
+        }
+        if (item.queue_state === 'running' && item.lease_expires_at) {
+          acc.leased += 1;
+        }
+        return acc;
+      },
+      { total: 0, queued: 0, running: 0, stop_requested: 0, expedited: 0, leased: 0 },
+    );
+
+    return NextResponse.json({
+      ok: true,
+      items,
+      summary: {
+        ...summary,
+        source_counts: Array.from(sourceCounts.entries())
+          .map(([source, count]) => ({ source, count }))
+          .sort((a, b) => a.source.localeCompare(b.source, 'ru')),
+      },
+    });
   } catch (error) {
     console.error('GET /api/ai-analysis/queue error', error);
-    return NextResponse.json({ ok: false, items: [] }, { status: 500 });
+    return NextResponse.json({ ok: false, items: [], summary: null }, { status: 500 });
   }
 }
 

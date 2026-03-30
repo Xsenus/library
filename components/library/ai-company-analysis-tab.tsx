@@ -144,6 +144,13 @@ type AiCompany = {
   cached_input_tokens?: number | null;
   output_tokens?: number | null;
   cost_total_usd?: number | null;
+  queue_state?: string | null;
+  queue_priority?: number | null;
+  queue_started_at?: string | null;
+  queue_source?: string | null;
+  queue_last_error?: string | null;
+  queue_defer_count?: number | null;
+  lease_expires_at?: string | null;
   analysis_cost?: {
     tokens_total?: number | null;
     cost_usd?: number | null;
@@ -153,6 +160,21 @@ type AiCompany = {
     cached_input_tokens?: number | null;
     output_tokens?: number | null;
   } | null;
+};
+
+type QueueSourceCount = {
+  source: string;
+  count: number;
+};
+
+type QueueSummary = {
+  total: number;
+  queued: number;
+  running: number;
+  stop_requested: number;
+  expedited: number;
+  leased: number;
+  source_counts: QueueSourceCount[];
 };
 
 type FetchResponse = {
@@ -291,6 +313,22 @@ function formatDuration(ms: number | null | undefined): string {
 function formatAnalysisScore(value: number | null | undefined): string {
   if (value == null || !Number.isFinite(value)) return '—';
   return value.toFixed(2);
+}
+
+function formatQueuePriorityLabel(priority: number | null | undefined): string {
+  if (priority == null || !Number.isFinite(priority)) return 'P?';
+  return `P${Math.max(0, Math.floor(priority))}`;
+}
+
+function formatQueueSourceLabel(source: string | null | undefined): string {
+  const normalized = String(source ?? '').trim().toLowerCase();
+  if (!normalized) return 'Неизвестный источник';
+  if (normalized === 'manual-play' || normalized === 'play') return 'Play';
+  if (normalized === 'manual-queue' || normalized === 'queue-single') return 'Ручная очередь';
+  if (normalized === 'manual-bulk' || normalized === 'bulk') return 'Массовый запуск';
+  if (normalized === 'filter') return 'Фильтр';
+  if (normalized === 'debug-step') return 'Отладочный шаг';
+  return normalized;
 }
 
 function getActiveElapsedMs(company: AiCompany, nowMs: number): number | null {
@@ -1082,6 +1120,7 @@ export default function AiCompanyAnalysisTab() {
   const [queueLoading, setQueueLoading] = useState(false);
   const [queueError, setQueueError] = useState<string | null>(null);
   const [queueItems, setQueueItems] = useState<AiCompany[]>([]);
+  const [queueSummary, setQueueSummary] = useState<QueueSummary | null>(null);
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
   const [filterPreview, setFilterPreview] = useState<{ total: number; inns: string[] } | null>(null);
   const [filterLoading, setFilterLoading] = useState(false);
@@ -1570,15 +1609,22 @@ export default function AiCompanyAnalysisTab() {
     setQueueError(null);
     try {
       const res = await fetch('/api/ai-analysis/queue');
-      const data = (await res.json().catch(() => null)) as { ok?: boolean; items?: AiCompany[]; error?: string } | null;
+      const data = (await res.json().catch(() => null)) as {
+        ok?: boolean;
+        items?: AiCompany[];
+        summary?: QueueSummary | null;
+        error?: string;
+      } | null;
       if (!res.ok || data?.ok === false) {
         throw new Error(data?.error || `Request failed with status ${res.status}`);
       }
       const queueDataItems = data?.items;
       const queueItems = Array.isArray(queueDataItems) ? queueDataItems : [];
       setQueueItems(queueItems);
+      setQueueSummary(data?.summary ?? null);
     } catch (error) {
       console.error('Failed to fetch queue', error);
+      setQueueSummary(null);
       setQueueError(
         error instanceof Error && error.message ? error.message : 'Не удалось загрузить очередь. Попробуйте позже.',
       );
@@ -3684,7 +3730,7 @@ export default function AiCompanyAnalysisTab() {
                 <div className="text-muted-foreground">
                   {queueLoading
                     ? 'Загружаем очередь…'
-                    : `В очереди: ${queueItems.length.toLocaleString('ru-RU')}`}
+                    : `В очереди и работе: ${(queueSummary?.total ?? queueItems.length).toLocaleString('ru-RU')}`}
                 </div>
                 <div className="flex items-center gap-2">
                   {queueError && <span className="text-xs text-destructive">{queueError}</span>}
@@ -3701,6 +3747,17 @@ export default function AiCompanyAnalysisTab() {
                   </Button>
                 </div>
               </div>
+              {queueSummary && !queueLoading && (
+                <div className="flex flex-wrap items-center gap-2 text-xs">
+                  <Badge variant="secondary">Queued: {queueSummary.queued}</Badge>
+                  <Badge variant="secondary">Running: {queueSummary.running}</Badge>
+                  {queueSummary.stop_requested > 0 && (
+                    <Badge variant="outline">Stop requested: {queueSummary.stop_requested}</Badge>
+                  )}
+                  {queueSummary.expedited > 0 && <Badge variant="outline">Приоритетных: {queueSummary.expedited}</Badge>}
+                  {queueSummary.leased > 0 && <Badge variant="outline">Под lease: {queueSummary.leased}</Badge>}
+                </div>
+              )}
               <div className="max-h-[420px] space-y-2 overflow-y-auto rounded-md border bg-muted/20 p-3">
                 {queueLoading ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
@@ -3721,6 +3778,14 @@ export default function AiCompanyAnalysisTab() {
                         ? item.analysis_attempts
                         : '—';
                     const score = formatAnalysisScore(item.analysis_score);
+                    const queuePriorityLabel = formatQueuePriorityLabel(item.queue_priority);
+                    const queueSourceLabel = formatQueueSourceLabel(item.queue_source);
+                    const leaseUntil = formatTime(item.lease_expires_at ?? null);
+                    const queueRetries =
+                      item.queue_defer_count != null && Number.isFinite(item.queue_defer_count)
+                        ? Math.max(0, Math.floor(item.queue_defer_count))
+                        : 0;
+                    const queueErrorText = truncateText(item.queue_last_error, 120);
 
                     return (
                       <div
@@ -3742,6 +3807,13 @@ export default function AiCompanyAnalysisTab() {
                             <Badge variant="outline" className="whitespace-nowrap text-foreground">
                               {statusLabel}
                             </Badge>
+                          </div>
+                          <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+                            <span>Источник: {queueSourceLabel}</span>
+                            <span>Приоритет: {queuePriorityLabel}</span>
+                            {queueRetries > 0 && <span>Повторы в очереди: {queueRetries}</span>}
+                            {item.queue_state === 'running' && item.lease_expires_at && <span>Lease до {leaseUntil}</span>}
+                            {queueErrorText && <span className="text-amber-600">Последняя ошибка: {queueErrorText}</span>}
                           </div>
                         </div>
                         <div className="flex flex-wrap items-center gap-2 md:justify-end">
