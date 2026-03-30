@@ -399,8 +399,6 @@ function formatBillingBalanceLabel(billing?: BillingResponse | null): string {
   if (billing.remaining_usd != null && Number.isFinite(billing.remaining_usd)) {
     return formatUsd(billing.remaining_usd);
   }
-  if (billing.configured === false) return '\u041D\u0435 \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043D\u043E';
-  if (billing.error) return '\u041E\u0448\u0438\u0431\u043A\u0430';
   return '\u2014';
 }
 
@@ -420,15 +418,6 @@ function formatBillingSourceLabel(source: string | null | undefined): string | n
   });
 
   return labels.join(' + ');
-}
-
-function formatBillingErrorLabel(error: string | null | undefined): string | null {
-  const normalized = String(error ?? '').trim();
-  if (!normalized) return null;
-  if (normalized.toLowerCase().includes('openai_admin_key not configured')) {
-    return '\u0412 AI-\u0438\u043D\u0442\u0435\u0433\u0440\u0430\u0446\u0438\u0438 \u043D\u0435 \u043D\u0430\u0441\u0442\u0440\u043E\u0435\u043D OPENAI_ADMIN_KEY, \u043F\u043E\u044D\u0442\u043E\u043C\u0443 \u0436\u0438\u0432\u043E\u0439 \u0431\u0430\u043B\u0430\u043D\u0441 \u043D\u0435\u0434\u043E\u0441\u0442\u0443\u043F\u0435\u043D.';
-  }
-  return normalized;
 }
 
 function getActiveElapsedMs(company: AiCompany, nowMs: number): number | null {
@@ -2961,7 +2950,6 @@ export default function AiCompanyAnalysisTab() {
     analysisDomainValueRaw?.toLowerCase() === OKVED_FALLBACK_DOMAIN ? null : analysisDomainValueRaw;
   const billingBalanceLabel = formatBillingBalanceLabel(billing);
   const billingSourceLabel = formatBillingSourceLabel(billing?.source);
-  const billingErrorLabel = formatBillingErrorLabel(billing?.error);
   const analyzerDescriptionText =
     infoCompany?.analysis_description ||
     [analyzerInfo?.company?.domain1, analyzerInfo?.company?.domain2].filter(Boolean).join('\n') ||
@@ -3009,7 +2997,7 @@ export default function AiCompanyAnalysisTab() {
                     </span>
                   </div>
                   <div className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
-                    <span className="text-muted-foreground">API: осталось</span>
+                    <span className="text-muted-foreground">API:</span>
                     <span className="font-semibold">{billingBalanceLabel}</span>
                   </div>
                 </div>
@@ -4427,7 +4415,9 @@ export default function AiCompanyAnalysisTab() {
                         <div className="text-sm text-amber-600">Класс определён по ОКВЭД (сайт недоступен)</div>
                       )}
                       <div className="flex flex-wrap items-baseline justify-center gap-2">
-                        <span className="text-base sm:text-lg">{showOkvedFallbackBadge ? 'Оценки по сайту: —' : prodclassScoreText || '—'}</span>
+                        <span className="text-base sm:text-lg">
+                          {showOkvedFallbackBadge ? 'Подбор по ОКВЭД' : prodclassScoreText || '—'}
+                        </span>
                         {!showOkvedFallbackBadge && prodclassRawScoreText && (
                           <span className="text-xs text-muted-foreground">(расчёт: {prodclassRawScoreText})</span>
                         )}
@@ -4443,13 +4433,15 @@ export default function AiCompanyAnalysisTab() {
                   </div>
                   <div className="rounded-lg border bg-muted/20 p-3 text-center">
                     <div className="text-xs text-muted-foreground">Домен для парсинга</div>
-                    <div className="font-medium">{analysisDomainValue || '—'}</div>
+                    <div className="font-medium">
+                      {showOkvedFallbackBadge && !analysisDomainValue ? 'Нет сайта' : analysisDomainValue || '—'}
+                    </div>
                   </div>
                   <div className="rounded-lg border bg-muted/20 p-3 text-center">
                     <div className="text-xs text-muted-foreground">
                       Соответствие ИИ-описания сайта и ОКВЭД
                     </div>
-                    <div className="font-medium">{showOkvedFallbackBadge ? 'Оценки по сайту: —' : okvedMatchText || '—'}</div>
+                    <div className="font-medium">{showOkvedFallbackBadge ? 'Сайт не найден' : okvedMatchText || '—'}</div>
                   </div>
                 </div>
                 </div>
@@ -4457,7 +4449,7 @@ export default function AiCompanyAnalysisTab() {
                 <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
                   <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">ИИ-описание сайта</div>
                   <div className="rounded-lg border bg-muted/20 p-3 text-sm whitespace-pre-wrap">
-                    {analyzerDescriptionText || '—'}
+                    {analyzerDescriptionText || (showOkvedFallbackBadge ? 'Сайт не найден — использован подбор по ОКВЭД.' : '—')}
                   </div>
                 </div>
 
@@ -4508,6 +4500,12 @@ export default function AiCompanyAnalysisTab() {
                           );
                           const calcPathLabel = formatEquipmentCalcPath(trace?.calculation_path);
                           const finalSourceLabel = formatEquipmentSource(trace?.final_source);
+                          const hasTraceBreakdown = [
+                            trace?.bd_score,
+                            trace?.vector_score,
+                            trace?.gen_score,
+                            trace?.factor,
+                          ].some((value) => value != null);
 
                           return (
                             <li
@@ -4517,15 +4515,26 @@ export default function AiCompanyAnalysisTab() {
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0 flex-1 space-y-1">
                                   <div className="font-medium text-foreground">{item.name}</div>
-                                  {matchedSiteEquipment ? (
+                                  <div className="hidden">{matchedSiteEquipment ? (
                                     <div className="text-[11px] text-muted-foreground">
-                                      <span className="font-medium text-foreground/90">РќР°Р№РґРµРЅРѕ РЅР° СЃР°Р№С‚Рµ:</span>{' '}
+                                      <span className="font-medium text-foreground/90">Найдено на сайте:</span>{' '}
                                       {matchedSiteEquipment}
                                       {matchedSiteScore ? ` (${matchedSiteScore})` : ''}
                                     </div>
                                   ) : showOkvedFallbackBadge ? (
                                     <div className="text-[11px] text-muted-foreground">
-                                      <span className="font-medium text-foreground/90">РџРѕРґР±РѕСЂ:</span> РїРѕ РћРљР’Р­Р” (СЃР°Р№С‚ РЅРµРґРѕСЃС‚СѓРїРµРЅ)
+                                      <span className="font-medium text-foreground/90">{'\u041f\u043e\u0434\u0431\u043e\u0440:'}</span>{' ' }{'\u043f\u043e \u041e\u041a\u0412\u042d\u0414 (\u0441\u0430\u0439\u0442 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d)'}
+                                    </div>
+                                  ) : null}</div>
+                                  {matchedSiteEquipment ? (
+                                    <div className="text-[11px] text-muted-foreground">
+                                      <span className="font-medium text-foreground/90">{'\u041d\u0430\u0439\u0434\u0435\u043d\u043e \u043d\u0430 \u0441\u0430\u0439\u0442\u0435:'}</span>{' ' }
+                                      {matchedSiteEquipment}
+                                      {matchedSiteScore ? ` (${matchedSiteScore})` : ''}
+                                    </div>
+                                  ) : showOkvedFallbackBadge ? (
+                                    <div className="text-[11px] text-muted-foreground">
+                                      <span className="font-medium text-foreground/90">{'\u041f\u043e\u0434\u0431\u043e\u0440:'}</span>{' ' }{'\u043f\u043e \u041e\u041a\u0412\u042d\u0414 (\u0441\u0430\u0439\u0442 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d)'}
                                     </div>
                                   ) : null}
                                 </div>
@@ -4540,24 +4549,30 @@ export default function AiCompanyAnalysisTab() {
                                   </Button>
                                 </div>
                               </div>
-                              <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
-                                <div>
-                                  <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
-                                  {formatRawScore(trace?.bd_score) ?? '\u2014'}
+                              {hasTraceBreakdown ? (
+                                <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
+                                  <div>
+                                    <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
+                                    {formatRawScore(trace?.bd_score) ?? '\u2014'}
+                                  </div>
+                                  <div>
+                                    <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
+                                    {formatRawScore(trace?.vector_score) ?? '\u2014'}
+                                  </div>
+                                  <div>
+                                    <span className="font-medium text-foreground/90">GEN:</span>{' '}
+                                    {formatRawScore(trace?.gen_score) ?? '\u2014'}
+                                  </div>
+                                  <div>
+                                    <span className="font-medium text-foreground/90">K:</span>{' '}
+                                    {formatRawScore(trace?.factor) ?? '\u2014'}
+                                  </div>
                                 </div>
-                                <div>
-                                  <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
-                                  {formatRawScore(trace?.vector_score) ?? '\u2014'}
+                              ) : (
+                                <div className="mt-2 text-[11px] text-muted-foreground">
+                                  Детали расчета пока не переданы сервисом.
                                 </div>
-                                <div>
-                                  <span className="font-medium text-foreground/90">GEN:</span>{' '}
-                                  {formatRawScore(trace?.gen_score) ?? '\u2014'}
-                                </div>
-                                <div>
-                                  <span className="font-medium text-foreground/90">K:</span>{' '}
-                                  {formatRawScore(trace?.factor) ?? '\u2014'}
-                                </div>
-                              </div>
+                              )}
                               <div className="hidden mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
                                 <div>
                                   <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
@@ -4685,14 +4700,6 @@ export default function AiCompanyAnalysisTab() {
                         <div>Стоимость (USD): <span className="font-medium">{formatUsd(infoCompany?.analysis_cost?.cost_usd ?? infoCompany?.cost_total_usd)}</span></div>
                       </div>
                     </div>
-                  </div>
-                  {billingErrorLabel && (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-700">
-                      {billingErrorLabel}
-                    </div>
-                  )}
-                  <div className="text-xs text-muted-foreground">
-                    Значения берутся из live API, последнего сохранённого снимка анализа и fallback-агрегации по расходам за месяц.
                   </div>
                 </div>
 

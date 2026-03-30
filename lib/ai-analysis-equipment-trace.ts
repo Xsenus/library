@@ -56,6 +56,7 @@ export function normalizeEquipmentTracePayload(payload: unknown): EquipmentScore
 
   const equipmentAll = readArray(root, 'equipment_all');
   const oneWayDetails = readArray(root, 'equipment_1way_details');
+  const twoWayDetails = readArray(root, 'equipment_2way_details');
   const threeWayDetails = readArray(root, 'equipment_3way_details');
   const siteEquipment = readArray(root, 'site_equipment');
 
@@ -85,6 +86,28 @@ export function normalizeEquipmentTracePayload(payload: unknown): EquipmentScore
     target.gen_score = toFiniteNumber(item.score_1 ?? item.SCORE_1);
     target.factor = toFiniteNumber(item.factor);
     target.calculation_path = toText(item.path);
+  }
+
+  for (const item of twoWayDetails) {
+    const equipmentId = normalizeId(item.equipment_id ?? item.id);
+    if (!equipmentId) continue;
+    const target = ensure(equipmentId);
+    const scoreE2 = toFiniteNumber(item.score_e2 ?? item.SCORE_E2);
+    const currentFinal = toFiniteNumber(target.final_score);
+
+    if (target.calculation_path == null || (currentFinal != null && scoreE2 != null && scoreE2 >= currentFinal - 1e-9)) {
+      target.calculation_path = '2way';
+    }
+
+    if (target.bd_score == null) {
+      target.bd_score = toFiniteNumber(item.crore_3 ?? item.CRORE_3);
+    }
+    if (target.gen_score == null) {
+      target.gen_score = toFiniteNumber(item.crore_2 ?? item.CRORE_2);
+    }
+    if (target.factor == null) {
+      target.factor = 1;
+    }
   }
 
   for (const item of threeWayDetails) {
