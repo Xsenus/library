@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
 import { getSession } from '@/lib/auth';
+import { syncAiAnalysisQueueWatchdog } from '@/lib/ai-analysis-queue-trigger';
 import { logAiDebugEvent } from '@/lib/ai-debug';
 import { getAiIntegrationBase } from '@/lib/ai-integration';
 import { getDadataColumns } from '@/lib/dadata-columns';
@@ -269,6 +270,8 @@ export async function POST(request: NextRequest) {
       message: 'Запрошена остановка анализа',
       payload,
     });
+
+    void syncAiAnalysisQueueWatchdog();
 
     return NextResponse.json({ ok: true, removed, running, removedInns, runningInns });
   } catch (e) {

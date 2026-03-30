@@ -13,7 +13,7 @@ import {
   getStepTimeoutMs,
   isLaunchModeLocked,
 } from '@/lib/ai-analysis-config';
-import { setAiAnalysisQueueTrigger } from '@/lib/ai-analysis-queue-trigger';
+import { setAiAnalysisQueueTrigger, setAiAnalysisQueueWatchdogSync } from '@/lib/ai-analysis-queue-trigger';
 import { resolveAiAnalysisQueuePriority } from '@/lib/ai-analysis-queue-priority';
 import { DEFAULT_STEPS, type StepKey } from '@/lib/ai-analysis-types';
 import { getDadataColumns } from '@/lib/dadata-columns';
@@ -25,6 +25,8 @@ export const revalidate = 0;
 let ensuredQueue = false;
 let ensuredCommands = false;
 let queueRunnerPromise: Promise<void> | null = null;
+let queueWatchdogTimer: NodeJS.Timeout | null = null;
+let queueWatchdogDueAtMs: number | null = null;
 const PROCESS_LOCK_KEY = 42_111;
 const MAX_STEP_ATTEMPTS = 3;
 const RETRY_DELAY_MS = 2000;
@@ -34,6 +36,8 @@ const STALE_QUEUE_MS = 2 * 60 * 60 * 1000;
 const QUEUE_LEASE_MS = 10 * 60 * 1000;
 const QUEUE_HEARTBEAT_MS = 60 * 1000;
 const QUEUE_LEASE_INTERVAL = `${Math.max(1, Math.ceil(QUEUE_LEASE_MS / 60_000))} minutes`;
+const QUEUE_WATCHDOG_RETRY_MS = 1500;
+const QUEUE_WATCHDOG_GRACE_MS = 1500;
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -161,9 +165,77 @@ function scheduleQueueRetry() {
       queueRunnerPromise = null;
 
       // Если после завершения остались элементы, запустим новую попытку.
-      setTimeout(() => void triggerQueueProcessing(), 1500);
+      void syncQueueWatchdog();
     }
   })();
+}
+
+function clearQueueWatchdog() {
+  if (queueWatchdogTimer) {
+    clearTimeout(queueWatchdogTimer);
+    queueWatchdogTimer = null;
+  }
+  queueWatchdogDueAtMs = null;
+}
+
+function scheduleQueueWatchdog(delayMs: number) {
+  const safeDelayMs = Math.max(1000, Math.floor(delayMs));
+  const dueAtMs = Date.now() + safeDelayMs;
+
+  if (queueWatchdogTimer && queueWatchdogDueAtMs != null && queueWatchdogDueAtMs <= dueAtMs + 250) {
+    return;
+  }
+
+  clearQueueWatchdog();
+  queueWatchdogDueAtMs = dueAtMs;
+  queueWatchdogTimer = setTimeout(() => {
+    clearQueueWatchdog();
+    void triggerQueueProcessing();
+  }, safeDelayMs);
+
+  if (typeof queueWatchdogTimer.unref === 'function') {
+    queueWatchdogTimer.unref();
+  }
+}
+
+async function syncQueueWatchdog() {
+  await ensureQueueTable();
+
+  if (queueRunnerPromise) {
+    clearQueueWatchdog();
+    return;
+  }
+
+  const res = await dbBitrix.query<{ queued_count: number; next_lease_ms: number | null }>(
+    `
+      SELECT
+        COUNT(*) FILTER (WHERE state = 'queued')::int AS queued_count,
+        MIN(
+          CASE
+            WHEN state = 'running' AND lease_expires_at IS NOT NULL
+              THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (lease_expires_at - now())) * 1000))::bigint
+            ELSE NULL
+          END
+        )::bigint AS next_lease_ms
+      FROM ai_analysis_queue
+      WHERE state IN ('queued', 'running')
+    `,
+  );
+
+  const queuedCount = Number(res.rows?.[0]?.queued_count ?? 0);
+  const nextLeaseMs = res.rows?.[0]?.next_lease_ms;
+
+  if (queuedCount > 0) {
+    scheduleQueueWatchdog(QUEUE_WATCHDOG_RETRY_MS);
+    return;
+  }
+
+  if (nextLeaseMs != null && Number.isFinite(Number(nextLeaseMs))) {
+    scheduleQueueWatchdog(Number(nextLeaseMs) + QUEUE_WATCHDOG_GRACE_MS);
+    return;
+  }
+
+  clearQueueWatchdog();
 }
 
 async function releaseQueueLock(client: PoolClient | null) {
@@ -1709,7 +1781,7 @@ async function triggerQueueProcessing() {
     const lockClient = await acquireQueueLock();
     if (!lockClient) {
       queueRunnerPromise = null;
-      setTimeout(() => void triggerQueueProcessing(), 1500);
+      void syncQueueWatchdog();
       return;
     }
 
@@ -1718,10 +1790,7 @@ async function triggerQueueProcessing() {
     } finally {
       await releaseQueueLock(lockClient);
       queueRunnerPromise = null;
-
-      if (await hasQueuedItems()) {
-        scheduleQueueRetry();
-      }
+      void syncQueueWatchdog();
     }
   })();
 
@@ -1729,6 +1798,7 @@ async function triggerQueueProcessing() {
 }
 
 setAiAnalysisQueueTrigger(triggerQueueProcessing);
+setAiAnalysisQueueWatchdogSync(syncQueueWatchdog);
 
 export async function POST(request: NextRequest) {
   try {

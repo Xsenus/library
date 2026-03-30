@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
 import { getSession } from '@/lib/auth';
 import { getForcedLaunchMode, getForcedSteps } from '@/lib/ai-analysis-config';
-import { triggerAiAnalysisQueueProcessing } from '@/lib/ai-analysis-queue-trigger';
+import { syncAiAnalysisQueueWatchdog, triggerAiAnalysisQueueProcessing } from '@/lib/ai-analysis-queue-trigger';
 import { resolveAiAnalysisQueuePriority } from '@/lib/ai-analysis-queue-priority';
 import { getDadataColumns } from '@/lib/dadata-columns';
 import type { StepKey } from '@/lib/ai-analysis-types';
@@ -352,6 +352,8 @@ export async function GET(request: NextRequest) {
       { total: 0, queued: 0, running: 0, stop_requested: 0, expedited: 0, leased: 0 },
     );
 
+    void syncAiAnalysisQueueWatchdog();
+
     return NextResponse.json({
       ok: true,
       items,
@@ -512,6 +514,7 @@ export async function POST(request: NextRequest) {
     await dbBitrix.query(sql, [...inns, requestedBy, JSON.stringify(payload), queuePriority]);
     await markQueuedMany(inns);
     void triggerAiAnalysisQueueProcessing();
+    void syncAiAnalysisQueueWatchdog();
 
     return NextResponse.json({ ok: true, queued: inns.length, total });
   } catch (error) {
@@ -564,6 +567,8 @@ export async function DELETE(request: NextRequest) {
         .query(`UPDATE dadata_result SET ${updates.join(', ')} WHERE inn = ANY($1::text[])`, [removedInns])
         .catch((error) => console.warn('queue delete: failed to reset dadata_result', error));
     }
+
+    void syncAiAnalysisQueueWatchdog();
 
     return NextResponse.json({ ok: true, removed, running });
   } catch (error) {
