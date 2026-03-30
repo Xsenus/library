@@ -4500,11 +4500,14 @@ export default function AiCompanyAnalysisTab() {
                           );
                           const calcPathLabel = formatEquipmentCalcPath(trace?.calculation_path);
                           const finalSourceLabel = formatEquipmentSource(trace?.final_source);
+                          // 2way/1way paths do not expose a dedicated vector score.
+                          // Reuse the active multiplier so the visible formula stays meaningful.
+                          const displayVectorScore = trace?.vector_score ?? trace?.gen_score ?? null;
+                          const displayFinalScore = trace?.final_score ?? item.score ?? null;
                           const hasTraceBreakdown = [
                             trace?.bd_score,
-                            trace?.vector_score,
-                            trace?.gen_score,
-                            trace?.factor,
+                            displayVectorScore,
+                            displayFinalScore,
                           ].some((value) => value != null);
 
                           return (
@@ -4550,22 +4553,18 @@ export default function AiCompanyAnalysisTab() {
                                 </div>
                               </div>
                               {hasTraceBreakdown ? (
-                                <div className="mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
+                                <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-1 text-[11px] text-muted-foreground">
                                   <div>
                                     <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
-                                    {formatRawScore(trace?.bd_score) ?? '\u2014'}
+                                    {formatSimilarityScore(trace?.bd_score) ?? formatRawScore(trace?.bd_score) ?? '\u2014'}
                                   </div>
                                   <div>
                                     <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
-                                    {formatRawScore(trace?.vector_score) ?? '\u2014'}
+                                    {formatSimilarityScore(displayVectorScore) ?? formatRawScore(displayVectorScore) ?? '\u2014'}
                                   </div>
                                   <div>
-                                    <span className="font-medium text-foreground/90">GEN:</span>{' '}
-                                    {formatRawScore(trace?.gen_score) ?? '\u2014'}
-                                  </div>
-                                  <div>
-                                    <span className="font-medium text-foreground/90">K:</span>{' '}
-                                    {formatRawScore(trace?.factor) ?? '\u2014'}
+                                    <span className="font-medium text-foreground/90">FINAL:</span>{' '}
+                                    {formatSimilarityScore(displayFinalScore) ?? formatRawScore(displayFinalScore) ?? '\u2014'}
                                   </div>
                                 </div>
                               ) : (
@@ -4591,7 +4590,7 @@ export default function AiCompanyAnalysisTab() {
                                   {formatRawScore(trace?.factor) ?? 'вЂ”'}
                                 </div>
                               </div>
-                              {(calcPathLabel || finalSourceLabel) && (
+                              {false && (calcPathLabel || finalSourceLabel) && (
                                 <div className="mt-2 flex flex-wrap gap-2">
                                   {finalSourceLabel && (
                                     <Badge variant="outline" className="text-[11px]">
