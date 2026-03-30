@@ -2,10 +2,20 @@ import { randomUUID } from 'crypto';
 
 const DEFAULT_TIMEOUT_MS = 15000;
 
+type AiIntegrationHealthResponse = {
+  ok?: boolean;
+  detail?: string;
+  status?: string;
+  message?: string;
+  connections?: Record<string, unknown>;
+};
+
 export type AiIntegrationHealth = {
   base: string | null;
   available: boolean;
+  ok?: boolean;
   detail?: string;
+  connections?: Record<string, string>;
 };
 
 function readEnv(names: string[]): string | null {
@@ -18,8 +28,44 @@ function readEnv(names: string[]): string | null {
   return null;
 }
 
+function normalizeHealthConnections(value: unknown): Record<string, string> | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value).flatMap(([key, raw]) =>
+    typeof raw === 'string' && raw.trim() ? [[key, raw.trim()]] : [],
+  );
+
+  return entries.length ? Object.fromEntries(entries) : undefined;
+}
+
+function buildHealthDetail(payload: AiIntegrationHealthResponse | null, connections?: Record<string, string>): string | undefined {
+  const explicit =
+    typeof payload?.detail === 'string' && payload.detail.trim()
+      ? payload.detail.trim()
+      : typeof payload?.status === 'string' && payload.status.trim()
+        ? payload.status.trim()
+        : typeof payload?.message === 'string' && payload.message.trim()
+          ? payload.message.trim()
+          : null;
+  if (explicit) return explicit;
+
+  if (!connections) return undefined;
+
+  const degraded = Object.entries(connections)
+    .filter(([, status]) => status !== 'ok' && status !== 'disabled')
+    .map(([name, status]) => `${name}: ${status}`);
+
+  if (degraded.length) {
+    return `Health check failed (${degraded.join(', ')})`;
+  }
+
+  return undefined;
+}
+
 export function getAiIntegrationBase(): string | null {
-  const raw = readEnv(['AI_INTEGRATION_BASE_URL', 'AI_INTEGRATION_BASE', 'AI_ANALYZE_BASE', 'ANALYZE_BASE']);
+  const raw = readEnv(['AI_INTEGRATION_BASE_URL', 'AI_INTEGRATION_BASE']);
   if (!raw) return null;
 
   try {
@@ -39,7 +85,7 @@ export async function callAiIntegration<T = any>(
     return {
       ok: false,
       status: 503,
-      error: 'AI integration base URL is not configured (AI_INTEGRATION_BASE / AI_ANALYZE_BASE / ANALYZE_BASE)',
+      error: 'AI integration base URL is not configured (AI_INTEGRATION_BASE_URL / AI_INTEGRATION_BASE)',
     };
 
   const controller = new AbortController();
@@ -85,18 +131,34 @@ export async function callAiIntegration<T = any>(
 
 export async function getAiIntegrationHealth(): Promise<AiIntegrationHealth> {
   const base = getAiIntegrationBase();
-  if (!base) return { base: null, available: false, detail: 'AI_INTEGRATION_BASE не указан' };
+  if (!base) {
+    return {
+      base: null,
+      available: false,
+      ok: false,
+      detail: 'AI_INTEGRATION_BASE_URL / AI_INTEGRATION_BASE is not configured',
+    };
+  }
 
-  const res = await callAiIntegration<{ status: string; databases?: Record<string, boolean> }>('/health', {
+  const res = await callAiIntegration<AiIntegrationHealthResponse>('/health', {
     timeoutMs: 5000,
   });
 
   if (!res.ok) {
-    return { base, available: false, detail: res.error };
+    return { base, available: false, ok: false, detail: res.error };
   }
 
-  const status = (res.data as any)?.status ?? (res.data as any)?.message;
-  return { base, available: true, detail: status ? String(status) : undefined };
+  const payload = (res.data ?? null) as AiIntegrationHealthResponse | null;
+  const connections = normalizeHealthConnections(payload?.connections);
+  const ok = payload?.ok !== false;
+
+  return {
+    base,
+    available: ok,
+    ok,
+    connections,
+    detail: buildHealthDetail(payload, connections),
+  };
 }
 
 export function aiRequestId() {

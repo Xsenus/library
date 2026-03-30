@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { dbBitrix } from '@/lib/db-bitrix';
+import { db } from '@/lib/db';
 import type { PoolClient } from 'pg';
 import { getSession } from '@/lib/auth';
 import { aiRequestId, callAiIntegration, getAiIntegrationBase } from '@/lib/ai-integration';
@@ -7,6 +8,7 @@ import { logAiDebugEvent } from '@/lib/ai-debug';
 import {
   getForcedLaunchMode,
   getForcedSteps,
+  getHealthTimeoutMs,
   getOverallTimeoutMs,
   getStepTimeoutMs,
   isLaunchModeLocked,
@@ -295,7 +297,144 @@ type RunResult = {
   error?: string;
   progress?: number;
   completedSteps?: StepKey[];
+  outcome?: 'completed' | 'partial' | 'failed';
+  failedSteps?: string[];
+  parseSiteOkvedFallback?: boolean;
+  analyzeJsonOkvedFallback?: boolean;
 };
+
+type StepRunResult = {
+  step: StepKey;
+  ok: boolean;
+  status: number;
+  error?: string;
+  okvedFallbackUsed?: boolean;
+};
+
+type StepRuntimeFlags = {
+  parseSiteOkvedFallback: boolean;
+  analyzeJsonOkvedFallback: boolean;
+};
+
+type PipelineFullResponsePayload = {
+  ok?: unknown;
+  status?: unknown;
+  errors?: unknown;
+  completed_steps?: unknown;
+  failed_steps?: unknown;
+  lookup_card?: unknown;
+  parse_site?: unknown;
+  analyze_json?: unknown;
+  ib_match?: unknown;
+  equipment_selection?: unknown;
+};
+
+type PipelineStepErrorPayload = {
+  step?: unknown;
+  detail?: unknown;
+};
+
+const FULL_PIPELINE_STEP_KEYS = [
+  'lookup_card',
+  'parse_site',
+  'analyze_json',
+  'ib_match',
+  'equipment_selection',
+] as const;
+
+function normalizeStringList(raw: unknown): string[] {
+  if (!Array.isArray(raw)) return [];
+
+  const seen = new Set<string>();
+  const values: string[] = [];
+  for (const item of raw) {
+    const value = String(item ?? '').trim();
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    values.push(value);
+  }
+  return values;
+}
+
+function inferCompletedPipelineSteps(payload: PipelineFullResponsePayload): string[] {
+  const explicit = normalizeStringList(payload.completed_steps);
+  if (explicit.length) return explicit;
+
+  return FULL_PIPELINE_STEP_KEYS.filter((step) => payload[step] != null);
+}
+
+function normalizePipelineErrors(raw: unknown): PipelineStepErrorPayload[] {
+  if (!Array.isArray(raw)) return [];
+
+  return raw.filter((item): item is PipelineStepErrorPayload => Boolean(item && typeof item === 'object'));
+}
+
+function summarizePipelineErrors(errors: PipelineStepErrorPayload[]): string | undefined {
+  const parts = errors
+    .map((error) => {
+      const step = String(error.step ?? '').trim();
+      const detail = String(error.detail ?? '').trim();
+      if (step && detail) return `${step}: ${detail}`;
+      return step || detail;
+    })
+    .filter(Boolean);
+
+  if (!parts.length) return undefined;
+  return parts.slice(0, 3).join('; ');
+}
+
+function extractPipelineRunResult(data: unknown, transportStatus: number): RunResult {
+  if (!data || typeof data !== 'object') {
+    return {
+      ok: false,
+      status: transportStatus,
+      outcome: 'failed',
+      error: 'AI integration returned an invalid pipeline response',
+    };
+  }
+
+  const payload = data as PipelineFullResponsePayload;
+  const errors = normalizePipelineErrors(payload.errors);
+  const completedSteps = inferCompletedPipelineSteps(payload);
+  const failedStepsFromErrors = normalizeStringList(errors.map((error) => error.step));
+  const failedSteps = normalizeStringList(payload.failed_steps).length
+    ? normalizeStringList(payload.failed_steps)
+    : failedStepsFromErrors;
+  const explicitStatus = typeof payload.status === 'string' ? payload.status.trim().toLowerCase() : '';
+  const explicitOk = typeof payload.ok === 'boolean' ? payload.ok : null;
+
+  let outcome: 'completed' | 'partial' | 'failed';
+  if (explicitStatus === 'completed' || explicitOk === true) {
+    outcome = errors.length === 0 && failedSteps.length === 0 ? 'completed' : 'partial';
+  } else if (explicitStatus === 'failed') {
+    outcome = 'failed';
+  } else if (explicitStatus === 'partial') {
+    outcome = 'partial';
+  } else if (errors.length === 0 && failedSteps.length === 0) {
+    outcome = explicitOk === false ? 'partial' : 'completed';
+  } else {
+    outcome = completedSteps.length > 0 ? 'partial' : 'failed';
+  }
+
+  const progressBase = FULL_PIPELINE_STEP_KEYS.length ? completedSteps.length / FULL_PIPELINE_STEP_KEYS.length : undefined;
+  const progress = outcome === 'completed' ? 1 : progressBase;
+  const error =
+    outcome === 'completed'
+      ? undefined
+      : summarizePipelineErrors(errors) ??
+        (failedSteps.length
+          ? `Pipeline finished with ${outcome} status (${failedSteps.join(', ')})`
+          : `Pipeline finished with ${outcome} status`);
+
+  return {
+    ok: outcome === 'completed',
+    status: transportStatus,
+    error,
+    progress,
+    outcome,
+    failedSteps,
+  };
+}
 
 const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
   lookup: {
@@ -411,7 +550,7 @@ async function ensureIntegrationHealthy(context: {
     payload: { path, method: 'GET' },
   });
 
-  const health = await callAiIntegration(path, { timeoutMs: 3000 });
+  const health = await callAiIntegration(path, { timeoutMs: getHealthTimeoutMs() });
   if (!health.ok || (health.data as { ok?: boolean } | null)?.ok === false) {
     const errorDetail = !health.ok
       ? health.error
@@ -594,81 +733,34 @@ async function saveOkvedFallbackToDadata(inn: string, prodclassByOkved: number):
   await dbBitrix.query(`UPDATE dadata_result SET ${setters.join(', ')} WHERE inn = $1`, values);
 }
 
-async function shouldUseOkvedFallbackForIbMatch(inn: string, timeoutMs: number): Promise<boolean> {
-  const getRes = await callAiIntegration(`/v1/analyze-json/${encodeURIComponent(inn)}`, {
-    method: 'GET',
-    timeoutMs,
-  });
-
-  const getExtracted = extractAnalyzeJsonFallback(getRes.ok ? getRes.data : null);
-  if (getRes.ok && getExtracted.prodclassByOkved != null) {
-    await saveOkvedFallbackToDadata(inn, getExtracted.prodclassByOkved).catch((error) =>
+async function persistOkvedFallbackState(inn: string, data: unknown): Promise<boolean> {
+  const extracted = extractAnalyzeJsonFallback(data);
+  if (extracted.prodclassByOkved != null) {
+    await saveOkvedFallbackToDadata(inn, extracted.prodclassByOkved).catch((error) =>
       console.warn('failed to persist prodclass_by_okved fallback', error),
     );
   }
 
-  if (getRes.ok && getExtracted.used) {
-    return true;
-  }
-
-  const postRes = await callAiIntegration('/v1/analyze-json', {
-    method: 'POST',
-    body: JSON.stringify({ inn }),
-    timeoutMs,
-  });
-
-  const postExtracted = extractAnalyzeJsonFallback(postRes.ok ? postRes.data : null);
-  if (postRes.ok && postExtracted.prodclassByOkved != null) {
-    await saveOkvedFallbackToDadata(inn, postExtracted.prodclassByOkved).catch((error) =>
-      console.warn('failed to persist prodclass_by_okved fallback', error),
-    );
-  }
-
-  return postRes.ok && postExtracted.used;
-}
-
-async function shouldUseOkvedFallbackForAnalyzeJson(inn: string, timeoutMs: number): Promise<boolean> {
-  const getRes = await callAiIntegration(`/v1/parse-site/${encodeURIComponent(inn)}`, {
-    method: 'GET',
-    timeoutMs,
-  });
-
-  const getExtracted = extractAnalyzeJsonFallback(getRes.ok ? getRes.data : null);
-  if (getRes.ok && getExtracted.prodclassByOkved != null) {
-    await saveOkvedFallbackToDadata(inn, getExtracted.prodclassByOkved).catch((error) =>
-      console.warn('failed to persist prodclass_by_okved fallback', error),
-    );
-  }
-
-  if (getRes.ok && getExtracted.used) {
-    return true;
-  }
-
-  const postRes = await callAiIntegration('/v1/parse-site', {
-    method: 'POST',
-    body: JSON.stringify({ inn }),
-    timeoutMs,
-  });
-
-  const postExtracted = extractAnalyzeJsonFallback(postRes.ok ? postRes.data : null);
-  if (postRes.ok && postExtracted.prodclassByOkved != null) {
-    await saveOkvedFallbackToDadata(inn, postExtracted.prodclassByOkved).catch((error) =>
-      console.warn('failed to persist prodclass_by_okved fallback', error),
-    );
-  }
-
-  return postRes.ok && postExtracted.used;
+  return hasOkvedFallbackSignal(data);
 }
 
 async function getClientRequestIdByInn(inn: string): Promise<number | null> {
+  const sql = 'SELECT id FROM clients_requests WHERE inn = $1 ORDER BY id DESC LIMIT 1';
+
   try {
-    const { rows } = await dbBitrix.query<{ id: number }>(
-      'SELECT id FROM clients_requests WHERE inn = $1 ORDER BY id DESC LIMIT 1',
-      [inn],
-    );
-    const rawId = rows?.[0]?.id;
-    if (Number.isFinite(rawId)) {
-      return Number(rawId);
+    for (const source of [
+      { label: 'main-db', run: () => db.query<{ id: number }>(sql, [inn]) },
+      { label: 'bitrix-db', run: () => dbBitrix.query<{ id: number }>(sql, [inn]) },
+    ] as const) {
+      try {
+        const { rows } = await source.run();
+        const rawId = rows?.[0]?.id;
+        if (Number.isFinite(rawId)) {
+          return Number(rawId);
+        }
+      } catch (error) {
+        console.warn(`Failed to resolve client_id from ${source.label}`, { inn, error });
+      }
     }
   } catch (error) {
     console.warn('Failed to resolve client_id for ib-match fallback', { inn, error });
@@ -677,7 +769,15 @@ async function getClientRequestIdByInn(inn: string): Promise<number | null> {
   return null;
 }
 
-async function runStep(inn: string, step: StepKey, timeoutMs: number) {
+async function runStep(
+  inn: string,
+  step: StepKey,
+  timeoutMs: number,
+  runtimeFlags: StepRuntimeFlags = {
+    parseSiteOkvedFallback: false,
+    analyzeJsonOkvedFallback: false,
+  },
+): Promise<StepRunResult> {
   const definition = STEP_DEFINITIONS[step];
   const attempts: StepAttempt[] = [definition.primary, ...(definition.fallbacks ?? [])];
   const clientId = step === 'ib_match' ? await getClientRequestIdByInn(inn) : null;
@@ -728,25 +828,20 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
         lastStatus = res.status;
 
         if (res.ok) {
-        if (step === 'analyze_json') {
-          const extracted = extractAnalyzeJsonFallback(res.data);
-          if (extracted.prodclassByOkved != null) {
-            await saveOkvedFallbackToDadata(inn, extracted.prodclassByOkved).catch((error) =>
-              console.warn('failed to persist prodclass_by_okved fallback', error),
-            );
-          }
+          const okvedFallbackUsed =
+            step === 'parse_site' || step === 'analyze_json'
+              ? await persistOkvedFallbackState(inn, res.data)
+              : false;
+          await safeLog({
+            type: 'response',
+            source: 'ai-integration',
+            requestId,
+            companyId: inn,
+            message: `Step completed: ${definition.primary.label} (${attempt.label})`,
+            payload: { path, method: attempt.method, status: res.status, okvedFallbackUsed, data: res.data },
+          });
+          return { step, ok: true, status: res.status, okvedFallbackUsed };
         }
-
-        await safeLog({
-          type: 'response',
-          source: 'ai-integration',
-          requestId,
-          companyId: inn,
-          message: `Шаг успешно принят: ${definition.primary.label} (${attempt.label})`,
-          payload: { path, method: attempt.method, status: res.status, data: res.data },
-        });
-        return { step, ok: true, status: res.status };
-      }
 
       lastError = res.error;
       await safeLog({
@@ -773,7 +868,7 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
   }
 
   if (step === 'ib_match') {
-    const okvedFallback = await shouldUseOkvedFallbackForIbMatch(inn, timeoutMs);
+    const okvedFallback = runtimeFlags.analyzeJsonOkvedFallback;
     if (okvedFallback) {
       await safeLog({
         type: 'notification',
@@ -782,12 +877,12 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
         message: 'Сопоставление продклассов пропущено: используется fallback по ОКВЭД',
         payload: { lastStatus, lastError },
       });
-      return { step, ok: true as const, status: lastStatus || 200 };
+      return { step, ok: true, status: lastStatus || 200, okvedFallbackUsed: true };
     }
   }
 
   if (step === 'analyze_json') {
-    const okvedFallback = await shouldUseOkvedFallbackForAnalyzeJson(inn, timeoutMs);
+    const okvedFallback = runtimeFlags.parseSiteOkvedFallback;
     if (okvedFallback) {
       await safeLog({
         type: 'notification',
@@ -796,11 +891,11 @@ async function runStep(inn: string, step: StepKey, timeoutMs: number) {
         message: 'AI-анализ пропущен: используется fallback по ОКВЭД из parse-site',
         payload: { lastStatus, lastError },
       });
-      return { step, ok: true as const, status: lastStatus || 200 };
+      return { step, ok: true, status: lastStatus || 200, okvedFallbackUsed: true };
     }
   }
 
-  return { step, ok: false as const, status: lastStatus, error: lastError ?? 'Unknown error' };
+  return { step, ok: false, status: lastStatus, error: lastError ?? 'Unknown error' };
 }
 
 async function markRunning(inn: string, attempt?: number) {
@@ -914,7 +1009,7 @@ async function markFinished(
   inn: string,
   result:
     | { status: 'completed'; durationMs: number }
-    | { status: 'failed'; durationMs: number; progress?: number },
+    | { status: 'partial' | 'failed'; durationMs: number; progress?: number },
   options?: { attempts?: number; outcome?: 'partial' | 'failed' },
 ) {
   const columns = await getDadataColumns();
@@ -958,11 +1053,12 @@ async function markFinished(
   }
 
   if (columns.serverError) {
-    setters.push(`"${columns.serverError}" = CASE WHEN $${statusIdx} = 'failed' THEN 1 ELSE 0 END`);
+    setters.push(`"${columns.serverError}" = CASE WHEN $${statusIdx} IN ('failed', 'partial') THEN 1 ELSE 0 END`);
   }
 
   if (columns.outcome) {
-    const outcomeValue = options?.outcome ?? (result.status === 'completed' ? 'completed' : 'partial');
+    const outcomeValue =
+      options?.outcome ?? (result.status === 'completed' ? 'completed' : result.status === 'partial' ? 'partial' : 'failed');
     params.push(outcomeValue);
     const idx = params.length;
     setters.push(`"${columns.outcome}" = $${idx}`);
@@ -1039,6 +1135,9 @@ async function consumeStopSignals(existing?: Set<string>) {
 async function runFullPipeline(inn: string, timeoutMs: number): Promise<RunResult> {
   let lastStatus = 0;
   let lastError: string | undefined;
+  let lastOutcome: RunResult['outcome'];
+  let lastProgress: number | undefined;
+  let lastFailedSteps: string[] | undefined;
 
   for (let attemptNo = 1; attemptNo <= MAX_STEP_ATTEMPTS; attemptNo++) {
     const health = await ensureIntegrationHealthy({
@@ -1070,16 +1169,24 @@ async function runFullPipeline(inn: string, timeoutMs: number): Promise<RunResul
 
       lastStatus = res.status;
       if (res.ok) {
+        const pipelineResult = extractPipelineRunResult(res.data, res.status);
         await safeLog({
-          type: 'response',
+          type: pipelineResult.ok ? 'response' : 'error',
           source: 'ai-integration',
           requestId,
           companyId: inn,
           message: 'Пайплайн принят внешним сервисом',
           payload: res.data,
         });
-        return { ok: true as const, status: res.status };
-      }
+        if (pipelineResult.ok) {
+          return pipelineResult;
+        }
+
+        lastError = pipelineResult.error;
+        lastOutcome = pipelineResult.outcome;
+        lastProgress = pipelineResult.progress;
+        lastFailedSteps = pipelineResult.failedSteps;
+      } else {
 
       lastError = res.error;
       await safeLog({
@@ -1090,6 +1197,7 @@ async function runFullPipeline(inn: string, timeoutMs: number): Promise<RunResul
         message: `Ошибка при вызове AI integration: ${res.error}`,
         payload: { status: res.status },
       });
+    }
     }
 
     if (attemptNo < MAX_STEP_ATTEMPTS) {
@@ -1104,7 +1212,14 @@ async function runFullPipeline(inn: string, timeoutMs: number): Promise<RunResul
     }
   }
 
-  return { ok: false as const, status: lastStatus, error: lastError ?? 'Unknown error' };
+  return {
+    ok: false as const,
+    status: lastStatus,
+    error: lastError ?? 'Unknown error',
+    progress: lastProgress,
+    outcome: lastOutcome ?? 'failed',
+    failedSteps: lastFailedSteps,
+  };
 }
 
 async function hasQueuedItems(): Promise<boolean> {
@@ -1121,6 +1236,8 @@ async function processQueue(lockClient: PoolClient) {
     status: number;
     error?: string;
     progress?: number;
+    outcome?: 'completed' | 'partial' | 'failed';
+    failedSteps?: string[];
     deferred?: boolean;
   }> = [];
   const perStep: Array<{ inn: string; results: Awaited<ReturnType<typeof runStep>>[] }> = [];
@@ -1159,6 +1276,8 @@ async function processQueue(lockClient: PoolClient) {
       steps?: unknown;
       defer_count?: unknown;
       completed_steps?: unknown;
+      parse_site_okved_fallback?: unknown;
+      analyze_json_okved_fallback?: unknown;
     };
     const modeFromPayload: 'full' | 'steps' = payload.mode === 'full' ? 'full' : 'steps';
     const stepsFromPayload = modeFromPayload === 'steps' ? normalizeSteps(payload.steps) : null;
@@ -1199,6 +1318,10 @@ async function processQueue(lockClient: PoolClient) {
     const runInn = async () => {
       if (modeFromPayload === 'steps' && stepsFromPayload) {
         const completedSteps = new Set<StepKey>(normalizeSteps(payload.completed_steps, []));
+        const runtimeFlags: StepRuntimeFlags = {
+          parseSiteOkvedFallback: payload.parse_site_okved_fallback === true,
+          analyzeJsonOkvedFallback: payload.analyze_json_okved_fallback === true,
+        };
         const stepResults: Awaited<ReturnType<typeof runStep>>[] = [];
         const totalSteps = stepsFromPayload.length;
         let progress = totalSteps ? completedSteps.size / totalSteps : 0;
@@ -1220,10 +1343,16 @@ async function processQueue(lockClient: PoolClient) {
           if (completedSteps.has(step)) {
             continue;
           }
-          const res = await runStep(inn, step, stepTimeoutMs);
+          const res = await runStep(inn, step, stepTimeoutMs, runtimeFlags);
           stepResults.push(res);
           if (res.ok) {
             completedSteps.add(step);
+            if (step === 'parse_site' && res.okvedFallbackUsed) {
+              runtimeFlags.parseSiteOkvedFallback = true;
+            }
+            if (step === 'analyze_json' && res.okvedFallbackUsed) {
+              runtimeFlags.analyzeJsonOkvedFallback = true;
+            }
             progress = Math.max(progress, completedSteps.size / totalSteps);
             await updateProgress(progress);
           }
@@ -1239,10 +1368,12 @@ async function processQueue(lockClient: PoolClient) {
           error: firstError,
           progress,
           completedSteps: Array.from(completedSteps),
+          parseSiteOkvedFallback: runtimeFlags.parseSiteOkvedFallback,
+          analyzeJsonOkvedFallback: runtimeFlags.analyzeJsonOkvedFallback,
         };
       }
 
-      return runFullPipeline(inn, stepTimeoutMs);
+      return runFullPipeline(inn, overallTimeoutMs);
     };
 
     let timedResult: RunResult;
@@ -1288,10 +1419,15 @@ async function processQueue(lockClient: PoolClient) {
     integrationResults.push({ inn, ...timedResult, deferred: shouldRetry });
 
     if (!timedResult.ok && failedSequence.size >= MAX_FAILURE_STREAK) {
-      await markFinished(inn, { status: 'failed', durationMs: Date.now() - startedAt }, {
-        attempts: attemptNo,
-        outcome: 'failed',
-      });
+      const streakStatus: 'partial' | 'failed' = timedResult.outcome === 'partial' ? 'partial' : 'failed';
+      await markFinished(
+        inn,
+        { status: streakStatus, durationMs: Date.now() - startedAt, progress: timedResult.progress },
+        {
+          attempts: attemptNo,
+          outcome: streakStatus === 'failed' ? 'failed' : 'partial',
+        },
+      );
       await safeLog({
         type: 'error',
         source: 'ai-integration',
@@ -1312,6 +1448,10 @@ async function processQueue(lockClient: PoolClient) {
         ...payload,
         defer_count: attemptNo,
         completed_steps: completedStepsForRetry,
+        parse_site_okved_fallback:
+          payload.parse_site_okved_fallback === true || timedResult.parseSiteOkvedFallback === true,
+        analyze_json_okved_fallback:
+          payload.analyze_json_okved_fallback === true || timedResult.analyzeJsonOkvedFallback === true,
       };
       await safeLog({
         type: 'notification',
@@ -1327,6 +1467,8 @@ async function processQueue(lockClient: PoolClient) {
     }
 
     const durationMs = Date.now() - startedAt;
+    const finalStatus: 'completed' | 'partial' | 'failed' =
+      timedResult.ok ? 'completed' : timedResult.outcome === 'partial' ? 'partial' : 'failed';
     if (timedResult.ok) {
       await markFinished(inn, { status: 'completed', durationMs }, { attempts: attemptNo });
       await safeLog({
@@ -1341,14 +1483,14 @@ async function processQueue(lockClient: PoolClient) {
       await markFinished(
         inn,
         {
-          status: 'failed',
+          status: finalStatus,
           durationMs,
           progress: timedResult.progress,
         },
-        { attempts: attemptNo, outcome: 'failed' },
+        { attempts: attemptNo, outcome: finalStatus === 'failed' ? 'failed' : 'partial' },
       );
       await safeLog({
-        type: 'error',
+        type: finalStatus === 'partial' ? 'notification' : 'error',
         source: 'ai-integration',
         companyId: inn,
         companyName,
@@ -1414,7 +1556,7 @@ export async function POST(request: NextRequest) {
         {
           ok: false,
           error:
-            'AI integration base URL is not configured (set AI_INTEGRATION_BASE или AI_ANALYZE_BASE/ANALYZE_BASE)',
+            'AI integration base URL is not configured (set AI_INTEGRATION_BASE_URL or AI_INTEGRATION_BASE)',
         },
         { status: 503 },
       );
@@ -1427,20 +1569,28 @@ export async function POST(request: NextRequest) {
       payload: { path: '/health', method: 'GET' },
     });
 
-    const health = await callAiIntegration('/health', { timeoutMs: 3000 });
+    const health = await callAiIntegration<{ ok?: boolean; detail?: string; connections?: Record<string, string> }>('/health', {
+      timeoutMs: getHealthTimeoutMs(),
+    });
+    const healthBodyOk = health.ok ? (health.data?.ok ?? true) : false;
+    const healthError = !health.ok
+      ? health.error
+      : healthBodyOk
+        ? undefined
+        : health.data?.detail ?? 'AI integration health check failed';
     await safeLog({
-      type: health.ok ? 'response' : 'error',
+      type: health.ok && healthBodyOk ? 'response' : 'error',
       source: 'ai-integration',
-      message: health.ok
+      message: health.ok && healthBodyOk
         ? 'AI integration доступна перед запуском'
-        : `AI integration недоступна перед запуском: ${health.error}`,
+        : `AI integration недоступна перед запуском: ${healthError}`,
       payload: { path: '/health', status: health.status, data: health.ok ? health.data : undefined },
     });
-    if (!health.ok) {
+    if (!health.ok || !healthBodyOk) {
       return NextResponse.json(
         {
           ok: false,
-          error: `AI integration недоступна: ${health.error}`,
+          error: `AI integration недоступна: ${healthError}`,
         },
         { status: 502 },
       );
@@ -1484,6 +1634,8 @@ export async function POST(request: NextRequest) {
       steps: mode === 'steps' ? steps : null,
       defer_count: 0,
       completed_steps: [],
+      parse_site_okved_fallback: false,
+      analyze_json_okved_fallback: false,
     };
 
     const isImmediateDebugStep =
@@ -1494,7 +1646,7 @@ export async function POST(request: NextRequest) {
 
     if (isImmediateFullRun) {
       const inn = inns[0];
-      const stepTimeoutMs = getStepTimeoutMs();
+      const overallTimeoutMs = getOverallTimeoutMs();
       const companyNameMap = await getCompanyNames([inn]);
       const companyName = companyNameMap.get(inn);
 
@@ -1509,8 +1661,10 @@ export async function POST(request: NextRequest) {
 
       await markRunning(inn, 1);
       const startedAt = Date.now();
-      const runResult = await runFullPipeline(inn, stepTimeoutMs);
+      const runResult = await runFullPipeline(inn, overallTimeoutMs);
       const durationMs = Date.now() - startedAt;
+      const finalStatus: 'completed' | 'partial' | 'failed' =
+        runResult.ok ? 'completed' : runResult.outcome === 'partial' ? 'partial' : 'failed';
 
       if (runResult.ok) {
         await markFinished(inn, { status: 'completed', durationMs }, { attempts: 1 });
@@ -1526,11 +1680,11 @@ export async function POST(request: NextRequest) {
       } else {
         await markFinished(
           inn,
-          { status: 'failed', durationMs, progress: runResult.progress },
-          { attempts: 1, outcome: 'failed' },
+          { status: finalStatus, durationMs, progress: runResult.progress },
+          { attempts: 1, outcome: finalStatus === 'failed' ? 'failed' : 'partial' },
         );
         await safeLog({
-          type: 'error',
+          type: finalStatus === 'partial' ? 'notification' : 'error',
           source: 'ai-integration',
           companyId: inn,
           companyName,
@@ -1542,7 +1696,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({
         ok: runResult.ok,
         status: runResult.status,
+        outcome: runResult.outcome,
         error: runResult.error,
+        failedSteps: runResult.failedSteps,
         mode,
         steps,
         integration: { base: integrationBase, mode, modeLocked, steps },
@@ -1581,8 +1737,18 @@ export async function POST(request: NextRequest) {
       const runAllSteps = async (): Promise<RunResult> => {
         const totalSteps = stepsToRun.length;
         const completedSteps = new Set<StepKey>();
+        const runtimeFlags: StepRuntimeFlags = {
+          parseSiteOkvedFallback: false,
+          analyzeJsonOkvedFallback: false,
+        };
         if (totalSteps === 0) {
-          return { ok: true as const, status: 200, completedSteps: [] };
+          return {
+            ok: true,
+            status: 200,
+            completedSteps: [],
+            parseSiteOkvedFallback: false,
+            analyzeJsonOkvedFallback: false,
+          };
         }
 
         let progress = 0;
@@ -1590,24 +1756,39 @@ export async function POST(request: NextRequest) {
 
         for (let idx = 0; idx < stepsToRun.length; idx++) {
           const step = stepsToRun[idx];
-          const result = await runStep(inn, step, stepTimeoutMs);
+          const result = await runStep(inn, step, stepTimeoutMs, runtimeFlags);
           if (result.ok) {
             completedSteps.add(step);
+            if (step === 'parse_site' && result.okvedFallbackUsed) {
+              runtimeFlags.parseSiteOkvedFallback = true;
+            }
+            if (step === 'analyze_json' && result.okvedFallbackUsed) {
+              runtimeFlags.analyzeJsonOkvedFallback = true;
+            }
             progress = completedSteps.size / totalSteps;
             await updateProgress(progress);
             continue;
           }
 
           return {
-            ok: false as const,
+            ok: false,
             status: result.status,
             error: result.error,
             progress,
             completedSteps: Array.from(completedSteps),
+            parseSiteOkvedFallback: runtimeFlags.parseSiteOkvedFallback,
+            analyzeJsonOkvedFallback: runtimeFlags.analyzeJsonOkvedFallback,
           };
         }
 
-        return { ok: true as const, status: 200, progress: 1, completedSteps: Array.from(completedSteps) };
+        return {
+          ok: true,
+          status: 200,
+          progress: 1,
+          completedSteps: Array.from(completedSteps),
+          parseSiteOkvedFallback: runtimeFlags.parseSiteOkvedFallback,
+          analyzeJsonOkvedFallback: runtimeFlags.analyzeJsonOkvedFallback,
+        };
       };
 
       const startedAt = Date.now();
@@ -1659,6 +1840,8 @@ export async function POST(request: NextRequest) {
         ok: timedResult.ok,
         status: timedResult.status,
         error: timedResult.error,
+        parseSiteOkvedFallback: timedResult.parseSiteOkvedFallback,
+        analyzeJsonOkvedFallback: timedResult.analyzeJsonOkvedFallback,
         mode,
         steps,
         integration: { base: integrationBase, mode, modeLocked, steps },
@@ -1694,6 +1877,7 @@ export async function POST(request: NextRequest) {
         ok: runResult.ok,
         status: runResult.status,
         error: runResult.error,
+        okvedFallbackUsed: runResult.okvedFallbackUsed,
         mode,
         steps,
         integration: { base: integrationBase, mode, modeLocked, steps },

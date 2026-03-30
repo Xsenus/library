@@ -18,7 +18,7 @@
 
 ## Постановка компаний в очередь
 1. Вызов `POST /api/ai-analysis/run` принимает список ИНН и режим работы (`full` или `steps`). Если режим не заблокирован конфигурацией, он берётся из тела запроса, иначе — принудительный (`AI_ANALYZE_FORCED_MODE`).
-2. Тело запроса нормализуется в полезную нагрузку: `{ source, count, requested_at, mode, steps|null, defer_count: 0, completed_steps: [] }`. Отсутствие интеграции (`AI_INTEGRATION_BASE`/`ANALYZE_BASE`) или падение `/health` возвращают ошибку 5xx без записи в очередь.
+2. Тело запроса нормализуется в полезную нагрузку: `{ source, count, requested_at, mode, steps|null, defer_count: 0, completed_steps: [] }`. Отсутствие интеграции (`AI_INTEGRATION_BASE_URL`/`AI_INTEGRATION_BASE`) или падение `/health` возвращают ошибку 5xx без записи в очередь.
 3. Для каждого ИНН делается upsert в `ai_analysis_queue`: устанавливаются `queued_at`, `queued_by` (из сессии) и сериализованный `payload`. Параллельно в `dadata_result` проставляется статус `queued`, сбрасываются даты старта/финиша и прогресс.
 4. В лог `ai_debug_events` добавляется уведомление о постановке в очередь c полями `{inns, requestedBy, mode, steps, source}`. UI сразу видит новые статусы и может фильтровать по событиям.
 
