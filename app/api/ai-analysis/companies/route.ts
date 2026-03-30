@@ -7,6 +7,7 @@ import {
 } from '@/lib/validators';
 import { getAiIntegrationHealth } from '@/lib/ai-integration';
 import { refreshCompanyContacts } from '@/lib/company-contacts';
+import { extractMeaningfulText, parseDisplayString } from '@/lib/ai-analysis-value-normalizer';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -16,6 +17,10 @@ const rootsCache = new Map<number, { roots: string[]; ts: number }>();
 const ROOTS_TTL_MS = 10 * 60 * 1000;
 let b24MetaAvailableCache: { value: boolean; ts: number } | null = null;
 const B24_META_CHECK_TTL_MS = 5 * 60 * 1000;
+const GOODS_TEXT_KEYS = ['goods_type', 'goods', 'name', 'title', 'product', 'product_name', 'goods_name', 'label', 'value', 'text'];
+const EQUIPMENT_TEXT_KEYS = ['equipment', 'equipment_site', 'equipment_name', 'equipmentId', 'name', 'title', 'label', 'value', 'text'];
+const TNVED_TEXT_KEYS = ['name', 'goods_type', 'goods', 'title', 'product', 'product_name', 'goods_name', 'label', 'value', 'text', 'description'];
+const TNVED_CODE_KEYS = ['tnved_code', 'goods_type_code', 'tnved', 'code', 'tn_ved', 'tnvedCode'];
 
 async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
   const now = Date.now();
@@ -767,11 +772,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       }
 
       if (typeof item === 'object') {
-        const name =
-          parseString((item as any).goods_type) ||
-          parseString((item as any).goods) ||
-          parseString((item as any).name) ||
-          parseString((item as any).title);
+        const name = extractMeaningfulText(item, { preferredKeys: GOODS_TEXT_KEYS });
         const id =
           parseNumber((item as any).goods_type_id) ??
           parseNumber((item as any).match_id) ??
@@ -800,13 +801,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       }
 
       if (typeof item === 'object') {
-        const name =
-          parseString((item as any).equipment) ||
-          parseString((item as any).equipment_site) ||
-          parseString((item as any).equipment_name) ||
-          parseString((item as any).equipmentId) ||
-          parseString((item as any).name) ||
-          parseString((item as any).title);
+        const name = extractMeaningfulText(item, { preferredKeys: EQUIPMENT_TEXT_KEYS });
         const id =
           parseNumber((item as any).equipment_id) ??
           parseNumber((item as any).equipmentId) ??
@@ -1200,10 +1195,9 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
             }
             return null;
           })() ??
-          parseString(g.goods_type) ??
+          extractMeaningfulText(g, { preferredKeys: GOODS_TEXT_KEYS }) ??
           parseString(g.goods_type_id) ??
-          parseString(g.match_id) ??
-          parseString((g as any).name),
+          parseString(g.match_id),
         tnved_code:
           ((): string | null => {
             const id = parseNumber(g.goods_type_id) ?? parseNumber(g.match_id) ?? parseNumber((g as any).id);
@@ -1221,12 +1215,9 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       })),
       equipment: fallbackEquipment.map((eq) => ({
         name:
-          parseString(eq.equipment) ??
-          parseString((eq as any).equipment_name) ??
-          parseString((eq as any).equipmentId) ??
+          extractMeaningfulText(eq, { preferredKeys: EQUIPMENT_TEXT_KEYS }) ??
           parseString(eq.equipment_id) ??
-          parseString(eq.match_id) ??
-          parseString((eq as any).name),
+          parseString(eq.match_id),
         id:
           parseNumber(eq.equipment_id) ??
           parseNumber((eq as any).equipmentId) ??
@@ -1363,14 +1354,7 @@ function normalizeDomain(value: any): string | null {
 }
 
 function parseString(val: any): string | null {
-  if (val == null) return null;
-  if (val instanceof Date) return val.toISOString();
-  if (typeof val === 'string') {
-    const trimmed = val.trim();
-    if (!trimmed) return null;
-    return trimmed;
-  }
-  return String(val ?? '').trim() || null;
+  return parseDisplayString(val);
 }
 
 function parseIdString(val: any): string | null {
@@ -1422,7 +1406,12 @@ function parseStringArray(val: any): string[] | null {
       .map((item) => {
         if (item == null) return null;
         if (typeof item === 'string') return item.trim();
-        return String(item ?? '').trim();
+        if (typeof item === 'object') {
+          return extractMeaningfulText(item, {
+            preferredKeys: ['value', 'label', 'name', 'title', 'domain', 'site', 'url', 'email', 'text'],
+          });
+        }
+        return parseString(item);
       })
       .filter((s): s is string => !!s);
     return arr.length ? Array.from(new Set(arr)) : null;
@@ -1435,6 +1424,32 @@ function parseStringArray(val: any): string[] | null {
     return parts.length ? Array.from(new Set(parts)) : null;
   }
   return null;
+}
+
+function parseOkvedCodeArray(val: any): string[] | null {
+  if (val == null) return null;
+  const raw = Array.isArray(val) ? val : parseJson(val);
+  if (!raw) return null;
+
+  if (!Array.isArray(raw)) {
+    const single =
+      extractMeaningfulText(raw, {
+        preferredKeys: ['code', 'okved_code', 'value', 'label', 'name', 'title', 'text'],
+      }) ?? parseString(raw);
+    return single ? [single] : null;
+  }
+
+  const values = raw
+    .map((item) => {
+      if (item == null) return null;
+      if (typeof item === 'string') return item.trim();
+      return extractMeaningfulText(item, {
+        preferredKeys: ['code', 'okved_code', 'value', 'label', 'name', 'title', 'text'],
+      });
+    })
+    .filter((value): value is string => !!value);
+
+  return values.length ? Array.from(new Set(values)) : null;
 }
 
 function parsePipeline(val: any): any {
@@ -1573,11 +1588,7 @@ function normalizeEquipment(raw: any): any[] {
 
     if (typeof item === 'object') {
       const name =
-        parseString((item as any).name) ||
-        parseString((item as any).equipment) ||
-        parseString((item as any).equipment_site) ||
-        parseString((item as any).equipment_name) ||
-        parseString((item as any).title) ||
+        extractMeaningfulText(item, { preferredKeys: EQUIPMENT_TEXT_KEYS }) ||
         (parseNumber((item as any).equipment_id) ?? parseNumber((item as any).equipmentId))?.toString();
       const id =
         parseNumber((item as any).id) ??
@@ -1612,22 +1623,53 @@ function normalizeEquipment(raw: any): any[] {
 function normalizeTnved(raw: any): any[] {
   const parsed = parseJson(raw);
   if (!parsed) return [];
-  if (Array.isArray(parsed)) return parsed;
-  if (typeof parsed === 'object') return [parsed];
-  return [];
+  const items = Array.isArray(parsed) ? parsed : typeof parsed === 'object' ? [parsed] : [];
+
+  return items.reduce<any[]>((acc, item) => {
+    if (!item) return acc;
+
+    if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+      const name = parseString(item);
+      if (name) acc.push({ name });
+      return acc;
+    }
+
+    if (typeof item !== 'object') return acc;
+
+    const id =
+      parseNumber((item as any).id) ??
+      parseNumber((item as any).goods_type_id) ??
+      parseNumber((item as any).match_id) ??
+      parseNumber((item as any).code) ??
+      null;
+    const name = extractMeaningfulText(item, { preferredKeys: TNVED_TEXT_KEYS }) ?? (id != null ? String(id) : null);
+    const tnvedCode = extractMeaningfulText(item, { preferredKeys: TNVED_CODE_KEYS });
+    const score =
+      parseNumber((item as any).score) ??
+      parseNumber((item as any).goods_types_score) ??
+      parseNumber((item as any).match_score) ??
+      null;
+
+    if (!name && !tnvedCode && id == null) return acc;
+
+    const normalized: any = { ...(item as any) };
+    if (id != null) normalized.id = id;
+    if (name) normalized.name = name;
+    if (tnvedCode) normalized.tnved_code = tnvedCode;
+    if (score != null && normalized.score == null) normalized.score = score;
+
+    acc.push(normalized);
+    return acc;
+  }, []);
 }
 
 function buildItemKey(item: any): string | null {
   if (item == null) return null;
   if (typeof item === 'string') return item.trim().toLowerCase();
   if (typeof item === 'object') {
-    const name =
-      parseString((item as any).name) ||
-      parseString((item as any).title) ||
-      parseString((item as any).equipment) ||
-      parseString((item as any).equipment_name) ||
-      parseString((item as any).goods_type) ||
-      parseString((item as any).product);
+    const name = extractMeaningfulText(item, {
+      preferredKeys: ['name', 'title', 'equipment', 'equipment_name', 'goods_type', 'product', 'label', 'value', 'text'],
+    });
     const id =
       parseNumber((item as any).id) ??
       parseNumber((item as any).equipment_id) ??
@@ -1638,6 +1680,7 @@ function buildItemKey(item: any): string | null {
 
     if (name) return name.trim().toLowerCase();
     if (id != null) return `id:${id}`;
+    return null;
   }
 
   return String(item).trim().toLowerCase();
@@ -1985,7 +2028,7 @@ export async function GET(request: NextRequest) {
       const mainOkved =
         parseString(row.main_okved) ||
         parseString((analysisInfo as any)?.main_okved);
-      const okvedList = parseStringArray(row.okveds);
+      const okvedList = parseOkvedCodeArray(row.okveds);
 
       const startedAt = parseIso(row.analysis_started_at);
       const finishedAt = parseIso(row.analysis_finished_at);
@@ -2080,7 +2123,7 @@ export async function GET(request: NextRequest) {
       if (!tnved.length) {
         const okvedSource = okvedList && okvedList.length ? okvedList : mainOkved ? [mainOkved] : null;
         if (okvedSource?.length) {
-          tnved = okvedSource.map((code) => ({ name: code, id: code, source: 'okved' }));
+          tnved = okvedSource.map((code) => ({ name: code, tnved_code: code, source: 'okved' }));
         }
       }
 
@@ -2091,11 +2134,9 @@ export async function GET(request: NextRequest) {
         return {
           ...(item as any),
           id,
-          name: parseString((item as any).name) ?? parseString((item as any).goods_type) ?? (id != null ? String(id) : '—'),
+          name: extractMeaningfulText(item, { preferredKeys: TNVED_TEXT_KEYS }) ?? (id != null ? String(id) : '—'),
           tnved_code:
-            parseString((item as any).tnved_code) ??
-            parseString((item as any).goods_type_code) ??
-            parseString((item as any).tnved),
+            extractMeaningfulText(item, { preferredKeys: TNVED_CODE_KEYS }),
           score: parseNumber((item as any).score) ?? parseNumber((item as any).goods_types_score),
           source: source === 'okved' ? 'okved' : 'site',
         };
