@@ -270,6 +270,8 @@ type EquipmentSelectionSettings = {
 
 type EquipmentTraceResponse = {
   items?: EquipmentScoreTrace[];
+  selection_strategy?: string | null;
+  selection_reason?: string | null;
 };
 
 type ProductTraceResponse = {
@@ -1313,6 +1315,8 @@ export default function AiCompanyAnalysisTab() {
   const [integrationHealth, setIntegrationHealth] = useState<AiIntegrationHealth | null>(null);
   const [billing, setBilling] = useState<BillingResponse | null>(null);
   const [equipmentTraceById, setEquipmentTraceById] = useState<Record<string, EquipmentScoreTrace>>({});
+  const [equipmentTraceStrategy, setEquipmentTraceStrategy] = useState<string | null>(null);
+  const [equipmentTraceReason, setEquipmentTraceReason] = useState<string | null>(null);
   const [equipmentTraceLoading, setEquipmentTraceLoading] = useState(false);
   const [equipmentTraceError, setEquipmentTraceError] = useState<string | null>(null);
   const [productTraceByKey, setProductTraceByKey] = useState<Record<string, ProductTraceItem>>({});
@@ -1758,6 +1762,8 @@ export default function AiCompanyAnalysisTab() {
     lastEquipmentTraceInn.current = inn;
     setEquipmentTraceLoading(true);
     setEquipmentTraceError(null);
+    setEquipmentTraceStrategy(null);
+    setEquipmentTraceReason(null);
 
     try {
       const res = await fetch(`/api/ai-analysis/equipment-trace/${encodeURIComponent(inn)}`, {
@@ -1784,11 +1790,23 @@ export default function AiCompanyAnalysisTab() {
 
       if (lastEquipmentTraceInn.current === inn) {
         setEquipmentTraceById(next);
+        setEquipmentTraceStrategy(
+          typeof (data as EquipmentTraceResponse | null)?.selection_strategy === 'string'
+            ? ((data as EquipmentTraceResponse).selection_strategy ?? null)
+            : null,
+        );
+        setEquipmentTraceReason(
+          typeof (data as EquipmentTraceResponse | null)?.selection_reason === 'string'
+            ? ((data as EquipmentTraceResponse).selection_reason ?? null)
+            : null,
+        );
       }
     } catch (error) {
       console.error('Failed to load equipment trace', error);
       if (lastEquipmentTraceInn.current === inn) {
         setEquipmentTraceById({});
+        setEquipmentTraceStrategy(null);
+        setEquipmentTraceReason(null);
         setEquipmentTraceError(
           error instanceof Error && error.message
             ? error.message
@@ -2525,6 +2543,8 @@ export default function AiCompanyAnalysisTab() {
       lastProductTraceInn.current = null;
       setInfoRefreshing(false);
       setEquipmentTraceById({});
+      setEquipmentTraceStrategy(null);
+      setEquipmentTraceReason(null);
       setEquipmentTraceLoading(false);
       setEquipmentTraceError(null);
       setProductTraceByKey({});
@@ -3544,7 +3564,13 @@ export default function AiCompanyAnalysisTab() {
     infoCompany?.okved_score,
   ].some((value) => value != null);
   const isFallbackByNullScores = !hasSiteScores;
-  const showOkvedFallbackBadge = isFallbackBySource || isFallbackByNullScores || hasFallbackDomain;
+  const normalizedEquipmentTraceStrategy = equipmentTraceStrategy?.trim().toLowerCase() || null;
+  const showOkvedFallbackBadge =
+    normalizedEquipmentTraceStrategy === 'okved'
+      ? true
+      : normalizedEquipmentTraceStrategy === 'site'
+        ? false
+        : isFallbackBySource || isFallbackByNullScores || hasFallbackDomain;
   const prodclassScoreText = formatMatchScore(prodclassScoreValue);
   const prodclassRawScoreText = formatRawScore(prodclassScoreValue);
   const prodclassDescription =

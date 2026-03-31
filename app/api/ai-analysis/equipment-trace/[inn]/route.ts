@@ -44,6 +44,14 @@ export async function GET(_request: Request, { params }: RouteContext) {
   return NextResponse.json(
     {
       items: normalizeEquipmentTracePayload(res.data),
+      selection_strategy:
+        res.data && typeof res.data === 'object' && typeof (res.data as { selection_strategy?: unknown }).selection_strategy === 'string'
+          ? (res.data as { selection_strategy: string }).selection_strategy
+          : null,
+      selection_reason:
+        res.data && typeof res.data === 'object' && typeof (res.data as { selection_reason?: unknown }).selection_reason === 'string'
+          ? (res.data as { selection_reason: string }).selection_reason
+          : null,
     },
     { status: 200 },
   );
