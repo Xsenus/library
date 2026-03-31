@@ -1701,7 +1701,29 @@ function dedupeItems<T>(items: T[]): T[] {
   return result;
 }
 
-function ensureDurationMs(duration: any, started: string | null, finished: string | null): number | null {
+function ensureDurationMs(
+  duration: any,
+  started: string | null,
+  finished: string | null,
+  status?: string | null,
+): number | null {
+  const normalizedStatus = String(status ?? '').trim().toLowerCase();
+  const isQueuedLike =
+    normalizedStatus === 'queued' || normalizedStatus === 'retry_scheduled';
+  const isRunningLike =
+    normalizedStatus === 'running' ||
+    normalizedStatus === 'stop_requested' ||
+    ['run', 'process', 'progress', 'start'].some((token) => normalizedStatus.includes(token));
+
+  if (isQueuedLike) return null;
+
+  if (isRunningLike && started) {
+    const startTs = new Date(started).getTime();
+    if (!Number.isNaN(startTs)) {
+      return Math.max(0, Date.now() - startTs);
+    }
+  }
+
   const direct = parseNumber(duration);
   if (direct != null) return direct;
   if (started && finished) {
@@ -2060,7 +2082,6 @@ export async function GET(request: NextRequest) {
 
       const startedAt = parseIso(row.analysis_started_at);
       const finishedAt = parseIso(row.analysis_finished_at);
-      const durationMs = ensureDurationMs(row.analysis_duration_ms, startedAt, finishedAt);
       const queuedAt = queueAvailable ? parseIso(row.queued_at) : null;
       const queuedBy = queueAvailable ? parseString(row.queued_by) : null;
       const rawStatus = parseString(row.analysis_status);
@@ -2073,6 +2094,7 @@ export async function GET(request: NextRequest) {
       const shouldForceQueued =
         queueAvailable && queuedAt && queueFresh && (!finishedAt || queuedAt > finishedAt) && !runningStatus;
       const status = shouldForceQueued ? 'queued' : rawStatus;
+      const durationMs = ensureDurationMs(row.analysis_duration_ms, startedAt, finishedAt, status);
 
       const prodclassByOkved =
         parseNumber(row.prodclass_by_okved) ??

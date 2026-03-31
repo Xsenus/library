@@ -1242,11 +1242,15 @@ async function markRunning(inn: string, attempt?: number) {
   }
 
   if (columns.startedAt) {
-    sets.push(`"${columns.startedAt}" = COALESCE("${columns.startedAt}", now())`);
+    sets.push(`"${columns.startedAt}" = now()`);
   }
 
   if (columns.finishedAt) {
     sets.push(`"${columns.finishedAt}" = NULL`);
+  }
+
+  if (columns.durationMs) {
+    sets.push(`"${columns.durationMs}" = 0`);
   }
 
   if (columns.progress) {
@@ -1290,6 +1294,14 @@ async function markQueued(
     sets.push(`"${columns.finishedAt}" = NULL`);
   }
 
+  if (columns.durationMs) {
+    sets.push(`"${columns.durationMs}" = NULL`);
+  }
+
+  if (columns.progress) {
+    sets.push(`"${columns.progress}" = NULL`);
+  }
+
   if (columns.okFlag) {
     sets.push(`"${columns.okFlag}" = 0`);
   }
@@ -1330,6 +1342,10 @@ async function markQueuedMany(inns: string[]) {
 
   if (columns.finishedAt) {
     sets.push(`"${columns.finishedAt}" = NULL`);
+  }
+
+  if (columns.durationMs) {
+    sets.push(`"${columns.durationMs}" = NULL`);
   }
 
   if (columns.progress) {
@@ -1445,6 +1461,17 @@ async function markStopped(inns: string[]) {
 
   if (columns.progress) {
     sets.push(`"${columns.progress}" = NULL`);
+  }
+
+  if (columns.durationMs && columns.startedAt) {
+    sets.push(
+      `"${columns.durationMs}" = CASE
+        WHEN "${columns.startedAt}" IS NOT NULL THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (now() - "${columns.startedAt}")) * 1000))::integer
+        ELSE NULL
+      END`,
+    );
+  } else if (columns.durationMs) {
+    sets.push(`"${columns.durationMs}" = NULL`);
   }
 
   if (columns.outcome) {
