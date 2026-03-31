@@ -4372,7 +4372,7 @@ export default function AiCompanyAnalysisTab() {
         </Dialog>
 
         <Dialog open={!!infoCompany} onOpenChange={(open) => !open && setInfoCompany(null)}>
-          <DialogContent className="flex h-[88vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl border bg-background p-5 sm:p-6">
+          <DialogContent className="flex h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-background p-5 sm:p-6">
             <DialogHeader>
               <DialogTitle>
                 {formatCompanyDisplayName(infoCompany?.short_name, infoCompany?.company_id ?? null)} · ИНН{' '}
@@ -4811,9 +4811,9 @@ export default function AiCompanyAnalysisTab() {
                                   </Button>
                                 </div>
                               </div>
-                              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                              <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                                 {hasTraceBreakdown ? (
-                                  <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-muted-foreground sm:flex-nowrap">
+                                  <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-muted-foreground">
                                     <div className="whitespace-nowrap">
                                       <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
                                       {formatSimilarityScore(trace?.bd_score) ?? formatRawScore(trace?.bd_score) ?? '\u2014'}
@@ -4833,12 +4833,12 @@ export default function AiCompanyAnalysisTab() {
                                   </div>
                                 )}
                                 {(calcPathLabel || finalSourceLabel) && (
-                                  <div className="flex shrink-0 items-center justify-end gap-2">
+                                  <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
                                     {calcPathLabel && (
                                       <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
                                         {calcPathLabel}
-                                      </Badge>
-                                    )}
+                                    </Badge>
+                                  )}
                                     {finalSourceLabel && (
                                       <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
                                         {finalSourceLabel}
