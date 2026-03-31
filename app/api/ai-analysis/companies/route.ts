@@ -995,6 +995,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         goodsMeta.names.has('goods_type_id') ? 'goods_type_id' : null,
         goodsMeta.names.has('match_id') ? 'match_id' : null,
         goodsMeta.names.has('goods_types_score') ? 'goods_types_score' : null,
+        goodsMeta.names.has('goods_source') ? 'goods_source' : null,
         goodsMeta.names.has('text_par_id') ? 'text_par_id' : null,
         goodsMeta.names.has('company_id') ? 'company_id' : null,
       ].filter(Boolean) as string[];
@@ -1216,6 +1217,7 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
           parseNumber((g as any).score) ??
           parseNumber((g as any).match_score),
         source: 'site',
+        goods_type_source: parseString((g as any).goods_source) ?? parseString((g as any).source),
       })),
       equipment: fallbackEquipment.map((eq) => ({
         name:
@@ -2173,6 +2175,7 @@ export async function GET(request: NextRequest) {
             extractMeaningfulText(item, { preferredKeys: TNVED_CODE_KEYS }),
           score: parseNumber((item as any).score) ?? parseNumber((item as any).goods_types_score),
           source: source === 'okved' ? 'okved' : 'site',
+          goods_type_source: parseString((item as any).goods_type_source) ?? parseString((item as any).goods_source),
         };
       });
       const metaSites = parseStringArray(contacts?.webSites);

@@ -19,6 +19,7 @@ import {
   Plus,
   Play,
   RefreshCw,
+  Settings2,
   Square,
   Trash2,
   XCircle,
@@ -30,7 +31,8 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
@@ -215,6 +217,7 @@ type BillingResponse = {
 
 type EquipmentScoreTrace = {
   equipment_id: string;
+  equipment_name?: string | null;
   final_score?: number | null;
   final_source?: string | null;
   calculation_path?: string | null;
@@ -224,10 +227,53 @@ type EquipmentScoreTrace = {
   factor?: number | null;
   matched_site_equipment?: string | null;
   matched_site_equipment_score?: number | null;
+  matched_product_name?: string | null;
+  origin_kind?: 'site' | 'okved' | 'product' | null;
+  origin_name?: string | null;
+};
+
+type ProductTraceEquipmentLink = {
+  equipment_id: string;
+  equipment_name?: string | null;
+  final_score?: number | null;
+  db_score?: number | null;
+  factor?: number | null;
+};
+
+type ProductTraceItem = {
+  lookup_key: string;
+  goods_type_id?: string | null;
+  goods_type_name?: string | null;
+  goods_types_score?: number | null;
+  goods_type_source?: string | null;
+  factor?: number | null;
+  linked_equipment_count: number;
+  top_equipment_name?: string | null;
+  top_equipment_score?: number | null;
+  linked_equipment: ProductTraceEquipmentLink[];
+};
+
+type EquipmentSelectionSettings = {
+  version: number;
+  okved_threshold: number;
+  e1_direct_factor: number;
+  e1_fallback_factor: number;
+  e2_factor: number;
+  e3_factor: number;
+  top_equipment_limit: number;
+  min_equipment_score: number;
+  min_product_score: number;
+  updated_by?: string | null;
+  updated_at?: string | null;
+  is_default?: boolean;
 };
 
 type EquipmentTraceResponse = {
   items?: EquipmentScoreTrace[];
+};
+
+type ProductTraceResponse = {
+  items?: ProductTraceItem[];
 };
 
 function formatEmployees(value: number | null | undefined): string {
@@ -395,6 +441,9 @@ function formatQueueSourceLabel(source: string | null | undefined): string {
   if (normalized === 'manual-bulk' || normalized === 'bulk') return '\u041C\u0430\u0441\u0441\u043E\u0432\u044B\u0439 \u0437\u0430\u043F\u0443\u0441\u043A';
   if (normalized === 'filter') return '\u0414\u043E\u0431\u0430\u0432\u043B\u0435\u043D\u0438\u0435 \u043F\u043E \u0444\u0438\u043B\u044C\u0442\u0440\u0443';
   if (normalized === 'debug-step') return '\u041E\u0442\u043B\u0430\u0434\u043E\u0447\u043D\u044B\u0439 \u0448\u0430\u0433';
+  if (normalized === '1way') return 'Через prodclass';
+  if (normalized === '2way') return 'Через продукцию';
+  if (normalized === '3way') return 'С сайта';
   return normalized;
 }
 
@@ -419,6 +468,9 @@ function formatQueueRetryKind(kind: string | null | undefined): string | null {
 function formatEquipmentCalcPath(path: string | null | undefined): string | null {
   const normalized = String(path ?? '').trim().toLowerCase();
   if (!normalized) return null;
+  if (normalized === '1way') return 'Через prodclass';
+  if (normalized === '2way') return 'Через продукцию';
+  if (normalized === '3way') return 'Через сайт';
   if (normalized === 'direct') return 'Прямой путь';
   if (normalized === 'fallback') return 'Фолбэк по отрасли';
   if (normalized === 'fallback_missing_industry') return 'Фолбэк без отрасли';
@@ -433,6 +485,45 @@ function formatEquipmentSource(source: string | null | undefined): string | null
   if (normalized === '2way') return 'SCORE_E2';
   if (normalized === '3way') return 'SCORE_E3';
   return normalized.toUpperCase();
+}
+
+function formatEquipmentOrigin(origin: EquipmentScoreTrace['origin_kind']): string | null {
+  if (origin === 'site') return 'Источник: сайт';
+  if (origin === 'okved') return 'Источник: ОКВЭД';
+  if (origin === 'product') return 'Источник: продукция';
+  return null;
+}
+
+function buildProductTraceLookupKey(goodsTypeId: string | null | undefined, goodsTypeName: string | null | undefined): string | null {
+  const normalizedId = String(goodsTypeId ?? '').trim();
+  if (normalizedId) return `id:${normalizedId}`;
+  const normalizedName = String(goodsTypeName ?? '').trim().toLowerCase();
+  return normalizedName ? `name:${normalizedName}` : null;
+}
+
+function formatGoodsTypeSource(value: string | null | undefined): string | null {
+  const normalized = String(value ?? '').trim().toUpperCase();
+  if (!normalized) return null;
+  if (normalized === 'GOODS_TYPE') return 'Извлечение: GOODS_TYPE';
+  if (normalized === 'GOODS') return 'Извлечение: GOODS';
+  return `Извлечение: ${normalized}`;
+}
+
+function createDefaultEquipmentSelectionSettings(): EquipmentSelectionSettings {
+  return {
+    version: 0,
+    okved_threshold: 0.5,
+    e1_direct_factor: 1,
+    e1_fallback_factor: 0.75,
+    e2_factor: 1,
+    e3_factor: 1,
+    top_equipment_limit: 10,
+    min_equipment_score: 0,
+    min_product_score: 0,
+    updated_by: null,
+    updated_at: null,
+    is_default: true,
+  };
 }
 
 function formatBillingValue(value: number | null | undefined, fallback = '—'): string {
@@ -576,6 +667,7 @@ type AiAnalyzerInfo = {
       goods_type_id?: string | number | null;
       match_id?: string | number | null;
       score?: number | null;
+      goods_type_source?: string | null;
     }>;
     equipment?: Array<{
       name: string;
@@ -663,6 +755,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
     goods_type_id?: string | number | null;
     match_id?: string | number | null;
     score?: number | null;
+    goods_type_source?: string | null;
   }> =>
     items.reduce<
       Array<{
@@ -675,6 +768,7 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
         goods_type_id?: string | number | null;
         match_id?: string | number | null;
         score?: number | null;
+        goods_type_source?: string | null;
       }>
     >(
       (acc, item) => {
@@ -700,8 +794,16 @@ function normalizeAnalyzerInfo(raw: any): AiAnalyzerInfo | null {
           const id = item.id ?? null;
           const goods_type_id = item.goods_type_id ?? item.goods_type_ID ?? null;
           const match_id = item.match_id ?? item.matchID ?? null;
+          const goods_type_source =
+            typeof item.goods_type_source === 'string'
+              ? item.goods_type_source
+              : typeof item.goods_source === 'string'
+                ? item.goods_source
+                : typeof item.source === 'string'
+                  ? item.source
+                  : null;
           if (!name && !goods_group && !url) return acc;
-          acc.push({ name: name || goods_group || url || '—', goods_group, url, domain, tnved_code, id, goods_type_id, match_id, score });
+          acc.push({ name: name || goods_group || url || '—', goods_group, url, domain, tnved_code, id, goods_type_id, match_id, score, goods_type_source });
           return acc;
         }
 
@@ -1213,6 +1315,15 @@ export default function AiCompanyAnalysisTab() {
   const [equipmentTraceById, setEquipmentTraceById] = useState<Record<string, EquipmentScoreTrace>>({});
   const [equipmentTraceLoading, setEquipmentTraceLoading] = useState(false);
   const [equipmentTraceError, setEquipmentTraceError] = useState<string | null>(null);
+  const [productTraceByKey, setProductTraceByKey] = useState<Record<string, ProductTraceItem>>({});
+  const [productTraceLoading, setProductTraceLoading] = useState(false);
+  const [productTraceError, setProductTraceError] = useState<string | null>(null);
+  const [equipmentSettingsDialogOpen, setEquipmentSettingsDialogOpen] = useState(false);
+  const [equipmentSettings, setEquipmentSettings] = useState<EquipmentSelectionSettings>(createDefaultEquipmentSelectionSettings);
+  const [equipmentSettingsDraft, setEquipmentSettingsDraft] = useState<EquipmentSelectionSettings>(createDefaultEquipmentSelectionSettings);
+  const [equipmentSettingsLoading, setEquipmentSettingsLoading] = useState(false);
+  const [equipmentSettingsSaving, setEquipmentSettingsSaving] = useState(false);
+  const [equipmentSettingsError, setEquipmentSettingsError] = useState<string | null>(null);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const selectionAnchorInnRef = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1327,6 +1438,7 @@ export default function AiCompanyAnalysisTab() {
   });
   const lastInfoRefreshInn = useRef<string | null>(null);
   const lastEquipmentTraceInn = useRef<string | null>(null);
+  const lastProductTraceInn = useRef<string | null>(null);
 
   useEffect(() => {
     if (typeof window === 'undefined') return;
@@ -1595,6 +1707,51 @@ export default function AiCompanyAnalysisTab() {
     }
   }, []);
 
+  const fetchEquipmentSettings = useCallback(async () => {
+    setEquipmentSettingsLoading(true);
+    setEquipmentSettingsError(null);
+
+    try {
+      const res = await fetch('/api/ai-analysis/settings', { cache: 'no-store' });
+      const data = (await res.json().catch(() => null)) as Partial<EquipmentSelectionSettings> | { error?: string } | null;
+      if (!res.ok) {
+        throw new Error(
+          data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+            ? data.error
+            : `Request failed with ${res.status}`,
+        );
+      }
+
+      const defaults = createDefaultEquipmentSelectionSettings();
+      const next: EquipmentSelectionSettings = {
+        version: Number.isFinite(Number((data as any)?.version)) ? Number((data as any)?.version) : defaults.version,
+        okved_threshold: Number.isFinite(Number((data as any)?.okved_threshold)) ? Number((data as any)?.okved_threshold) : defaults.okved_threshold,
+        e1_direct_factor: Number.isFinite(Number((data as any)?.e1_direct_factor)) ? Number((data as any)?.e1_direct_factor) : defaults.e1_direct_factor,
+        e1_fallback_factor: Number.isFinite(Number((data as any)?.e1_fallback_factor)) ? Number((data as any)?.e1_fallback_factor) : defaults.e1_fallback_factor,
+        e2_factor: Number.isFinite(Number((data as any)?.e2_factor)) ? Number((data as any)?.e2_factor) : defaults.e2_factor,
+        e3_factor: Number.isFinite(Number((data as any)?.e3_factor)) ? Number((data as any)?.e3_factor) : defaults.e3_factor,
+        top_equipment_limit: Number.isFinite(Number((data as any)?.top_equipment_limit)) ? Number((data as any)?.top_equipment_limit) : defaults.top_equipment_limit,
+        min_equipment_score: Number.isFinite(Number((data as any)?.min_equipment_score)) ? Number((data as any)?.min_equipment_score) : defaults.min_equipment_score,
+        min_product_score: Number.isFinite(Number((data as any)?.min_product_score)) ? Number((data as any)?.min_product_score) : defaults.min_product_score,
+        updated_by: typeof (data as any)?.updated_by === 'string' ? (data as any).updated_by : null,
+        updated_at: typeof (data as any)?.updated_at === 'string' ? (data as any).updated_at : null,
+        is_default: Boolean((data as any)?.is_default),
+      };
+
+      setEquipmentSettings(next);
+      setEquipmentSettingsDraft(next);
+    } catch (error) {
+      console.error('Failed to load equipment settings', error);
+      setEquipmentSettingsError(
+        error instanceof Error && error.message
+          ? error.message
+          : 'Не удалось загрузить настройки расчёта оборудования.',
+      );
+    } finally {
+      setEquipmentSettingsLoading(false);
+    }
+  }, []);
+
   const fetchEquipmentTrace = useCallback(async (inn: string) => {
     if (!inn) return;
 
@@ -1644,6 +1801,131 @@ export default function AiCompanyAnalysisTab() {
       }
     }
   }, []);
+
+  const fetchProductTrace = useCallback(async (inn: string) => {
+    if (!inn) return;
+
+    lastProductTraceInn.current = inn;
+    setProductTraceLoading(true);
+    setProductTraceError(null);
+
+    try {
+      const res = await fetch(`/api/ai-analysis/product-trace/${encodeURIComponent(inn)}`, {
+        cache: 'no-store',
+      });
+      const data = (await res.json().catch(() => null)) as ProductTraceResponse | { error?: string } | null;
+      if (!res.ok) {
+        throw new Error(
+          data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+            ? data.error
+            : `Request failed with ${res.status}`,
+        );
+      }
+
+      const items = Array.isArray((data as ProductTraceResponse | null)?.items)
+        ? ((data as ProductTraceResponse).items as ProductTraceItem[])
+        : [];
+      const next = items.reduce<Record<string, ProductTraceItem>>((acc, item) => {
+        const lookupKey = String(item?.lookup_key ?? '').trim();
+        if (!lookupKey) return acc;
+        acc[lookupKey] = item;
+        return acc;
+      }, {});
+
+      if (lastProductTraceInn.current === inn) {
+        setProductTraceByKey(next);
+      }
+    } catch (error) {
+      console.error('Failed to load product trace', error);
+      if (lastProductTraceInn.current === inn) {
+        setProductTraceByKey({});
+        setProductTraceError(
+          error instanceof Error && error.message
+            ? error.message
+            : 'Не удалось загрузить историю по найденной продукции.',
+        );
+      }
+    } finally {
+      if (lastProductTraceInn.current === inn) {
+        setProductTraceLoading(false);
+      }
+    }
+  }, []);
+
+  const saveEquipmentSettings = useCallback(async () => {
+    setEquipmentSettingsSaving(true);
+    setEquipmentSettingsError(null);
+
+    const payload = {
+      okved_threshold: Math.min(1, Math.max(0, Number(equipmentSettingsDraft.okved_threshold) || 0)),
+      e1_direct_factor: Math.max(0, Number(equipmentSettingsDraft.e1_direct_factor) || 0),
+      e1_fallback_factor: Math.max(0, Number(equipmentSettingsDraft.e1_fallback_factor) || 0),
+      e2_factor: Math.max(0, Number(equipmentSettingsDraft.e2_factor) || 0),
+      e3_factor: Math.max(0, Number(equipmentSettingsDraft.e3_factor) || 0),
+      top_equipment_limit: Math.min(100, Math.max(1, Math.round(Number(equipmentSettingsDraft.top_equipment_limit) || 10))),
+      min_equipment_score: Math.min(1, Math.max(0, Number(equipmentSettingsDraft.min_equipment_score) || 0)),
+      min_product_score: Math.min(1, Math.max(0, Number(equipmentSettingsDraft.min_product_score) || 0)),
+      updated_by: 'library-ui',
+    };
+
+    try {
+      const res = await fetch('/api/ai-analysis/settings', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const data = (await res.json().catch(() => null)) as Partial<EquipmentSelectionSettings> | { error?: string } | null;
+      if (!res.ok) {
+        throw new Error(
+          data && typeof data === 'object' && 'error' in data && typeof data.error === 'string'
+            ? data.error
+            : `Request failed with ${res.status}`,
+        );
+      }
+
+      const next = {
+        ...createDefaultEquipmentSelectionSettings(),
+        ...payload,
+        ...((data && typeof data === 'object') ? data : null),
+      } as EquipmentSelectionSettings;
+      setEquipmentSettings(next);
+      setEquipmentSettingsDraft(next);
+      setEquipmentSettingsDialogOpen(false);
+
+      if (infoCompany?.inn) {
+        await fetch(`/api/ai-analysis/recompute/${encodeURIComponent(infoCompany.inn)}`, {
+          method: 'POST',
+          cache: 'no-store',
+        }).catch((error) => console.warn('Failed to recompute current company after settings update', error));
+        await Promise.allSettled([
+          fetchEquipmentTrace(infoCompany.inn),
+          fetchProductTrace(infoCompany.inn),
+          refreshCompanyDetails(infoCompany.inn),
+        ]);
+      }
+
+      toast({
+        title: 'Настройки сохранены',
+        description: infoCompany?.inn
+          ? 'Текущая карточка пересчитана с новыми коэффициентами.'
+          : 'Новые коэффициенты будут применяться к пересчитанным карточкам.',
+      });
+    } catch (error) {
+      console.error('Failed to save equipment settings', error);
+      const message =
+        error instanceof Error && error.message
+          ? error.message
+          : 'Не удалось сохранить настройки расчёта оборудования.';
+      setEquipmentSettingsError(message);
+      toast({
+        title: 'Ошибка сохранения',
+        description: message,
+        variant: 'destructive',
+      });
+    } finally {
+      setEquipmentSettingsSaving(false);
+    }
+  }, [equipmentSettingsDraft, fetchEquipmentTrace, fetchProductTrace, infoCompany?.inn, refreshCompanyDetails, toast]);
 
   const fetchCompanies = useCallback(
     async (pageParam: number, pageSizeParam: number) => {
@@ -1758,6 +2040,15 @@ export default function AiCompanyAnalysisTab() {
     }, 60000);
     return () => window.clearInterval(billingTimer);
   }, [fetchBilling]);
+
+  useEffect(() => {
+    fetchEquipmentSettings();
+  }, [fetchEquipmentSettings]);
+
+  useEffect(() => {
+    if (!equipmentSettingsDialogOpen) return;
+    fetchEquipmentSettings();
+  }, [equipmentSettingsDialogOpen, fetchEquipmentSettings]);
 
   useEffect(() => {
     if (lastFetchErrorAt == null) return undefined;
@@ -2231,10 +2522,14 @@ export default function AiCompanyAnalysisTab() {
     if (!infoCompany) {
       lastInfoRefreshInn.current = null;
       lastEquipmentTraceInn.current = null;
+      lastProductTraceInn.current = null;
       setInfoRefreshing(false);
       setEquipmentTraceById({});
       setEquipmentTraceLoading(false);
       setEquipmentTraceError(null);
+      setProductTraceByKey({});
+      setProductTraceLoading(false);
+      setProductTraceError(null);
       return;
     }
 
@@ -2242,6 +2537,7 @@ export default function AiCompanyAnalysisTab() {
     if (!inn) return;
     const shouldRefreshCompany = lastInfoRefreshInn.current !== inn;
     const shouldRefreshTrace = lastEquipmentTraceInn.current !== inn;
+    const shouldRefreshProductTrace = lastProductTraceInn.current !== inn;
 
     if (shouldRefreshCompany) {
       refreshCompanyDetails(inn);
@@ -2249,7 +2545,10 @@ export default function AiCompanyAnalysisTab() {
     if (shouldRefreshTrace) {
       fetchEquipmentTrace(inn);
     }
-  }, [fetchEquipmentTrace, infoCompany, refreshCompanyDetails]);
+    if (shouldRefreshProductTrace) {
+      fetchProductTrace(inn);
+    }
+  }, [fetchEquipmentTrace, fetchProductTrace, infoCompany, refreshCompanyDetails]);
 
   useEffect(() => {
     if (!infoCompany) {
@@ -2723,8 +3022,30 @@ export default function AiCompanyAnalysisTab() {
   const topEquipment = (
     company: AiCompany,
     analyzer?: AiAnalyzerInfo | null,
-  ): Array<{ name: string; id?: string; score?: number | null; hash_equipment?: string | null; industryId?: string; prodclassId?: string; workshopId?: string }> => {
-    const normalizeEquipmentItem = (item: any): { name: string; id?: string; score?: number | null; hash_equipment?: string | null; industryId?: string; prodclassId?: string; workshopId?: string } | null => {
+  ): Array<{
+    name: string;
+    id?: string;
+    score?: number | null;
+    hash_equipment?: string | null;
+    industryId?: string;
+    prodclassId?: string;
+    workshopId?: string;
+    href?: string | null;
+    trace?: EquipmentScoreTrace;
+  }> => {
+    type EquipmentItem = {
+      name: string;
+      id?: string;
+      score?: number | null;
+      hash_equipment?: string | null;
+      industryId?: string;
+      prodclassId?: string;
+      workshopId?: string;
+      href?: string | null;
+      trace?: EquipmentScoreTrace;
+    };
+
+    const normalizeEquipmentItem = (item: any): EquipmentItem | null => {
       if (!item) return null;
       if (typeof item === 'string') {
         const name = item.trim();
@@ -2754,9 +3075,12 @@ export default function AiCompanyAnalysisTab() {
           id: id != null ? String(id) : undefined,
           score: score ?? undefined,
           hash_equipment: hashEquipment ? String(hashEquipment) : undefined,
-          industryId: item?.industry_id != null ? String(item.industry_id) : item?.industryId != null ? String(item.industryId) : undefined,
-          prodclassId: item?.prodclass_id != null ? String(item.prodclass_id) : item?.prodclassId != null ? String(item.prodclassId) : undefined,
-          workshopId: item?.workshop_id != null ? String(item.workshop_id) : item?.workshopId != null ? String(item.workshopId) : undefined,
+          industryId:
+            item?.industry_id != null ? String(item.industry_id) : item?.industryId != null ? String(item.industryId) : undefined,
+          prodclassId:
+            item?.prodclass_id != null ? String(item.prodclass_id) : item?.prodclassId != null ? String(item.prodclassId) : undefined,
+          workshopId:
+            item?.workshop_id != null ? String(item.workshop_id) : item?.workshopId != null ? String(item.workshopId) : undefined,
         };
       }
 
@@ -2764,7 +3088,7 @@ export default function AiCompanyAnalysisTab() {
       return value ? { name: value } : null;
     };
 
-    const pushItem = (item: { name: string; id?: string; score?: number | null; hash_equipment?: string | null; industryId?: string; prodclassId?: string; workshopId?: string } | null, acc: typeof items) => {
+    const pushItem = (item: EquipmentItem | null, acc: EquipmentItem[]) => {
       if (!item?.name) return;
       acc.push({
         name: item.name.trim(),
@@ -2777,7 +3101,7 @@ export default function AiCompanyAnalysisTab() {
       });
     };
 
-    const items: Array<{ name: string; id?: string; score?: number | null; hash_equipment?: string | null; industryId?: string; prodclassId?: string; workshopId?: string }> = [];
+    const items: EquipmentItem[] = [];
     const raw = company.analysis_equipment;
 
     if (Array.isArray(raw)) {
@@ -2788,7 +3112,7 @@ export default function AiCompanyAnalysisTab() {
       analyzer.ai.equipment.forEach((item) => pushItem(normalizeEquipmentItem(item), items));
     }
 
-    const uniqueByName = items.reduce<typeof items>((acc, item) => {
+    const uniqueByName = items.reduce<EquipmentItem[]>((acc, item) => {
       const key = item.name.trim().toLowerCase();
       const existingIndex = acc.findIndex((entry) => entry.name.trim().toLowerCase() === key);
       if (existingIndex === -1) {
@@ -2809,19 +3133,106 @@ export default function AiCompanyAnalysisTab() {
       return acc;
     }, []);
 
-    return uniqueByName
+    const mergedItems: EquipmentItem[] = [];
+    const mergedById = new Map<string, number>();
+    const mergedByName = new Map<string, number>();
+
+    const normalizeItemId = (value: string | null | undefined): string | null => {
+      const normalized = String(value ?? '').trim();
+      return normalized ? normalized.toLowerCase() : null;
+    };
+
+    const normalizeItemName = (value: string | null | undefined): string | null => {
+      const normalized = String(value ?? '').trim();
+      return normalized ? normalized.toLowerCase() : null;
+    };
+
+    const upsertMergedItem = (candidate: EquipmentItem) => {
+      const normalizedId = normalizeItemId(candidate.id);
+      const normalizedName = normalizeItemName(candidate.name);
+      const existingIndex =
+        (normalizedId != null ? mergedById.get(normalizedId) : undefined) ??
+        (normalizedName != null ? mergedByName.get(normalizedName) : undefined) ??
+        -1;
+
+      if (existingIndex === -1) {
+        const nextIndex = mergedItems.push(candidate) - 1;
+        if (normalizedId != null) mergedById.set(normalizedId, nextIndex);
+        if (normalizedName != null) mergedByName.set(normalizedName, nextIndex);
+        return;
+      }
+
+      const existing = mergedItems[existingIndex];
+      const mergedTrace = candidate.trace ?? existing.trace;
+      const mergedName = candidate.name || existing.name;
+      const mergedId = candidate.id ?? existing.id;
+      const mergedScore =
+        mergedTrace?.final_score ??
+        candidate.score ??
+        existing.trace?.final_score ??
+        existing.score;
+
+      mergedItems[existingIndex] = {
+        ...existing,
+        ...candidate,
+        name: mergedName,
+        id: mergedId,
+        score: mergedScore,
+        hash_equipment: candidate.hash_equipment ?? existing.hash_equipment,
+        industryId: candidate.industryId ?? existing.industryId,
+        prodclassId: candidate.prodclassId ?? existing.prodclassId,
+        workshopId: candidate.workshopId ?? existing.workshopId,
+        href: candidate.href ?? existing.href,
+        trace: mergedTrace,
+      };
+
+      const nextId = normalizeItemId(mergedId);
+      const nextName = normalizeItemName(mergedName);
+      if (nextId != null) mergedById.set(nextId, existingIndex);
+      if (nextName != null) mergedByName.set(nextName, existingIndex);
+    };
+
+    uniqueByName.forEach((item) => {
+      upsertMergedItem({
+        ...item,
+        href: buildEquipmentCardHref(item),
+      });
+    });
+
+    Object.values(equipmentTraceById).forEach((trace) => {
+      const equipmentId = trace.equipment_id?.trim();
+      const equipmentName = trace.equipment_name?.trim() || equipmentId || '';
+      if (!equipmentName) return;
+      upsertMergedItem({
+        name: equipmentName,
+        id: equipmentId || undefined,
+        score: trace.final_score ?? undefined,
+        href: buildEquipmentCardHref({ id: equipmentId || undefined }),
+        trace,
+      });
+    });
+
+    const topLimit = Math.min(100, Math.max(1, Math.round(Number(equipmentSettings.top_equipment_limit) || 10)));
+    const minScore = Math.min(1, Math.max(0, Number(equipmentSettings.min_equipment_score) || 0));
+
+    return mergedItems
       .sort((a, b) => {
-        const scoreA = a.score;
-        const scoreB = b.score;
+        const scoreA = a.trace?.final_score ?? a.score;
+        const scoreB = b.trace?.final_score ?? b.score;
         const hasScoreA = typeof scoreA === 'number' && Number.isFinite(scoreA);
         const hasScoreB = typeof scoreB === 'number' && Number.isFinite(scoreB);
 
         if (hasScoreA && hasScoreB) return scoreB - scoreA;
         if (hasScoreA) return -1;
         if (hasScoreB) return 1;
-        return 0;
+        return a.name.localeCompare(b.name, 'ru');
       })
-      .slice(0, 10);
+      .filter((item) => {
+        const scoreValue = item.trace?.final_score ?? item.score;
+        const score = typeof scoreValue === 'number' && Number.isFinite(scoreValue) ? scoreValue : null;
+        return score == null || score >= minScore;
+      })
+      .slice(0, topLimit);
   };
 
   const isObjectObjectPlaceholder = (value: string): boolean => value.trim().toLowerCase() === '[object object]';
@@ -2870,14 +3281,35 @@ export default function AiCompanyAnalysisTab() {
   const tnvedProducts = (
     company: AiCompany,
     analyzer?: AiAnalyzerInfo | null,
-  ): Array<{ name: string; code?: string; id?: string; score?: number | null; source?: 'site' | 'okved' | null }> => {
+  ): Array<{
+    name: string;
+    code?: string;
+    id?: string;
+    score?: number | null;
+    source?: 'site' | 'okved' | null;
+    goodsTypeSource?: string | null;
+  }> => {
     const raw = company.analysis_tnved;
-    const items: Array<{ name: string; code?: string; id?: string; score?: number | null; source?: 'site' | 'okved' | null }> = [];
+    const items: Array<{
+      name: string;
+      code?: string;
+      id?: string;
+      score?: number | null;
+      source?: 'site' | 'okved' | null;
+      goodsTypeSource?: string | null;
+    }> = [];
     const seen = new Set<string>();
     if (raw) {
       const arr = Array.isArray(raw) ? raw : [raw];
       const normalizedRawItems = arr.flatMap(
-        (item: any): Array<{ name: string; code?: string; id?: string; score?: number | null; source?: 'site' | 'okved' | null }> => {
+        (item: any): Array<{
+          name: string;
+          code?: string;
+          id?: string;
+          score?: number | null;
+          source?: 'site' | 'okved' | null;
+          goodsTypeSource?: string | null;
+        }> => {
           if (!item) return [];
 
           if (typeof item === 'string') {
@@ -2918,6 +3350,12 @@ export default function AiCompanyAnalysisTab() {
                   item?.from,
               ) ??
               (item?.url || item?.domain ? 'site' : null);
+            const goodsTypeSource =
+              typeof item?.goods_type_source === 'string'
+                ? item.goods_type_source
+                : typeof item?.goods_source === 'string'
+                  ? item.goods_source
+                  : null;
             const hasName = isMeaningfulTnvedName(name);
             if (!hasName && !code) return [];
             return [
@@ -2927,6 +3365,7 @@ export default function AiCompanyAnalysisTab() {
                 id: idValue != null ? String(idValue) : undefined,
                 score: Number.isFinite(score) ? score : undefined,
                 source,
+                goodsTypeSource,
               },
             ];
           }
@@ -2940,22 +3379,46 @@ export default function AiCompanyAnalysisTab() {
     }
 
     if (!items.length && analyzer?.ai?.products?.length) {
-      const analyzerProducts = analyzer.ai.products.reduce<Array<{ name: string; code?: string; id?: string; score?: number | null; source?: 'site' | 'okved' | null }>>((acc, item) => {
+      const analyzerProducts = analyzer.ai.products.reduce<Array<{
+        name: string;
+        code?: string;
+        id?: string;
+        score?: number | null;
+        source?: 'site' | 'okved' | null;
+        goodsTypeSource?: string | null;
+      }>>((acc, item) => {
         const name = normalizeTnvedValue(item?.name);
         const code = normalizeTnvedValue(item?.tnved_code) || undefined;
         const score = Number(item?.score);
         const id = item?.id ?? item?.goods_type_id ?? item?.match_id ?? null;
         if (!name && !code) return acc;
-        acc.push({ name: name || code || '—', code, id: id != null ? String(id) : undefined, score: Number.isFinite(score) ? score : undefined, source: 'site' });
+        acc.push({
+          name: name || code || '—',
+          code,
+          id: id != null ? String(id) : undefined,
+          score: Number.isFinite(score) ? score : undefined,
+          source: 'site',
+          goodsTypeSource: typeof item?.goods_type_source === 'string' ? item.goods_type_source : undefined,
+        });
         return acc;
       }, []);
 
       items.push(...analyzerProducts);
     }
 
-    return items.reduce<Array<{ name: string; code?: string; id?: string; score?: number | null; source?: 'site' | 'okved' | null }>>((acc, item) => {
+    const minProductScore = Math.min(1, Math.max(0, Number(equipmentSettings.min_product_score) || 0));
+
+    return items.reduce<Array<{
+      name: string;
+      code?: string;
+      id?: string;
+      score?: number | null;
+      source?: 'site' | 'okved' | null;
+      goodsTypeSource?: string | null;
+    }>>((acc, item) => {
       const key = `${item.name?.trim().toLowerCase() || ''}|${item.code?.trim().toLowerCase() || ''}|${item.id?.trim().toLowerCase() || ''}`;
       if (!item.name || seen.has(key)) return acc;
+      if (typeof item.score === 'number' && Number.isFinite(item.score) && item.score < minProductScore) return acc;
       seen.add(key);
       const source = item.source ?? (item.code && !item.score ? 'okved' : null);
       acc.push({
@@ -2964,9 +3427,100 @@ export default function AiCompanyAnalysisTab() {
         id: item.id?.trim() || undefined,
         score: item.score ?? undefined,
         source,
+        goodsTypeSource: typeof item.goodsTypeSource === 'string' ? item.goodsTypeSource : undefined,
       });
       return acc;
     }, []);
+  };
+
+  const topProducts = (
+    company: AiCompany,
+    analyzer?: AiAnalyzerInfo | null,
+  ): Array<{
+    name: string;
+    code?: string;
+    id?: string;
+    score?: number | null;
+    source?: 'site' | 'okved' | null;
+    goodsTypeSource?: string | null;
+    trace?: ProductTraceItem;
+  }> => {
+    const merged = new Map<string, {
+      name: string;
+      code?: string;
+      id?: string;
+      score?: number | null;
+      source?: 'site' | 'okved' | null;
+      goodsTypeSource?: string | null;
+      trace?: ProductTraceItem;
+    }>();
+
+    const upsert = (candidate: {
+      name: string;
+      code?: string;
+      id?: string;
+      score?: number | null;
+      source?: 'site' | 'okved' | null;
+      goodsTypeSource?: string | null;
+      trace?: ProductTraceItem;
+    }) => {
+      const lookupKey =
+        buildProductTraceLookupKey(candidate.id, candidate.name) ??
+        buildProductTraceLookupKey(candidate.trace?.goods_type_id, candidate.trace?.goods_type_name);
+      if (!lookupKey || !candidate.name?.trim()) return;
+
+      const existing = merged.get(lookupKey);
+      if (!existing) {
+        merged.set(lookupKey, candidate);
+        return;
+      }
+
+      const candidateScore = candidate.trace?.goods_types_score ?? candidate.score ?? -1;
+      const existingScore = existing.trace?.goods_types_score ?? existing.score ?? -1;
+        merged.set(lookupKey, {
+          ...existing,
+          ...candidate,
+          name: candidate.name || existing.name,
+          code: candidate.code ?? existing.code,
+          id: candidate.id ?? existing.id,
+          source: candidate.source ?? existing.source,
+          goodsTypeSource: candidate.goodsTypeSource ?? existing.goodsTypeSource,
+          trace: candidate.trace ?? existing.trace,
+          score: candidateScore > existingScore ? candidate.score : existing.score,
+        });
+      };
+
+    tnvedProducts(company, analyzer).forEach((item) => {
+      upsert(item);
+    });
+
+    Object.values(productTraceByKey).forEach((trace) => {
+      upsert({
+        name: trace.goods_type_name?.trim() || trace.goods_type_id?.trim() || '—',
+        id: trace.goods_type_id?.trim() || undefined,
+        score: trace.goods_types_score ?? undefined,
+        source: null,
+        goodsTypeSource: trace.goods_type_source ?? undefined,
+        trace,
+      });
+    });
+
+    const minProductScore = Math.min(1, Math.max(0, Number(equipmentSettings.min_product_score) || 0));
+
+    return Array.from(merged.values())
+      .filter((item) => {
+        const displayScore = item.trace?.goods_types_score ?? item.score;
+        return displayScore == null || displayScore >= minProductScore;
+      })
+      .sort((left, right) => {
+        const leftScore = left.trace?.goods_types_score ?? left.score ?? -1;
+        const rightScore = right.trace?.goods_types_score ?? right.score ?? -1;
+        if (leftScore !== rightScore) return rightScore - leftScore;
+        const leftTop = left.trace?.top_equipment_score ?? -1;
+        const rightTop = right.trace?.top_equipment_score ?? -1;
+        if (leftTop !== rightTop) return rightTop - leftTop;
+        return left.name.localeCompare(right.name, 'ru');
+      });
   };
 
   const prodclassScoreValue =
@@ -3147,6 +3701,21 @@ export default function AiCompanyAnalysisTab() {
                   Поставить в очередь выбранные компании
                 </TooltipContent>
               </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="h-9"
+                      onClick={() => setEquipmentSettingsDialogOpen(true)}
+                    >
+                      <Settings2 className="mr-2 h-4 w-4" /> Настройки
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom">
+                    Коэффициенты путей, пороги и лимит оборудования в рейтинге
+                  </TooltipContent>
+                </Tooltip>
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Button
@@ -3984,6 +4553,165 @@ export default function AiCompanyAnalysisTab() {
           </DialogContent>
         </Dialog>
 
+        <Dialog
+          open={equipmentSettingsDialogOpen}
+          onOpenChange={(open) => {
+            setEquipmentSettingsDialogOpen(open);
+            if (open) {
+              setEquipmentSettingsDraft(equipmentSettings);
+              setEquipmentSettingsError(null);
+              return;
+            }
+            setEquipmentSettingsError(null);
+          }}
+        >
+          <DialogContent className="max-w-3xl">
+            <DialogHeader>
+              <DialogTitle>Настройки расчёта оборудования</DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="rounded-lg border bg-muted/30 p-3 text-sm text-muted-foreground">
+                <div>Версия настроек: <span className="font-medium text-foreground">{equipmentSettings.version}</span></div>
+                <div>
+                  Последнее обновление:{' '}
+                  <span className="font-medium text-foreground">
+                    {equipmentSettings.updated_at ? formatDate(equipmentSettings.updated_at) + ' ' + formatTime(equipmentSettings.updated_at) : '—'}
+                  </span>
+                </div>
+                <div className="mt-1 text-xs">
+                  После сохранения коэффициенты применяются к новым пересчётам. Для открытой карточки мы сразу запускаем пересчёт snapshot-а.
+                </div>
+              </div>
+
+              {equipmentSettingsLoading ? (
+                <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Загружаем настройки…
+                </div>
+              ) : (
+                <div className="grid gap-4 md:grid-cols-2">
+                  <div className="space-y-2">
+                    <Label htmlFor="okved-threshold">Порог OKVED</Label>
+                    <Input
+                      id="okved-threshold"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={equipmentSettingsDraft.okved_threshold}
+                      onChange={(event) => setEquipmentSettingsDraft((prev) => ({ ...prev, okved_threshold: Number(event.target.value) }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="top-equipment-limit">Лимит TOP оборудования</Label>
+                    <Input
+                      id="top-equipment-limit"
+                      type="number"
+                      step="1"
+                      min="1"
+                      max="100"
+                      value={equipmentSettingsDraft.top_equipment_limit}
+                      onChange={(event) => setEquipmentSettingsDraft((prev) => ({ ...prev, top_equipment_limit: Number(event.target.value) }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="e1-direct-factor">K для SCORE_E1 direct</Label>
+                    <Input
+                      id="e1-direct-factor"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={equipmentSettingsDraft.e1_direct_factor}
+                      onChange={(event) => setEquipmentSettingsDraft((prev) => ({ ...prev, e1_direct_factor: Number(event.target.value) }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="e1-fallback-factor">K для SCORE_E1 fallback</Label>
+                    <Input
+                      id="e1-fallback-factor"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={equipmentSettingsDraft.e1_fallback_factor}
+                      onChange={(event) => setEquipmentSettingsDraft((prev) => ({ ...prev, e1_fallback_factor: Number(event.target.value) }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="e2-factor">K для SCORE_E2</Label>
+                    <Input
+                      id="e2-factor"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={equipmentSettingsDraft.e2_factor}
+                      onChange={(event) => setEquipmentSettingsDraft((prev) => ({ ...prev, e2_factor: Number(event.target.value) }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="e3-factor">K для SCORE_E3</Label>
+                    <Input
+                      id="e3-factor"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={equipmentSettingsDraft.e3_factor}
+                      onChange={(event) => setEquipmentSettingsDraft((prev) => ({ ...prev, e3_factor: Number(event.target.value) }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="min-equipment-score">Минимальный рейтинг оборудования</Label>
+                    <Input
+                      id="min-equipment-score"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={equipmentSettingsDraft.min_equipment_score}
+                      onChange={(event) => setEquipmentSettingsDraft((prev) => ({ ...prev, min_equipment_score: Number(event.target.value) }))}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="min-product-score">Минимальный рейтинг продукции</Label>
+                    <Input
+                      id="min-product-score"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      max="1"
+                      value={equipmentSettingsDraft.min_product_score}
+                      onChange={(event) => setEquipmentSettingsDraft((prev) => ({ ...prev, min_product_score: Number(event.target.value) }))}
+                    />
+                  </div>
+                </div>
+              )}
+
+              {equipmentSettingsError && (
+                <div className="rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive">
+                  {equipmentSettingsError}
+                </div>
+              )}
+            </div>
+            <DialogFooter>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => setEquipmentSettingsDialogOpen(false)}
+                disabled={equipmentSettingsSaving}
+              >
+                Отмена
+              </Button>
+              <Button type="button" onClick={saveEquipmentSettings} disabled={equipmentSettingsLoading || equipmentSettingsSaving}>
+                {equipmentSettingsSaving ? (
+                  <>
+                    <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                    Сохраняем…
+                  </>
+                ) : 'Сохранить'}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
+
         <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>
           <DialogContent className="max-w-5xl">
             <DialogHeader>
@@ -4713,12 +5441,7 @@ export default function AiCompanyAnalysisTab() {
                 <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
                   <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Топ-10 оборудования</div>
                   {(() => {
-                    const equipmentItems = topEquipment(infoCompany, analyzerInfo)
-                      .map((item) => ({
-                        ...item,
-                        href: buildEquipmentCardHref(item),
-                      }))
-                      .filter((item) => Boolean(item.href));
+                    const equipmentItems = topEquipment(infoCompany, analyzerInfo);
                     const traceStatusNote = equipmentTraceLoading ? (
                       <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
                         <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -4737,137 +5460,135 @@ export default function AiCompanyAnalysisTab() {
                       );
                     }
 
-                    if (false && !equipmentItems.length) {
-                      return <div className="text-muted-foreground">Данные отсутствуют</div>;
-                    }
-
                     return (
                       <div className="space-y-2">
                         {traceStatusNote}
                         <ul className="grid gap-2 sm:grid-cols-2">
-                        {equipmentItems.map((item, idx) => {
-                          const trace = item.id ? equipmentTraceById[item.id] : undefined;
-                          const scoreLabel =
-                            formatSimilarityScore(item.score ?? trace?.final_score ?? null) ??
-                            formatRawScore(item.score ?? trace?.final_score ?? null) ??
-                            '—';
-                          const matchedSiteEquipment = trace?.matched_site_equipment?.trim() || null;
-                          const matchedSiteScore = formatSimilarityScore(
-                            trace?.matched_site_equipment_score ?? trace?.vector_score ?? null,
-                          );
-                          const calcPathLabel = formatEquipmentCalcPath(trace?.calculation_path);
-                          const finalSourceLabel = formatEquipmentSource(trace?.final_source);
-                          // Prefer the explicit upstream trace field and keep a legacy fallback
-                          // while older integration deployments are still being rolled forward.
-                          const displayVectorScore = trace?.vector_score ?? trace?.gen_score ?? null;
-                          const displayFinalScore = trace?.final_score ?? item.score ?? null;
-                          const hasTraceBreakdown = [
-                            trace?.bd_score,
-                            displayVectorScore,
-                            displayFinalScore,
-                          ].some((value) => value != null);
+                          {equipmentItems.map((item, idx) => {
+                            const trace = item.trace ?? (item.id ? equipmentTraceById[item.id] : undefined);
+                            const displayFinalScore = trace?.final_score ?? item.score ?? null;
+                            const scoreLabel =
+                              formatSimilarityScore(displayFinalScore) ??
+                              formatRawScore(displayFinalScore) ??
+                              '—';
+                            const matchedSiteEquipment = trace?.matched_site_equipment?.trim() || null;
+                            const matchedProductName = trace?.matched_product_name?.trim() || null;
+                            const originName = trace?.origin_name?.trim() || null;
+                            const matchedSiteScore = formatSimilarityScore(
+                              trace?.matched_site_equipment_score ?? trace?.vector_score ?? null,
+                            );
+                            const calcPathLabel = formatEquipmentCalcPath(trace?.calculation_path);
+                            const finalSourceLabel = formatEquipmentSource(trace?.final_source);
+                            const originLabel = formatEquipmentOrigin(trace?.origin_kind);
+                            const displayVectorScore = trace?.vector_score ?? null;
+                            const displayGenScore = trace?.gen_score ?? null;
+                            const displayFactor = trace?.factor ?? null;
+                            const hasTraceBreakdown = [
+                              trace?.bd_score,
+                              displayVectorScore,
+                              displayGenScore,
+                              displayFactor,
+                              displayFinalScore,
+                            ].some((value) => value != null);
 
-                          return (
-                            <li
-                              key={`${item.name}-${item.id ?? idx}`}
-                              className="rounded-lg border bg-muted/20 px-3 py-3"
-                            >
-                              <div className="flex items-start justify-between gap-3">
-                                <div className="min-w-0 flex-1 space-y-1">
-                                  <div className="truncate pr-2 font-medium leading-snug text-foreground">
-                                    {item.name}
+                            return (
+                              <li
+                                key={`${item.name}-${item.id ?? idx}`}
+                                className="rounded-lg border bg-muted/20 px-3 py-3"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 flex-1 space-y-1">
+                                    <div className="truncate pr-2 font-medium leading-snug text-foreground">
+                                      {trace?.equipment_name || item.name}
+                                    </div>
+                                    {matchedProductName ? (
+                                      <div className="text-[11px] text-muted-foreground">
+                                        <span className="font-medium text-foreground/90">Найдено через продукцию:</span>{' '}
+                                        {matchedProductName}
+                                      </div>
+                                    ) : matchedSiteEquipment ? (
+                                      <div className="text-[11px] text-muted-foreground">
+                                        <span className="font-medium text-foreground/90">Найдено на сайте:</span>{' '}
+                                        {matchedSiteEquipment}
+                                        {matchedSiteScore ? ` (${matchedSiteScore})` : ''}
+                                      </div>
+                                    ) : trace?.origin_kind === 'okved' || showOkvedFallbackBadge ? (
+                                      <div className="text-[11px] text-muted-foreground">
+                                        <span className="font-medium text-foreground/90">Подбор:</span>{' '}
+                                        {originName || 'по ОКВЭД'}
+                                      </div>
+                                    ) : originName ? (
+                                      <div className="text-[11px] text-muted-foreground">
+                                        <span className="font-medium text-foreground/90">Источник:</span>{' '}
+                                        {originName}
+                                      </div>
+                                    ) : null}
                                   </div>
-                                  <div className="hidden">{matchedSiteEquipment ? (
-                                    <div className="text-[11px] text-muted-foreground">
-                                      <span className="font-medium text-foreground/90">Найдено на сайте:</span>{' '}
-                                      {matchedSiteEquipment}
-                                      {matchedSiteScore ? ` (${matchedSiteScore})` : ''}
-                                    </div>
-                                  ) : showOkvedFallbackBadge ? (
-                                    <div className="text-[11px] text-muted-foreground">
-                                      <span className="font-medium text-foreground/90">{'\u041f\u043e\u0434\u0431\u043e\u0440:'}</span>{' ' }{'\u043f\u043e \u041e\u041a\u0412\u042d\u0414 (\u0441\u0430\u0439\u0442 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d)'}
-                                    </div>
-                                  ) : null}</div>
-                                  {matchedSiteEquipment ? (
-                                    <div className="text-[11px] text-muted-foreground">
-                                      <span className="font-medium text-foreground/90">{'\u041d\u0430\u0439\u0434\u0435\u043d\u043e \u043d\u0430 \u0441\u0430\u0439\u0442\u0435:'}</span>{' ' }
-                                      {matchedSiteEquipment}
-                                      {matchedSiteScore ? ` (${matchedSiteScore})` : ''}
-                                    </div>
-                                  ) : showOkvedFallbackBadge ? (
-                                    <div className="text-[11px] text-muted-foreground">
-                                      <span className="font-medium text-foreground/90">{'\u041f\u043e\u0434\u0431\u043e\u0440:'}</span>{' ' }{'\u043f\u043e \u041e\u041a\u0412\u042d\u0414 (\u0441\u0430\u0439\u0442 \u043d\u0435\u0434\u043e\u0441\u0442\u0443\u043f\u0435\u043d)'}
-                                    </div>
-                                  ) : null}
-                                </div>
-                                <div className="flex shrink-0 items-center justify-end gap-2 self-start">
-                                  <Badge variant="outline" className="min-w-[72px] justify-center rounded-full text-[12px] tabular-nums">
-                                    {scoreLabel}
-                                  </Badge>
-                                  <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0">
-                                    <a href={item.href ?? '#'} target="_blank" rel="noopener noreferrer">
-                                      <ExternalLink className="h-3.5 w-3.5" />
-                                    </a>
-                                  </Button>
-                                </div>
-                              </div>
-                              <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                                {hasTraceBreakdown ? (
-                                  <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-muted-foreground">
-                                    <div className="whitespace-nowrap">
-                                      <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
-                                      {formatSimilarityScore(trace?.bd_score) ?? formatRawScore(trace?.bd_score) ?? '\u2014'}
-                                    </div>
-                                    <div className="whitespace-nowrap">
-                                      <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
-                                      {formatSimilarityScore(displayVectorScore) ?? formatRawScore(displayVectorScore) ?? '\u2014'}
-                                    </div>
-                                    <div className="whitespace-nowrap">
-                                      <span className="font-medium text-foreground/90">FINAL:</span>{' '}
-                                      {formatSimilarityScore(displayFinalScore) ?? formatRawScore(displayFinalScore) ?? '\u2014'}
-                                    </div>
-                                  </div>
-                                ) : (
-                                  <div className="text-[11px] text-muted-foreground">
-                                    Детали расчета пока не переданы сервисом.
-                                  </div>
-                                )}
-                                {(calcPathLabel || finalSourceLabel) && (
-                                  <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
-                                    {calcPathLabel && (
-                                      <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
-                                        {calcPathLabel}
+                                  <div className="flex shrink-0 items-center justify-end gap-2 self-start">
+                                    <Badge variant="outline" className="min-w-[72px] justify-center rounded-full text-[12px] tabular-nums">
+                                      {scoreLabel}
                                     </Badge>
-                                  )}
-                                    {finalSourceLabel && (
-                                      <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
-                                        {finalSourceLabel}
-                                      </Badge>
-                                    )}
+                                    {item.href ? (
+                                      <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0">
+                                        <a href={item.href} target="_blank" rel="noopener noreferrer">
+                                          <ExternalLink className="h-3.5 w-3.5" />
+                                        </a>
+                                      </Button>
+                                    ) : null}
                                   </div>
-                                )}
-                              </div>
-                              <div className="hidden mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
-                                <div>
-                                  <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
-                                  {formatRawScore(trace?.bd_score) ?? 'вЂ”'}
                                 </div>
-                                <div>
-                                  <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
-                                  {formatRawScore(trace?.vector_score) ?? 'вЂ”'}
+                                <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
+                                  {hasTraceBreakdown ? (
+                                    <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-muted-foreground">
+                                      <div className="whitespace-nowrap">
+                                        <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
+                                        {formatSimilarityScore(trace?.bd_score) ?? formatRawScore(trace?.bd_score) ?? '\u2014'}
+                                      </div>
+                                      <div className="whitespace-nowrap">
+                                        <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
+                                        {formatSimilarityScore(displayVectorScore) ?? formatRawScore(displayVectorScore) ?? '\u2014'}
+                                      </div>
+                                      <div className="whitespace-nowrap">
+                                        <span className="font-medium text-foreground/90">GEN:</span>{' '}
+                                        {formatSimilarityScore(displayGenScore) ?? formatRawScore(displayGenScore) ?? '\u2014'}
+                                      </div>
+                                      <div className="whitespace-nowrap">
+                                        <span className="font-medium text-foreground/90">K:</span>{' '}
+                                        {formatRawScore(displayFactor) ?? '\u2014'}
+                                      </div>
+                                      <div className="whitespace-nowrap">
+                                        <span className="font-medium text-foreground/90">FINAL:</span>{' '}
+                                        {formatSimilarityScore(displayFinalScore) ?? formatRawScore(displayFinalScore) ?? '\u2014'}
+                                      </div>
+                                    </div>
+                                  ) : (
+                                    <div className="text-[11px] text-muted-foreground">
+                                      Детали расчета пока не переданы сервисом.
+                                    </div>
+                                  )}
+                                  {(calcPathLabel || finalSourceLabel || originLabel) && (
+                                    <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
+                                      {calcPathLabel && (
+                                        <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
+                                          {calcPathLabel}
+                                        </Badge>
+                                      )}
+                                      {finalSourceLabel && (
+                                        <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
+                                          {finalSourceLabel}
+                                        </Badge>
+                                      )}
+                                      {originLabel && (
+                                        <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
+                                          {originLabel}
+                                        </Badge>
+                                      )}
+                                    </div>
+                                  )}
                                 </div>
-                                <div>
-                                  <span className="font-medium text-foreground/90">GEN:</span>{' '}
-                                  {formatRawScore(trace?.gen_score) ?? 'вЂ”'}
-                                </div>
-                                <div>
-                                  <span className="font-medium text-foreground/90">K:</span>{' '}
-                                  {formatRawScore(trace?.factor) ?? 'вЂ”'}
-                                </div>
-                              </div>
-                            </li>
-                          );
-                        })}
+                              </li>
+                            );
+                          })}
                         </ul>
                       </div>
                     );
@@ -4878,49 +5599,111 @@ export default function AiCompanyAnalysisTab() {
                   <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Виды найденной продукции на сайте и ТНВЭД
                   </div>
-                  {tnvedProducts(infoCompany, analyzerInfo).length ? (
-                    <ul className="grid gap-2 sm:grid-cols-2">
-                      {tnvedProducts(infoCompany, analyzerInfo).map((item, idx) => (
-                        <li
-                          key={`${item.name}-${item.id ?? idx}`}
-                          className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 rounded-lg border bg-muted/20 px-3 py-2.5"
-                        >
-                          <div
-                            className={cn(
-                              'flex items-center font-medium leading-snug text-foreground',
-                              (item.code || item.score != null || item.source) ? 'min-h-[54px]' : '',
-                            )}
-                          >
-                            {item.name}
-                          </div>
-                          {(item.code || item.score != null || item.source) && (
-                            <div className="flex min-w-[118px] flex-col items-end justify-center gap-2.5 self-center">
-                              <div className="flex items-center justify-end">
-                                <Badge variant="outline" className="text-[12px]">
-                                  {item.score != null ? formatSimilarityScore(item.score) ?? item.score : '—'}
-                                </Badge>
-                              </div>
-                              <div className="flex items-center justify-end gap-2">
-                                <Badge variant="outline" className="text-[12px]">
-                                  Источник: {item.source === 'okved' ? 'ОКВЭД' : 'сайт'}
-                                </Badge>
-                                {item.score == null && (
-                                  <Tooltip>
-                                    <TooltipTrigger asChild>
-                                      <Badge variant="outline" className="text-[12px]">?</Badge>
-                                    </TooltipTrigger>
-                                    <TooltipContent>не сматчено со справочником</TooltipContent>
-                                  </Tooltip>
-                                )}
-                              </div>
-                            </div>
-                          )}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <div className="text-muted-foreground">нет данных</div>
-                  )}
+                  {(() => {
+                    const productItems = topProducts(infoCompany, analyzerInfo);
+                    const traceStatusNote = productTraceLoading ? (
+                      <div className="mb-2 flex items-center gap-2 text-xs text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        <span>Загружаем связи продукции с оборудованием</span>
+                      </div>
+                    ) : productTraceError ? (
+                      <div className="mb-2 text-xs text-amber-600">{productTraceError}</div>
+                    ) : null;
+
+                    if (!productItems.length) {
+                      return (
+                        <div className="space-y-2">
+                          {traceStatusNote}
+                          <div className="text-muted-foreground">нет данных</div>
+                        </div>
+                      );
+                    }
+
+                    return (
+                      <div className="space-y-2">
+                        {traceStatusNote}
+                        <ul className="grid gap-2 sm:grid-cols-2">
+                          {productItems.map((item, idx) => {
+                            const traceLookupKey = buildProductTraceLookupKey(item.id, item.name);
+                            const trace = item.trace ?? (traceLookupKey ? productTraceByKey[traceLookupKey] : undefined);
+                            const displayScore = trace?.goods_types_score ?? item.score ?? null;
+                            const displayFactor = trace?.factor ?? null;
+                            const goodsTypeSourceLabel = formatGoodsTypeSource(trace?.goods_type_source ?? item.goodsTypeSource);
+                            const linkedEquipment = trace?.linked_equipment ?? [];
+
+                            return (
+                              <li
+                                key={`${item.name}-${item.id ?? idx}`}
+                                className="rounded-lg border bg-muted/20 px-3 py-2.5"
+                              >
+                                <div className="flex items-start justify-between gap-3">
+                                  <div className="min-w-0 space-y-1">
+                                    <div className="font-medium leading-snug text-foreground">
+                                      {trace?.goods_type_name || item.name}
+                                    </div>
+                                    {item.code && (
+                                      <div className="text-[11px] text-muted-foreground">
+                                        <span className="font-medium text-foreground/90">ТН ВЭД:</span>{' '}
+                                        {item.code}
+                                      </div>
+                                    )}
+                                    {trace ? (
+                                      <div className="text-[11px] text-muted-foreground">
+                                        <span className="font-medium text-foreground/90">Связано с оборудованием:</span>{' '}
+                                        {trace.linked_equipment_count}
+                                        {displayFactor != null ? ` · K: ${formatRawScore(displayFactor) ?? displayFactor}` : ''}
+                                      </div>
+                                    ) : null}
+                                  </div>
+                                  <div className="flex min-w-[118px] flex-col items-end justify-center gap-2 self-start">
+                                    <Badge variant="outline" className="text-[12px]">
+                                      {displayScore != null ? formatSimilarityScore(displayScore) ?? formatRawScore(displayScore) : '—'}
+                                    </Badge>
+                                    <div className="flex items-center justify-end gap-2">
+                                      <Badge variant="outline" className="text-[12px]">
+                                        Источник: {item.source === 'okved' ? 'ОКВЭД' : item.source === 'site' ? 'сайт' : 'не указан'}
+                                      </Badge>
+                                      {goodsTypeSourceLabel && (
+                                        <Badge variant="outline" className="text-[12px]">
+                                          {goodsTypeSourceLabel}
+                                        </Badge>
+                                      )}
+                                      {displayScore == null && (
+                                        <Tooltip>
+                                          <TooltipTrigger asChild>
+                                            <Badge variant="outline" className="text-[12px]">?</Badge>
+                                          </TooltipTrigger>
+                                          <TooltipContent>не сматчено со справочником</TooltipContent>
+                                        </Tooltip>
+                                      )}
+                                    </div>
+                                  </div>
+                                </div>
+                                {linkedEquipment.length ? (
+                                  <div className="mt-2 flex flex-wrap gap-2">
+                                    {linkedEquipment.slice(0, 3).map((equipment) => (
+                                      <Badge
+                                        key={`${item.name}-${equipment.equipment_id}`}
+                                        variant="outline"
+                                        className="max-w-full rounded-full px-3 text-[11px]"
+                                      >
+                                        <span className="truncate">
+                                          {equipment.equipment_name || `Оборудование #${equipment.equipment_id}`}
+                                          {equipment.final_score != null
+                                            ? ` · ${formatSimilarityScore(equipment.final_score) ?? formatRawScore(equipment.final_score)}`
+                                            : ''}
+                                        </span>
+                                      </Badge>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </li>
+                            );
+                          })}
+                        </ul>
+                      </div>
+                    );
+                  })()}
                 </div>
 
                 </TabsContent>
