@@ -4469,27 +4469,29 @@ export default function AiCompanyAnalysisTab() {
                         </div>
 
                         <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[360px]">
-                          <div className="rounded-2xl border bg-background/80 px-4 py-3">
+                          <div className="flex min-h-[96px] flex-col justify-center rounded-2xl border bg-background/80 px-4 py-3 text-center">
                             <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
                               Оценка
                             </div>
-                            <div className="mt-2 text-3xl font-semibold tabular-nums text-foreground">
+                            <div className="mt-2 text-3xl font-semibold leading-none tabular-nums text-foreground">
                               {score ?? '—'}
                             </div>
                           </div>
-                          <div className="rounded-2xl border bg-background/80 px-4 py-3">
+                          <div className="flex min-h-[96px] flex-col justify-center rounded-2xl border bg-background/80 px-4 py-3 text-center">
                             <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
                               Прогресс
                             </div>
-                            <div className="mt-2 text-3xl font-semibold tabular-nums text-foreground">
+                            <div className="mt-2 text-3xl font-semibold leading-none tabular-nums text-foreground">
                               {progressPercent}%
                             </div>
                           </div>
-                          <div className="rounded-2xl border bg-background/80 px-4 py-3">
+                          <div className="flex min-h-[96px] flex-col justify-center rounded-2xl border bg-background/80 px-4 py-3 text-center">
                             <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
                               Длительность
                             </div>
-                            <div className="mt-2 text-lg font-semibold text-foreground">{duration}</div>
+                            <div className="mt-2 text-3xl font-semibold leading-none tabular-nums text-foreground">
+                              {duration}
+                            </div>
                           </div>
                         </div>
                       </div>
@@ -4662,8 +4664,8 @@ export default function AiCompanyAnalysisTab() {
                 >
                 <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
                   <div className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Сводка по компании</div>
-                  <div className="grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-lg border bg-muted/20 p-3 text-center">
+                  <div className="grid gap-3 md:grid-cols-4">
+                  <div className="flex min-h-[94px] flex-col justify-center rounded-lg border bg-muted/20 px-4 py-3 text-center">
                     <div className="text-xs text-muted-foreground">Уровень соответствия и найденный класс предприятия</div>
                     <div className="space-y-1 font-medium">
                       {showOkvedFallbackBadge && (
@@ -4682,17 +4684,17 @@ export default function AiCompanyAnalysisTab() {
                       )}
                     </div>
                   </div>
-                  <div className="rounded-lg border bg-muted/20 p-3 text-center">
+                  <div className="flex min-h-[94px] flex-col justify-center rounded-lg border bg-muted/20 px-4 py-3 text-center">
                     <div className="text-xs text-muted-foreground">Основной ОКВЭД (DaData)</div>
                     <div className="font-medium">{infoCompany.main_okved || '—'}</div>
                   </div>
-                  <div className="rounded-lg border bg-muted/20 p-3 text-center">
+                  <div className="flex min-h-[94px] flex-col justify-center rounded-lg border bg-muted/20 px-4 py-3 text-center">
                     <div className="text-xs text-muted-foreground">Домен для парсинга</div>
                     <div className="font-medium">
                       {showOkvedFallbackBadge && !analysisDomainValue ? 'Нет сайта' : analysisDomainValue || '—'}
                     </div>
                   </div>
-                  <div className="rounded-lg border bg-muted/20 p-3 text-center">
+                  <div className="flex min-h-[94px] flex-col justify-center rounded-lg border bg-muted/20 px-4 py-3 text-center">
                     <div className="text-xs text-muted-foreground">
                       Соответствие ИИ-описания сайта и ОКВЭД
                     </div>
@@ -4748,7 +4750,7 @@ export default function AiCompanyAnalysisTab() {
                           const scoreLabel =
                             formatSimilarityScore(item.score ?? trace?.final_score ?? null) ??
                             formatRawScore(item.score ?? trace?.final_score ?? null) ??
-                            'вЂ”';
+                            '—';
                           const matchedSiteEquipment = trace?.matched_site_equipment?.trim() || null;
                           const matchedSiteScore = formatSimilarityScore(
                             trace?.matched_site_equipment_score ?? trace?.vector_score ?? null,
@@ -4768,11 +4770,13 @@ export default function AiCompanyAnalysisTab() {
                           return (
                             <li
                               key={`${item.name}-${item.id ?? idx}`}
-                              className="rounded-lg border bg-muted/20 p-3"
+                              className="rounded-lg border bg-muted/20 px-3 py-3"
                             >
                               <div className="flex items-start justify-between gap-3">
                                 <div className="min-w-0 flex-1 space-y-1">
-                                  <div className="font-medium text-foreground">{item.name}</div>
+                                  <div className="truncate pr-2 font-medium leading-snug text-foreground">
+                                    {item.name}
+                                  </div>
                                   <div className="hidden">{matchedSiteEquipment ? (
                                     <div className="text-[11px] text-muted-foreground">
                                       <span className="font-medium text-foreground/90">Найдено на сайте:</span>{' '}
@@ -4797,36 +4801,52 @@ export default function AiCompanyAnalysisTab() {
                                   ) : null}
                                 </div>
                                 <div className="flex shrink-0 items-center justify-end gap-2 self-start">
-                                  <Badge variant="outline" className="text-[12px]">
+                                  <Badge variant="outline" className="min-w-[72px] justify-center rounded-full text-[12px] tabular-nums">
                                     {scoreLabel}
                                   </Badge>
-                                  <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7">
+                                  <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0">
                                     <a href={item.href ?? '#'} target="_blank" rel="noopener noreferrer">
                                       <ExternalLink className="h-3.5 w-3.5" />
                                     </a>
                                   </Button>
                                 </div>
                               </div>
-                              {hasTraceBreakdown ? (
-                                <div className="mt-2 flex flex-wrap items-center gap-x-6 gap-y-1 text-[11px] text-muted-foreground">
-                                  <div>
-                                    <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
-                                    {formatSimilarityScore(trace?.bd_score) ?? formatRawScore(trace?.bd_score) ?? '\u2014'}
+                              <div className="mt-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                                {hasTraceBreakdown ? (
+                                  <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-muted-foreground sm:flex-nowrap">
+                                    <div className="whitespace-nowrap">
+                                      <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
+                                      {formatSimilarityScore(trace?.bd_score) ?? formatRawScore(trace?.bd_score) ?? '\u2014'}
+                                    </div>
+                                    <div className="whitespace-nowrap">
+                                      <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
+                                      {formatSimilarityScore(displayVectorScore) ?? formatRawScore(displayVectorScore) ?? '\u2014'}
+                                    </div>
+                                    <div className="whitespace-nowrap">
+                                      <span className="font-medium text-foreground/90">FINAL:</span>{' '}
+                                      {formatSimilarityScore(displayFinalScore) ?? formatRawScore(displayFinalScore) ?? '\u2014'}
+                                    </div>
                                   </div>
-                                  <div>
-                                    <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
-                                    {formatSimilarityScore(displayVectorScore) ?? formatRawScore(displayVectorScore) ?? '\u2014'}
+                                ) : (
+                                  <div className="text-[11px] text-muted-foreground">
+                                    Детали расчета пока не переданы сервисом.
                                   </div>
-                                  <div>
-                                    <span className="font-medium text-foreground/90">FINAL:</span>{' '}
-                                    {formatSimilarityScore(displayFinalScore) ?? formatRawScore(displayFinalScore) ?? '\u2014'}
+                                )}
+                                {(calcPathLabel || finalSourceLabel) && (
+                                  <div className="flex shrink-0 items-center justify-end gap-2">
+                                    {calcPathLabel && (
+                                      <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
+                                        {calcPathLabel}
+                                      </Badge>
+                                    )}
+                                    {finalSourceLabel && (
+                                      <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
+                                        {finalSourceLabel}
+                                      </Badge>
+                                    )}
                                   </div>
-                                </div>
-                              ) : (
-                                <div className="mt-2 text-[11px] text-muted-foreground">
-                                  Детали расчета пока не переданы сервисом.
-                                </div>
-                              )}
+                                )}
+                              </div>
                               <div className="hidden mt-2 grid gap-1 text-[11px] text-muted-foreground sm:grid-cols-2">
                                 <div>
                                   <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
@@ -4845,20 +4865,6 @@ export default function AiCompanyAnalysisTab() {
                                   {formatRawScore(trace?.factor) ?? 'вЂ”'}
                                 </div>
                               </div>
-                              {(calcPathLabel || finalSourceLabel) && (
-                                <div className="mt-2 flex flex-wrap justify-end gap-2">
-                                  {calcPathLabel && (
-                                    <Badge variant="outline" className="text-[11px]">
-                                      {calcPathLabel}
-                                    </Badge>
-                                  )}
-                                  {finalSourceLabel && (
-                                    <Badge variant="outline" className="text-[11px]">
-                                      {finalSourceLabel}
-                                    </Badge>
-                                  )}
-                                </div>
-                              )}
                             </li>
                           );
                         })}
