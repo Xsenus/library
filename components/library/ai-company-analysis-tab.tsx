@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
   AlertTriangle,
+  ArrowRight,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -19,6 +20,7 @@ import {
   Play,
   RefreshCw,
   Square,
+  Trash2,
   XCircle,
 } from 'lucide-react';
 import { useDebounce } from '@/hooks/use-debounce';
@@ -49,6 +51,15 @@ const statusOptions = [
   { key: 'no_valid_site', label: 'Не было доступных доменов', field: 'no_valid_site' as const },
 ];
 
+const companySortOptions = [
+  { key: 'revenue_desc', label: 'По выручке: сначала крупные' },
+  { key: 'revenue_asc', label: 'По выручке: сначала меньшие' },
+  { key: 'analysis_started_desc', label: 'По последнему старту' },
+  { key: 'analysis_finished_desc', label: 'По последнему завершению' },
+  { key: 'analysis_score_desc', label: 'По оценке анализа' },
+  { key: 'analysis_attempts_desc', label: 'По числу попыток' },
+] as const;
+
 const stepOptions: { key: StepKey; label: string }[] = [
   { key: 'lookup', label: 'Lookup' },
   { key: 'parse_site', label: 'Парсинг' },
@@ -60,6 +71,7 @@ const stepOptions: { key: StepKey; label: string }[] = [
 const PAGE_SIZE_STORAGE_KEY = 'ai-analysis-page-size';
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 75, 100];
 const SCORE_VALUE_CLASS = 'text-foreground text-xl leading-none font-semibold tabular-nums';
+type CompanySortKey = (typeof companySortOptions)[number]['key'];
 
 type ColumnWidthKey = 'company' | 'metrics' | 'sites' | 'emails' | 'status' | 'actions';
 
@@ -335,9 +347,39 @@ function formatDuration(ms: number | null | undefined): string {
   return parts.join(':');
 }
 
-function formatAnalysisScore(value: number | null | undefined): string {
-  if (value == null || !Number.isFinite(value)) return '—';
-  return value.toFixed(2);
+function toFiniteNumber(value: unknown): number | null {
+  if (value == null) return null;
+  const num = Number(value);
+  return Number.isFinite(num) ? num : null;
+}
+
+function resolveAnalysisScoreValue(company: Partial<AiCompany> | null | undefined): number | null {
+  if (!company) return null;
+
+  const analyzerInfo = normalizeAnalyzerInfo(company.analysis_info);
+  const candidates = [
+    company.analysis_score,
+    company.analysis_match_level,
+    company.description_score,
+    company.description_okved_score,
+    company.okved_score,
+    analyzerInfo?.ai?.prodclass?.score,
+    analyzerInfo?.ai?.description_okved_score,
+    analyzerInfo?.ai?.okved_score,
+  ];
+
+  for (const candidate of candidates) {
+    const parsed = toFiniteNumber(candidate);
+    if (parsed != null) return parsed;
+  }
+
+  return null;
+}
+
+function formatAnalysisScore(value: number | string | null | undefined): string {
+  const parsed = toFiniteNumber(value);
+  if (parsed == null) return '—';
+  return parsed.toFixed(2);
 }
 
 function formatQueuePriorityLabel(priority: number | null | undefined): string {
@@ -354,6 +396,10 @@ function formatQueueSourceLabel(source: string | null | undefined): string {
   if (normalized === 'filter') return '\u0414\u043E\u0431\u0430\u0432\u043B\u0435\u043D\u0438\u0435 \u043F\u043E \u0444\u0438\u043B\u044C\u0442\u0440\u0443';
   if (normalized === 'debug-step') return '\u041E\u0442\u043B\u0430\u0434\u043E\u0447\u043D\u044B\u0439 \u0448\u0430\u0433';
   return normalized;
+}
+
+function formatCompanySortLabel(sort: CompanySortKey): string {
+  return companySortOptions.find((item) => item.key === sort)?.label ?? companySortOptions[0].label;
 }
 
 function formatQueueRetryKind(kind: string | null | undefined): string | null {
@@ -1181,6 +1227,7 @@ export default function AiCompanyAnalysisTab() {
   const [search, setSearch] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [responsibleFilter, setResponsibleFilter] = useState('');
+  const [sortBy, setSortBy] = useState<CompanySortKey>('revenue_desc');
   const [industryId, setIndustryId] = useState<string>('all');
   const [okvedCode, setOkvedCode] = useState<string | undefined>(undefined);
   const [industries, setIndustries] = useState<Industry[]>([]);
@@ -1302,9 +1349,10 @@ export default function AiCompanyAnalysisTab() {
     if (industryId !== 'all') count += 1;
     if (responsibleFilter.trim()) count += 1;
     if (okvedCode) count += 1;
+    if (sortBy !== 'revenue_desc') count += 1;
     count += statusFilters.length;
     return count;
-  }, [industryId, okvedCode, responsibleFilter, search, statusFilters]);
+  }, [industryId, okvedCode, responsibleFilter, search, sortBy, statusFilters]);
 
   const hasFilters = activeFilterCount > 0;
 
@@ -1313,6 +1361,7 @@ export default function AiCompanyAnalysisTab() {
     setIndustryId('all');
     setResponsibleFilter('');
     setOkvedCode(undefined);
+    setSortBy('revenue_desc');
     setStatusFilters([]);
     setPage(1);
   }, []);
@@ -1607,6 +1656,7 @@ export default function AiCompanyAnalysisTab() {
         if (okvedCode) params.set('okved', okvedCode);
         if (industryId !== 'all') params.set('industryId', industryId);
         if (responsibleFilter.trim()) params.set('responsible', responsibleFilter.trim());
+        if (sortBy) params.set('sort', sortBy);
         statusFilters.forEach((status) => params.append('status', status));
 
         const res = await fetch(`/api/ai-analysis/companies?${params.toString()}`, { cache: 'no-store' });
@@ -1694,7 +1744,7 @@ export default function AiCompanyAnalysisTab() {
         setLoading(false);
       }
     },
-    [debouncedSearch, okvedCode, industryId, responsibleFilter, statusFilters, toast, startTransition],
+    [debouncedSearch, okvedCode, industryId, responsibleFilter, sortBy, statusFilters, toast, startTransition],
   );
 
   useEffect(() => {
@@ -1755,6 +1805,16 @@ export default function AiCompanyAnalysisTab() {
     const url = `/library/company-logs${suffix ? `?${suffix}` : ''}`;
     window.open(url, '_blank', 'noopener,noreferrer');
   }, []);
+
+  const openCompanyInfo = useCallback(
+    (company: AiCompany, options?: { fromQueue?: boolean }) => {
+      setInfoCompany(company);
+      if (options?.fromQueue) {
+        setQueueDialogOpen(false);
+      }
+    },
+    [],
+  );
 
   const fetchQueue = useCallback(async () => {
     setQueueLoading(true);
@@ -2911,8 +2971,7 @@ export default function AiCompanyAnalysisTab() {
 
   const prodclassScoreValue =
     analyzerProdclass?.score ??
-    analyzerDescriptionOkvedScore ??
-    analyzerOkvedScore ??
+    toFiniteNumber(infoCompany?.analysis_match_level) ??
     null;
   const scoreSource =
     infoCompany?.score_source ??
@@ -2932,14 +2991,8 @@ export default function AiCompanyAnalysisTab() {
   ].some((value) => value != null);
   const isFallbackByNullScores = !hasSiteScores;
   const showOkvedFallbackBadge = isFallbackBySource || isFallbackByNullScores || hasFallbackDomain;
-  const prodclassScoreText =
-    formatMatchScore(prodclassScoreValue) ||
-    formatMatchScore(analyzerProdclass?.score ?? null) ||
-    formatMatchScore(analyzerOkvedScore);
-  const prodclassRawScoreText =
-    formatRawScore(prodclassScoreValue) ||
-    formatRawScore(analyzerProdclass?.score ?? null) ||
-    formatRawScore(analyzerOkvedScore);
+  const prodclassScoreText = formatMatchScore(prodclassScoreValue);
+  const prodclassRawScoreText = formatRawScore(prodclassScoreValue);
   const prodclassDescription =
     analyzerProdclass && analyzerProdclass.name && analyzerProdclass.label && analyzerProdclass.name !== analyzerProdclass.label
       ? analyzerProdclass.name
@@ -3056,6 +3109,27 @@ export default function AiCompanyAnalysisTab() {
                     Сбросить
                   </Button>
                 )}
+                <div className="flex items-center gap-2 rounded-lg border bg-background px-3 py-1.5">
+                  <span className="text-xs text-muted-foreground">Сортировка</span>
+                  <Select
+                    value={sortBy}
+                    onValueChange={(value) => {
+                      setSortBy(value as CompanySortKey);
+                      setPage(1);
+                    }}
+                  >
+                    <SelectTrigger className="h-8 w-[260px] border-0 bg-transparent px-0 text-sm shadow-none focus:ring-0">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {companySortOptions.map((option) => (
+                        <SelectItem key={option.key} value={option.key}>
+                          {option.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
               <Tooltip>
@@ -3124,7 +3198,7 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
-            {(search.trim() || industryId !== 'all' || okvedCode) && (
+            {(search.trim() || industryId !== 'all' || okvedCode || sortBy !== 'revenue_desc') && (
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 {search.trim() && (
                   <Badge variant="secondary" className="max-w-full whitespace-normal">
@@ -3139,6 +3213,11 @@ export default function AiCompanyAnalysisTab() {
                 {okvedCode && (
                   <Badge variant="secondary" className="max-w-full whitespace-normal">
                     ОКВЭД: {okvedCode}
+                  </Badge>
+                )}
+                {sortBy !== 'revenue_desc' && (
+                  <Badge variant="secondary" className="max-w-full whitespace-normal">
+                    Сортировка: {formatCompanySortLabel(sortBy)}
                   </Badge>
                 )}
               </div>
@@ -3359,7 +3438,7 @@ export default function AiCompanyAnalysisTab() {
                           getSyncedDurationMs(company, state.running, nowMs, durationSyncByInn[company.inn]),
                         );
                         const attempts = company.analysis_attempts != null ? company.analysis_attempts : '—';
-                        const score = formatAnalysisScore(company.analysis_score);
+                        const score = formatAnalysisScore(resolveAnalysisScoreValue(company));
                         const responsibleLabel = company.responsible?.trim() || '—';
                         const progressPercent = Math.min(
                           100,
@@ -3664,7 +3743,7 @@ export default function AiCompanyAnalysisTab() {
                                         variant="ghost"
                                         size="icon"
                                         className="h-8 w-8"
-                                        onClick={() => setInfoCompany(company)}
+                                        onClick={() => openCompanyInfo(company)}
                                         aria-label={`Подробности по компании ${companyLabel}`}
                                       >
                                         <Info className="h-4 w-4" />
@@ -3777,6 +3856,27 @@ export default function AiCompanyAnalysisTab() {
                   onChange={(e) => setResponsibleFilter(e.target.value)}
                 />
               </div>
+              <div className="space-y-1">
+                <span className="text-[11px] uppercase text-muted-foreground">Сортировка</span>
+                <Select
+                  value={sortBy}
+                  onValueChange={(value) => {
+                    setSortBy(value as CompanySortKey);
+                    setPage(1);
+                  }}
+                >
+                  <SelectTrigger className="h-9 w-full text-left text-sm">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {companySortOptions.map((option) => (
+                      <SelectItem key={option.key} value={option.key}>
+                        {option.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
               <div className="grid gap-4 md:grid-cols-2">
                 <div className="space-y-1">
                   <span className="text-[11px] uppercase text-muted-foreground">Отрасль</span>
@@ -3885,7 +3985,7 @@ export default function AiCompanyAnalysisTab() {
         </Dialog>
 
         <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>
-          <DialogContent className="max-w-4xl">
+          <DialogContent className="max-w-5xl">
             <DialogHeader>
               <DialogTitle>Очередь анализа</DialogTitle>
             </DialogHeader>
@@ -3912,38 +4012,62 @@ export default function AiCompanyAnalysisTab() {
                 </div>
               </div>
               {queueSummary && !queueLoading && (
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <Badge variant="secondary">{'\u0412 \u043E\u0447\u0435\u0440\u0435\u0434\u0438'}: {queueSummary!.queued}</Badge>
-                  <Badge variant="secondary">{'\u0412 \u0440\u0430\u0431\u043E\u0442\u0435'}: {queueSummary!.running}</Badge>
-                  {queueSummary!.stop_requested > 0 && (
-                    <Badge variant="outline">{'\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0430 \u0437\u0430\u043F\u0440\u043E\u0448\u0435\u043D\u0430'}: {queueSummary!.stop_requested}</Badge>
-                  )}
-                  {queueSummary!.expedited > 0 && (
-                    <Badge variant="outline">{'\u0421 \u043F\u0440\u0438\u043E\u0440\u0438\u0442\u0435\u0442\u043E\u043C'}: {queueSummary!.expedited}</Badge>
-                  )}
-                  {queueSummary!.leased > 0 && (
-                    <Badge variant="outline">{'\u041F\u043E\u0434 \u0431\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u043A\u043E\u0439'}: {queueSummary!.leased}</Badge>
-                  )}
-                  {queueSummary!.retry_scheduled > 0 && (
-                    <Badge variant="outline">{'\u041E\u0436\u0438\u0434\u0430\u044E\u0442 \u043F\u043E\u0432\u0442\u043E\u0440'}: {queueSummary!.retry_scheduled}</Badge>
-                  )}
+                <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                  <div className="rounded-2xl border bg-muted/20 px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                      Всего задач
+                    </div>
+                    <div className="mt-2 flex items-end justify-between gap-3">
+                      <div className="text-2xl font-semibold tabular-nums text-foreground">
+                        {queueSummary.total}
+                      </div>
+                      <Badge variant="secondary">Очередь</Badge>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border bg-muted/20 px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                      В работе
+                    </div>
+                    <div className="mt-2 flex items-end justify-between gap-3">
+                      <div className="text-2xl font-semibold tabular-nums text-foreground">
+                        {queueSummary.running}
+                      </div>
+                      <div className="text-right text-[11px] text-muted-foreground">
+                        {queueSummary.stop_requested > 0 ? `Стопов: ${queueSummary.stop_requested}` : 'Без остановок'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border bg-muted/20 px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                      В ожидании
+                    </div>
+                    <div className="mt-2 flex items-end justify-between gap-3">
+                      <div className="text-2xl font-semibold tabular-nums text-foreground">
+                        {queueSummary.queued}
+                      </div>
+                      <div className="text-right text-[11px] text-muted-foreground">
+                        {queueSummary.retry_scheduled > 0
+                          ? `Повторов: ${queueSummary.retry_scheduled}`
+                          : 'Без повторов'}
+                      </div>
+                    </div>
+                  </div>
+                  <div className="rounded-2xl border bg-muted/20 px-4 py-3">
+                    <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                      Контроль
+                    </div>
+                    <div className="mt-2 flex items-end justify-between gap-3">
+                      <div className="text-2xl font-semibold tabular-nums text-foreground">
+                        {queueSummary.expedited}
+                      </div>
+                      <div className="text-right text-[11px] text-muted-foreground">
+                        {queueSummary.leased > 0 ? `Под блокировкой: ${queueSummary.leased}` : 'Блокировок нет'}
+                      </div>
+                    </div>
+                  </div>
                 </div>
               )}
-              {false && queueSummary && !queueLoading && (
-                <div className="flex flex-wrap items-center gap-2 text-xs">
-                  <Badge variant="secondary">{'\u0412 \u043E\u0447\u0435\u0440\u0435\u0434\u0438'}: {queueSummary!.queued}</Badge>
-                  <Badge variant="secondary">{'\u0412 \u0440\u0430\u0431\u043E\u0442\u0435'}: {queueSummary!.running}</Badge>
-                  {queueSummary!.stop_requested > 0 && (
-                    <Badge variant="outline">{'\u041E\u0441\u0442\u0430\u043D\u043E\u0432\u043A\u0430 \u0437\u0430\u043F\u0440\u043E\u0448\u0435\u043D\u0430'}: {queueSummary!.stop_requested}</Badge>
-                  )}
-                  {queueSummary!.expedited > 0 && <Badge variant="outline">Приоритетных: {queueSummary!.expedited}</Badge>}
-                  {queueSummary!.leased > 0 && <Badge variant="outline">Под lease: {queueSummary!.leased}</Badge>}
-                  {queueSummary!.retry_scheduled > 0 && (
-                    <Badge variant="outline">Ожидают retry: {queueSummary!.retry_scheduled}</Badge>
-                  )}
-                </div>
-              )}
-              <div className="max-h-[420px] space-y-2 overflow-y-auto rounded-md border bg-muted/20 p-3">
+              <div className="max-h-[460px] space-y-3 overflow-y-auto rounded-2xl border bg-muted/20 p-3">
                 {queueLoading ? (
                   <div className="flex items-center gap-2 text-sm text-muted-foreground">
                     <Loader2 className="h-4 w-4 animate-spin" /> Обновляем очередь…
@@ -3958,89 +4082,175 @@ export default function AiCompanyAnalysisTab() {
                     const itemCompanyLabel = formatCompanyDisplayName(item.short_name, item.company_id);
                     const queuedTime = formatTime(item.queued_at ?? null);
                     const statusLabel = formatStatusLabel(item.analysis_status ?? 'queued');
-                    const attempts =
-                      item.analysis_attempts != null && Number.isFinite(item.analysis_attempts)
-                        ? item.analysis_attempts
-                        : '—';
-                    const score = formatAnalysisScore(item.analysis_score);
+                    const attemptsValue = toFiniteNumber(item.analysis_attempts);
+                    const attempts = attemptsValue != null ? Math.max(0, Math.floor(attemptsValue)) : '—';
+                    const scoreValue = resolveAnalysisScoreValue(item);
+                    const score = formatAnalysisScore(scoreValue);
                     const queuePriorityLabel = formatQueuePriorityLabel(item.queue_priority);
                     const queueSourceLabel = formatQueueSourceLabel(item.queue_source);
                     const queueRetryKindLabel = formatQueueRetryKind(item.queue_last_error_kind);
                     const leaseUntil = formatTime(item.lease_expires_at ?? null);
                     const nextRetryAt = formatTime(item.next_retry_at ?? null);
+                    const progressValue = toFiniteNumber(item.analysis_progress);
+                    const progressPercent =
+                      progressValue != null ? Math.min(100, Math.max(0, Math.round(progressValue * 100))) : null;
                     const queueAttemptCount =
-                      item.queue_attempt_count != null && Number.isFinite(item.queue_attempt_count)
-                        ? Math.max(0, Math.floor(item.queue_attempt_count))
+                      toFiniteNumber(item.queue_attempt_count) != null
+                        ? Math.max(0, Math.floor(toFiniteNumber(item.queue_attempt_count)!))
                         : null;
                     const queueRetries =
-                      item.queue_defer_count != null && Number.isFinite(item.queue_defer_count)
-                        ? Math.max(0, Math.floor(item.queue_defer_count))
+                      toFiniteNumber(item.queue_defer_count) != null
+                        ? Math.max(0, Math.floor(toFiniteNumber(item.queue_defer_count)!))
                         : 0;
                     const queueErrorText = truncateText(item.queue_last_error, 120);
 
                     return (
                       <div
                         key={`queue-${item.inn}`}
-                        className="grid gap-3 rounded-md border bg-background/80 p-3 md:grid-cols-[minmax(0,1fr)_auto] md:items-start"
+                        className="rounded-2xl border bg-background/95 p-4 shadow-sm transition-colors hover:border-foreground/20"
                       >
-                        <div className="space-y-1">
-                          <div className="flex flex-wrap items-center gap-2 text-sm font-semibold text-foreground">
-                            <span>{itemCompanyLabel}</span>
-                            <Badge variant={badge.variant}>{badge.label}</Badge>
-                          </div>
-                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-                            <span>ИНН {item.inn}</span>
-                            {queuedTime && <span>в очереди с {queuedTime}</span>}
-                            <span>Попыток: {attempts}</span>
-                            <span>
-                              Оценка: <span className={SCORE_VALUE_CLASS}>{score}</span>
-                            </span>
-                            <Badge variant="outline" className="whitespace-nowrap text-foreground">
-                              {statusLabel}
-                            </Badge>
-                          </div>
-                          <div className="flex flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-                            <span>{'\u0418\u0441\u0442\u043E\u0447\u043D\u0438\u043A'}: {queueSourceLabel}</span>
-                            <span>{'\u041F\u0440\u0438\u043E\u0440\u0438\u0442\u0435\u0442'}: {queuePriorityLabel}</span>
-                            {queueAttemptCount != null && (
-                              <span>{'\u041F\u043E\u043F\u044B\u0442\u043A\u0430 \u043E\u0447\u0435\u0440\u0435\u0434\u0438'}: {queueAttemptCount}</span>
-                            )}
-                            {queueRetries > 0 && <span>{'\u041F\u043E\u0432\u0442\u043E\u0440\u044B \u0432 \u043E\u0447\u0435\u0440\u0435\u0434\u0438'}: {queueRetries}</span>}
-                            {item.next_retry_at && <span>{'\u0421\u043B\u0435\u0434\u0443\u044E\u0449\u0438\u0439 \u043F\u043E\u0432\u0442\u043E\u0440 \u0432'} {nextRetryAt}</span>}
-                            {queueRetryKindLabel && <span>{'\u041F\u0440\u0438\u0447\u0438\u043D\u0430 \u043F\u043E\u0432\u0442\u043E\u0440\u0430'}: {queueRetryKindLabel}</span>}
-                            {item.queue_state === 'running' && item.lease_expires_at && <span>{'\u0411\u043B\u043E\u043A\u0438\u0440\u043E\u0432\u043A\u0430 \u0434\u043E'} {leaseUntil}</span>}
-                            {queueErrorText && <span className="text-amber-600">{'\u041F\u043E\u0441\u043B\u0435\u0434\u043D\u044F\u044F \u043E\u0448\u0438\u0431\u043A\u0430'}: {queueErrorText}</span>}
-                          </div>
-                          <div className="hidden flex-wrap gap-x-4 gap-y-1 text-[11px] text-muted-foreground">
-                            <span>Источник: {queueSourceLabel}</span>
-                            <span>Приоритет: {queuePriorityLabel}</span>
-                            {queueAttemptCount != null && <span>РџРѕРїС‹С‚РєР° РѕС‡РµСЂРµРґРё: {queueAttemptCount}</span>}
-                            {queueRetries > 0 && <span>Повторы в очереди: {queueRetries}</span>}
-                            {item.next_retry_at && <span>Следующий retry в {nextRetryAt}</span>}
-                            {queueRetryKindLabel && <span>Причина retry: {queueRetryKindLabel}</span>}
-                            {item.queue_state === 'running' && item.lease_expires_at && <span>Lease до {leaseUntil}</span>}
-                            {queueErrorText && <span className="text-amber-600">Последняя ошибка: {queueErrorText}</span>}
-                          </div>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2 md:justify-end md:self-center">
-                          <Button
+                        <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                          <button
                             type="button"
-                            variant="ghost"
-                            size="sm"
-                            className="gap-2"
-                            disabled={removeInn === item.inn}
-                            onClick={async () => {
-                              await handleRemoveFromQueue(item.inn);
-                              fetchQueue();
-                            }}
+                            className="min-w-0 flex-1 rounded-xl text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                            onClick={() => openCompanyInfo(item, { fromQueue: true })}
                           >
-                            {removeInn === item.inn ? (
-                              <Loader2 className="h-4 w-4 animate-spin" />
-                            ) : (
-                              <Square className="h-4 w-4" />
-                            )}
-                            Удалить
-                          </Button>
+                            <div className="space-y-3 p-1">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="truncate text-base font-semibold text-foreground">
+                                  {itemCompanyLabel}
+                                </span>
+                                <Badge variant={badge.variant}>{badge.label}</Badge>
+                                <Badge variant="outline" className="whitespace-nowrap text-foreground">
+                                  {statusLabel}
+                                </Badge>
+                              </div>
+
+                              <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
+                                <span>ИНН {item.inn}</span>
+                                {queuedTime && <span>В очереди с {queuedTime}</span>}
+                                <span>Попыток запуска: {attempts}</span>
+                              </div>
+
+                              <div className="grid gap-2 sm:grid-cols-2 2xl:grid-cols-4">
+                                <div className="rounded-xl border bg-muted/20 px-3 py-2">
+                                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                                    Источник
+                                  </div>
+                                  <div className="mt-1 text-sm font-medium text-foreground">
+                                    {queueSourceLabel}
+                                  </div>
+                                </div>
+                                <div className="rounded-xl border bg-muted/20 px-3 py-2">
+                                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                                    Приоритет
+                                  </div>
+                                  <div className="mt-1 text-sm font-medium text-foreground">
+                                    {queuePriorityLabel}
+                                  </div>
+                                </div>
+                                <div className="rounded-xl border bg-muted/20 px-3 py-2">
+                                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                                    Очередь
+                                  </div>
+                                  <div className="mt-1 text-sm font-medium text-foreground">
+                                    {queueAttemptCount != null ? `Попытка ${queueAttemptCount}` : 'Ожидает запуска'}
+                                  </div>
+                                </div>
+                                <div className="rounded-xl border bg-muted/20 px-3 py-2">
+                                  <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                                    Контроль
+                                  </div>
+                                  <div className="mt-1 text-sm font-medium text-foreground">
+                                    {item.queue_state === 'running' && item.lease_expires_at
+                                      ? `До ${leaseUntil}`
+                                      : item.next_retry_at
+                                      ? `Повтор в ${nextRetryAt}`
+                                      : 'Под контролем'}
+                                  </div>
+                                </div>
+                              </div>
+
+                              {(progressPercent != null || queueRetries > 0 || queueRetryKindLabel || queueErrorText) && (
+                                <div className="space-y-2">
+                                  {progressPercent != null && progressPercent > 0 && (
+                                    <div className="space-y-1">
+                                      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
+                                        <span>Текущий прогресс</span>
+                                        <span>{progressPercent}%</span>
+                                      </div>
+                                      <Progress value={progressPercent} className="h-2" />
+                                    </div>
+                                  )}
+                                  <div className="flex flex-wrap gap-2 text-[11px] text-muted-foreground">
+                                    {queueRetries > 0 && (
+                                      <Badge variant="outline" className="rounded-full px-2 py-0.5 font-normal">
+                                        Повторы: {queueRetries}
+                                      </Badge>
+                                    )}
+                                    {queueRetryKindLabel && (
+                                      <Badge variant="outline" className="rounded-full px-2 py-0.5 font-normal">
+                                        Причина: {queueRetryKindLabel}
+                                      </Badge>
+                                    )}
+                                  </div>
+                                  {queueErrorText && (
+                                    <div className="rounded-xl border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                                      Последняя ошибка: {queueErrorText}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          </button>
+
+                          <div className="flex shrink-0 flex-col gap-3 xl:min-w-[210px]">
+                            <div className="rounded-2xl border bg-muted/20 px-4 py-3 text-right">
+                              <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                                Оценка
+                              </div>
+                              <div className="mt-2 text-3xl font-semibold tabular-nums text-foreground">
+                                {score}
+                              </div>
+                              <div className="mt-1 text-xs text-muted-foreground">
+                                {scoreValue != null ? 'Доступна для перехода в карточку' : 'Появится после расчёта'}
+                              </div>
+                            </div>
+
+                            <div className="flex flex-col gap-2 sm:flex-row xl:flex-col">
+                              <Button
+                                type="button"
+                                variant="outline"
+                                className="justify-between gap-2"
+                                onClick={() => openCompanyInfo(item, { fromQueue: true })}
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  <Info className="h-4 w-4" />
+                                  Карточка
+                                </span>
+                                <ArrowRight className="h-4 w-4" />
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="justify-between gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                disabled={removeInn === item.inn}
+                                onClick={async () => {
+                                  await handleRemoveFromQueue(item.inn);
+                                  fetchQueue();
+                                }}
+                              >
+                                <span className="inline-flex items-center gap-2">
+                                  {removeInn === item.inn ? (
+                                    <Loader2 className="h-4 w-4 animate-spin" />
+                                  ) : (
+                                    <Trash2 className="h-4 w-4" />
+                                  )}
+                                  Удалить
+                                </span>
+                              </Button>
+                            </div>
+                          </div>
                         </div>
                       </div>
                     );
@@ -4193,7 +4403,7 @@ export default function AiCompanyAnalysisTab() {
                   const status = getStatusBadge(infoCompany, outcome);
                   const progressPercent = Math.min(
                     100,
-                    Math.max(0, Math.round((infoCompany.analysis_progress ?? 0) * 100)),
+                    Math.max(0, Math.round((toFiniteNumber(infoCompany.analysis_progress) ?? 0) * 100)),
                   );
                   const startedDate = formatDate(infoCompany.analysis_started_at ?? null);
                   const startedTime = formatTime(infoCompany.analysis_started_at ?? null);
@@ -4227,86 +4437,124 @@ export default function AiCompanyAnalysisTab() {
                       durationSyncByInn[infoCompany.inn],
                     ),
                   );
-                  const attempts =
-                    infoCompany.analysis_attempts != null ? infoCompany.analysis_attempts : undefined;
+                  const attemptsValue = toFiniteNumber(infoCompany.analysis_attempts);
+                  const attempts = attemptsValue != null ? Math.max(0, Math.floor(attemptsValue)) : undefined;
                   const infoSites = toSiteArray(infoCompany.sites);
                   const okvedFallbackUsed = isOkvedFallbackUsed(infoCompany, infoSites);
-                  const scoreRaw = formatAnalysisScore(infoCompany.analysis_score);
+                  const scoreRaw = formatAnalysisScore(resolveAnalysisScoreValue(infoCompany));
                   const score = scoreRaw !== '—' ? scoreRaw : undefined;
 
                   return (
-                    <div className="space-y-4 rounded-xl border bg-background/90 p-4 shadow-sm">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <Badge variant={status.variant}>{status.label}</Badge>
-                        {okvedFallbackUsed && (
-                          <Badge variant="outline" className="border-amber-300 text-amber-700">
-                            Подбор по ОКВЭД
-                          </Badge>
-                        )}
-                        <span className="text-xs text-muted-foreground">
-                          {state.running
-                            ? 'Анализ выполняется прямо сейчас'
-                            : infoCompany.analysis_finished_at || infoCompany.analysis_started_at
-                            ? 'Последний запуск завершён или в ожидании завершения'
-                            : 'Анализ ещё не запускался'}
-                        </span>
+                    <div className="space-y-4 rounded-2xl border bg-gradient-to-br from-background via-background to-muted/30 p-5 shadow-sm">
+                      <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+                        <div className="min-w-0 space-y-3">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Badge variant={status.variant}>{status.label}</Badge>
+                            {okvedFallbackUsed && (
+                              <Badge variant="outline" className="border-amber-300 text-amber-700">
+                                Подбор по ОКВЭД
+                              </Badge>
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <div className="text-lg font-semibold text-foreground">Сводка по последнему запуску</div>
+                            <div className="max-w-2xl text-sm text-muted-foreground">
+                              {state.running
+                                ? 'Анализ выполняется прямо сейчас. Карточка обновляется по мере поступления новых шагов.'
+                                : infoCompany.analysis_finished_at || infoCompany.analysis_started_at
+                                ? 'Здесь собраны ключевые метрики последнего запуска и текущий статус обработки компании.'
+                                : 'По компании ещё не было завершённого запуска. Как только он появится, здесь отобразятся шаги и итоговые метрики.'}
+                            </div>
+                          </div>
+                        </div>
+
+                        <div className="grid gap-3 sm:grid-cols-3 lg:min-w-[360px]">
+                          <div className="rounded-2xl border bg-background/80 px-4 py-3">
+                            <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                              Оценка
+                            </div>
+                            <div className="mt-2 text-3xl font-semibold tabular-nums text-foreground">
+                              {score ?? '—'}
+                            </div>
+                          </div>
+                          <div className="rounded-2xl border bg-background/80 px-4 py-3">
+                            <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                              Прогресс
+                            </div>
+                            <div className="mt-2 text-3xl font-semibold tabular-nums text-foreground">
+                              {progressPercent}%
+                            </div>
+                          </div>
+                          <div className="rounded-2xl border bg-background/80 px-4 py-3">
+                            <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                              Длительность
+                            </div>
+                            <div className="mt-2 text-lg font-semibold text-foreground">{duration}</div>
+                          </div>
+                        </div>
                       </div>
 
-                      <div className="grid gap-3 text-xs text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
-                        <div>
-                          <div className="uppercase">Поставлено в очередь</div>
-                          <div className="text-foreground">{queuedAt}</div>
+                      <div className="grid gap-3 text-sm sm:grid-cols-2 xl:grid-cols-4">
+                        <div className="rounded-xl border bg-background/80 px-4 py-3">
+                          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                            Поставлено в очередь
+                          </div>
+                          <div className="mt-1 text-foreground">{queuedAt}</div>
                         </div>
-                        <div>
-                          <div className="uppercase">Начало</div>
-                          <div className="text-foreground">{startedAt}</div>
+                        <div className="rounded-xl border bg-background/80 px-4 py-3">
+                          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                            Начало
+                          </div>
+                          <div className="mt-1 text-foreground">{startedAt}</div>
                         </div>
-                        <div>
-                          <div className="uppercase">Завершение</div>
-                          <div className="text-foreground">{finishedAt}</div>
+                        <div className="rounded-xl border bg-background/80 px-4 py-3">
+                          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                            Завершение
+                          </div>
+                          <div className="mt-1 text-foreground">{finishedAt}</div>
                         </div>
-                        <div>
-                          <div className="uppercase">Попыток</div>
-                          <div className="text-foreground">{attempts ?? '—'}</div>
-                        </div>
-                        <div>
-                          <div className="uppercase">Прогресс</div>
-                          <div className="text-foreground">{progressPercent}%</div>
-                        </div>
-                        <div>
-                          <div className="uppercase">Оценка</div>
-                          <div className={SCORE_VALUE_CLASS}>{score ?? '—'}</div>
-                        </div>
-                        <div>
-                          <div className="uppercase">Длительность</div>
-                          <div className="text-foreground">{duration}</div>
+                        <div className="rounded-xl border bg-background/80 px-4 py-3">
+                          <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                            Попыток
+                          </div>
+                          <div className="mt-1 text-foreground">{attempts ?? '—'}</div>
                         </div>
                         {infoCompany.queued_by && (
-                          <div>
-                            <div className="uppercase">Поставил в очередь</div>
-                            <div className="text-foreground">{infoCompany.queued_by}</div>
+                          <div className="rounded-xl border bg-background/80 px-4 py-3 sm:col-span-2 xl:col-span-4">
+                            <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
+                              Поставил в очередь
+                            </div>
+                            <div className="mt-1 text-foreground">{infoCompany.queued_by}</div>
                           </div>
                         )}
                       </div>
 
                       {state.running && (
-                        <div className="space-y-1">
-                          <Progress value={progressPercent} className="h-2" />
-                          <div className="text-[11px] text-muted-foreground">
-                            Выполняется… {progressPercent}%
+                        <div className="space-y-2 rounded-xl border bg-background/80 px-4 py-3">
+                          <div className="flex items-center justify-between text-xs text-muted-foreground">
+                            <span>Выполнение анализа</span>
+                            <span>{progressPercent}%</span>
                           </div>
+                          <Progress value={progressPercent} className="h-2" />
                         </div>
                       )}
 
                       {steps.length > 0 && (
-                        <div className="space-y-1">
-                          <div className="text-xs text-muted-foreground">Последний пайплайн</div>
-                          <ol className="list-decimal space-y-1 pl-4 text-[13px] text-foreground">
+                        <div className="space-y-2 rounded-xl border bg-background/80 px-4 py-3">
+                          <div className="text-xs uppercase tracking-[0.12em] text-muted-foreground">
+                            Последний пайплайн
+                          </div>
+                          <ol className="grid gap-2 text-[13px] text-foreground md:grid-cols-2">
                             {steps.map((step, idx) => (
-                              <li key={`${infoCompany.inn}-dlg-step-${idx}`}>
-                                {step.label}
+                              <li
+                                key={`${infoCompany.inn}-dlg-step-${idx}`}
+                                className="rounded-lg border bg-muted/20 px-3 py-2"
+                              >
+                                <div className="font-medium">{step.label}</div>
                                 {step.status ? (
-                                  <span className="text-muted-foreground"> · {translatePipelineStatus(step.status)}</span>
+                                  <div className="mt-0.5 text-xs text-muted-foreground">
+                                    {translatePipelineStatus(step.status)}
+                                  </div>
                                 ) : null}
                               </li>
                             ))}
@@ -4597,16 +4845,16 @@ export default function AiCompanyAnalysisTab() {
                                   {formatRawScore(trace?.factor) ?? 'вЂ”'}
                                 </div>
                               </div>
-                              {false && (calcPathLabel || finalSourceLabel) && (
-                                <div className="mt-2 flex flex-wrap gap-2">
-                                  {finalSourceLabel && (
-                                    <Badge variant="outline" className="text-[11px]">
-                                      {finalSourceLabel}
-                                    </Badge>
-                                  )}
+                              {(calcPathLabel || finalSourceLabel) && (
+                                <div className="mt-2 flex flex-wrap justify-end gap-2">
                                   {calcPathLabel && (
                                     <Badge variant="outline" className="text-[11px]">
                                       {calcPathLabel}
+                                    </Badge>
+                                  )}
+                                  {finalSourceLabel && (
+                                    <Badge variant="outline" className="text-[11px]">
+                                      {finalSourceLabel}
                                     </Badge>
                                   )}
                                 </div>
@@ -4629,31 +4877,24 @@ export default function AiCompanyAnalysisTab() {
                       {tnvedProducts(infoCompany, analyzerInfo).map((item, idx) => (
                         <li
                           key={`${item.name}-${item.id ?? idx}`}
-                          className="grid grid-cols-[1fr_auto] gap-x-2 rounded-lg border bg-muted/20 p-3"
+                          className="grid grid-cols-[minmax(0,1fr)_auto] gap-x-3 rounded-lg border bg-muted/20 px-3 py-2.5"
                         >
                           <div
                             className={cn(
-                              'row-span-2 flex items-center font-medium text-foreground',
-                              item.code ? 'row-span-3' : '',
+                              'flex items-center font-medium leading-snug text-foreground',
+                              (item.code || item.score != null || item.source) ? 'min-h-[54px]' : '',
                             )}
                           >
                             {item.name}
                           </div>
                           {(item.code || item.score != null || item.source) && (
-                            <>
-                              {/*
-                                <div className="flex items-center justify-center">
-                                  <Badge variant="outline" className="text-[12px]">
-                                    ТНВЭД {item.code}
-                                  </Badge>
-                                </div>
-                              */}
-                              <div className="flex items-center justify-center">
+                            <div className="flex min-w-[118px] flex-col items-end justify-center gap-2.5 self-center">
+                              <div className="flex items-center justify-end">
                                 <Badge variant="outline" className="text-[12px]">
                                   {item.score != null ? formatSimilarityScore(item.score) ?? item.score : '—'}
                                 </Badge>
                               </div>
-                              <div className="flex items-center justify-center gap-2">
+                              <div className="flex items-center justify-end gap-2">
                                 <Badge variant="outline" className="text-[12px]">
                                   Источник: {item.source === 'okved' ? 'ОКВЭД' : 'сайт'}
                                 </Badge>
@@ -4666,7 +4907,7 @@ export default function AiCompanyAnalysisTab() {
                                   </Tooltip>
                                 )}
                               </div>
-                            </>
+                            </div>
                           )}
                         </li>
                       ))}
