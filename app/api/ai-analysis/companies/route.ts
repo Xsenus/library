@@ -1539,7 +1539,7 @@ function mergeAnalyzerInfo(
     ai.prodclass = {
       name: extra.analysisClass ?? null,
       label: extra.analysisClass ?? null,
-      score: extra.descriptionOkvedScore ?? (extra.matchLevel ? parseNumber(extra.matchLevel) : null),
+      score: extra.matchLevel ? parseNumber(extra.matchLevel) : null,
       description_okved_score: extra.descriptionOkvedScore ?? (extra.okvedMatch ? parseNumber(extra.okvedMatch) : null),
       okved_score: extra.okvedScore ?? null,
       score_source: extra.scoreSource ?? null,
@@ -1551,9 +1551,8 @@ function mergeAnalyzerInfo(
     if (ai.prodclass.okved_score == null && extra.okvedScore != null) {
       ai.prodclass.okved_score = extra.okvedScore;
     }
-    if (ai.prodclass.score == null && (extra.descriptionOkvedScore != null || extra.matchLevel)) {
-      ai.prodclass.score =
-        extra.descriptionOkvedScore ?? (extra.matchLevel ? parseNumber(extra.matchLevel) : ai.prodclass.score ?? null);
+    if (ai.prodclass.score == null && extra.matchLevel) {
+      ai.prodclass.score = parseNumber(extra.matchLevel);
     }
     if (ai.prodclass.score_source == null && extra.scoreSource != null) {
       ai.prodclass.score_source = extra.scoreSource;
@@ -1869,10 +1868,36 @@ export async function GET(request: NextRequest) {
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
-    const orderSql =
-      base.sort === 'revenue_asc'
-        ? 'ORDER BY d.revenue ASC NULLS LAST, d.inn'
-        : 'ORDER BY d.revenue DESC NULLS LAST, d.inn';
+    const startedCol = optionalSelect.selected.get('analysis_started_at');
+    const finishedCol = optionalSelect.selected.get('analysis_finished_at');
+    const scoreCol = optionalSelect.selected.get('analysis_score');
+    const attemptsCol = optionalSelect.selected.get('analysis_attempts');
+
+    const orderSql = (() => {
+      switch (base.sort) {
+        case 'revenue_asc':
+          return 'ORDER BY d.revenue ASC NULLS LAST, d.inn';
+        case 'analysis_started_desc':
+          return startedCol
+            ? `ORDER BY d.${startedCol} DESC NULLS LAST, d.revenue DESC NULLS LAST, d.inn`
+            : 'ORDER BY d.revenue DESC NULLS LAST, d.inn';
+        case 'analysis_finished_desc':
+          return finishedCol
+            ? `ORDER BY d.${finishedCol} DESC NULLS LAST, d.revenue DESC NULLS LAST, d.inn`
+            : 'ORDER BY d.revenue DESC NULLS LAST, d.inn';
+        case 'analysis_score_desc':
+          return scoreCol
+            ? `ORDER BY d.${scoreCol} DESC NULLS LAST, d.revenue DESC NULLS LAST, d.inn`
+            : 'ORDER BY d.revenue DESC NULLS LAST, d.inn';
+        case 'analysis_attempts_desc':
+          return attemptsCol
+            ? `ORDER BY d.${attemptsCol} DESC NULLS LAST, d.revenue DESC NULLS LAST, d.inn`
+            : 'ORDER BY d.revenue DESC NULLS LAST, d.inn';
+        case 'revenue_desc':
+        default:
+          return 'ORDER BY d.revenue DESC NULLS LAST, d.inn';
+      }
+    })();
 
     const countSql = `
       SELECT COUNT(*)::int AS cnt

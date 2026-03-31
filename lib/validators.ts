@@ -245,7 +245,17 @@ export const aiCompanyAnalysisQuerySchema = paginationSchema.extend({
   industryId: z.string().optional().default('all'),
   q: z.string().optional().default(''),
   responsible: z.string().optional().default(''),
-  sort: z.enum(['revenue_desc', 'revenue_asc']).optional().default('revenue_desc'),
+  sort: z
+    .enum([
+      'revenue_desc',
+      'revenue_asc',
+      'analysis_started_desc',
+      'analysis_finished_desc',
+      'analysis_score_desc',
+      'analysis_attempts_desc',
+    ])
+    .optional()
+    .default('revenue_desc'),
 });
 export type AiCompanyAnalysisQuery = z.infer<typeof aiCompanyAnalysisQuerySchema>;
 
