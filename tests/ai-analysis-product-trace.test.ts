@@ -99,3 +99,23 @@ test('normalizeProductTracePayload falls back to goods_type_scores when goods_ty
     },
   ]);
 });
+
+test('normalizeProductTracePayload prefers gen_score over legacy db score fields', () => {
+  const items = normalizeProductTracePayload({
+    goods_types: [{ goods_type_id: 5, goods_type: 'Р¤Р»Р°РєРѕРЅС‹', goods_types_score: 0.77 }],
+    equipment_2way_details: [
+      {
+        goods_type_id: 5,
+        goods_type_name: 'Р¤Р»Р°РєРѕРЅС‹',
+        equipment_id: 51,
+        equipment_name: 'РњРѕРµС‡РЅР°СЏ РјР°С€РёРЅР°',
+        factor: 0.9,
+        final_score: 0.612,
+        db_score: 0.4,
+        gen_score: 0.85,
+      },
+    ],
+  });
+
+  assert.equal(items[0]?.linked_equipment[0]?.db_score, 0.85);
+});

@@ -5501,7 +5501,7 @@ export default function AiCompanyAnalysisTab() {
                             const matchedProductName = trace?.matched_product_name?.trim() || null;
                             const originName = trace?.origin_name?.trim() || null;
                             const matchedSiteScore = formatSimilarityScore(
-                              trace?.matched_site_equipment_score ?? trace?.vector_score ?? null,
+                              trace?.matched_site_equipment_score ?? null,
                             );
                             const calcPathLabel = formatEquipmentCalcPath(trace?.calculation_path);
                             const finalSourceLabel = formatEquipmentSource(trace?.final_source);
@@ -5567,7 +5567,7 @@ export default function AiCompanyAnalysisTab() {
                                   {hasTraceBreakdown ? (
                                     <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-muted-foreground">
                                       <div className="whitespace-nowrap">
-                                        <span className="font-medium text-foreground/90">BD_SCORE:</span>{' '}
+                                        <span className="font-medium text-foreground/90">CLEAN_SCORE:</span>{' '}
                                         {formatSimilarityScore(trace?.bd_score) ?? formatRawScore(trace?.bd_score) ?? '\u2014'}
                                       </div>
                                       <div className="whitespace-nowrap">

@@ -18,6 +18,7 @@ export type EquipmentScoreTrace = {
 };
 
 type AnyRecord = Record<string, unknown>;
+type TraceSource = '1way' | '2way' | '3way';
 
 function toFiniteNumber(value: unknown): number | null {
   if (typeof value === 'number') return Number.isFinite(value) ? value : null;
@@ -66,6 +67,133 @@ function inferOriginFromSource(source: string | null | undefined, selectionStrat
   return null;
 }
 
+function scoreOrNull(item: AnyRecord | null | undefined, ...keys: string[]): number | null {
+  if (!item) return null;
+  for (const key of keys) {
+    const score = toFiniteNumber(item[key]);
+    if (score != null) return score;
+  }
+  return null;
+}
+
+function bestScore(source: TraceSource): number {
+  if (source === '1way') return 3;
+  if (source === '2way') return 2;
+  return 1;
+}
+
+function shouldReplaceRecord(current: AnyRecord | undefined, candidate: AnyRecord, ...scoreKeys: string[]): boolean {
+  if (!current) return true;
+  const currentScore = scoreOrNull(current, ...scoreKeys) ?? -1;
+  const candidateScore = scoreOrNull(candidate, ...scoreKeys) ?? -1;
+  return candidateScore > currentScore;
+}
+
+function deriveVectorScore(item: AnyRecord | null | undefined, source: TraceSource): number | null {
+  if (!item) return null;
+
+  const direct = scoreOrNull(item, 'vector_score');
+  if (direct != null) return direct;
+
+  const factor = scoreOrNull(item, 'factor') ?? 1;
+  if (source === '1way') {
+    const score1 = scoreOrNull(item, 'score_1', 'SCORE_1');
+    return score1 == null ? null : score1 * factor;
+  }
+  if (source === '2way') {
+    const goodsScore = scoreOrNull(item, 'crore_2', 'CRORE_2');
+    return goodsScore == null ? null : goodsScore * factor;
+  }
+  const siteScore = scoreOrNull(item, 'equipment_score');
+  return siteScore == null ? null : siteScore * factor;
+}
+
+function createTraceFromWinner(
+  equipmentId: string,
+  finalRow: AnyRecord,
+  winnerSource: TraceSource,
+  selectionStrategy: string | null,
+  oneWayById: Map<string, AnyRecord>,
+  twoWayById: Map<string, AnyRecord>,
+  threeWayById: Map<string, AnyRecord>,
+  siteById: Map<string, { name: string | null; score: number | null }>,
+  goodsTypeNames: Map<string, string>,
+): EquipmentScoreTrace {
+  const item: EquipmentScoreTrace = {
+    equipment_id: equipmentId,
+    equipment_name: toText(finalRow.equipment_name) ?? null,
+    final_score: toFiniteNumber(finalRow.score),
+    final_source: toText(finalRow.source),
+    calculation_path: null,
+    bd_score: null,
+    vector_score: null,
+    gen_score: null,
+    factor: null,
+    matched_site_equipment: null,
+    matched_site_equipment_score: null,
+    matched_product_name: null,
+    origin_kind: inferOriginFromSource(finalRow.source as string | null | undefined, selectionStrategy),
+    origin_name: null,
+  };
+
+  if (winnerSource === '1way') {
+    const detail = oneWayById.get(equipmentId);
+    item.equipment_name = toText(detail?.equipment_name) ?? item.equipment_name ?? null;
+    item.calculation_path = toText(detail?.path);
+    item.bd_score = scoreOrNull(detail, 'db_score', 'clean_score', 'equipment_score_max');
+    item.vector_score = deriveVectorScore(detail, '1way');
+    item.gen_score = scoreOrNull(detail, 'gen_score', 'clean_score', 'db_score', 'equipment_score_max');
+    item.factor = scoreOrNull(detail, 'factor');
+    if (item.final_score == null) {
+      item.final_score = scoreOrNull(detail, 'final_score', 'score_e1', 'SCORE_E1');
+    }
+    if (item.origin_kind === 'okved') {
+      item.origin_name = 'РџРѕРґР±РѕСЂ РїРѕ РћРљР’Р­Р”';
+    }
+    return item;
+  }
+
+  if (winnerSource === '2way') {
+    const detail = twoWayById.get(equipmentId);
+    const goodsTypeId = normalizeId(detail?.goods_type_id);
+    const matchedProductName =
+      toText(detail?.goods_type_name) ??
+      (goodsTypeId ? goodsTypeNames.get(goodsTypeId) ?? null : null);
+
+    item.equipment_name = toText(detail?.equipment_name) ?? item.equipment_name ?? null;
+    item.calculation_path = '2way';
+    item.bd_score = scoreOrNull(detail, 'db_score', 'gen_score', 'crore_3', 'CRORE_3');
+    item.vector_score = deriveVectorScore(detail, '2way');
+    item.gen_score = scoreOrNull(detail, 'gen_score', 'db_score', 'crore_3', 'CRORE_3');
+    item.factor = scoreOrNull(detail, 'factor') ?? 1;
+    if (item.final_score == null) {
+      item.final_score = scoreOrNull(detail, 'final_score', 'score_e2', 'SCORE_E2');
+    }
+    item.matched_product_name = matchedProductName;
+    item.origin_kind = 'product';
+    item.origin_name = matchedProductName;
+    return item;
+  }
+
+  const detail = threeWayById.get(equipmentId);
+  const siteMatch = siteById.get(equipmentId);
+  const rawSiteScore = siteMatch?.score ?? scoreOrNull(detail, 'equipment_score');
+
+  item.calculation_path = '3way';
+  item.bd_score = scoreOrNull(detail, 'db_score', 'gen_score', 'clean_score', 'crore_3', 'CRORE_3');
+  item.vector_score = deriveVectorScore(detail, '3way');
+  item.gen_score = scoreOrNull(detail, 'gen_score', 'db_score', 'clean_score', 'crore_3', 'CRORE_3');
+  item.factor = scoreOrNull(detail, 'factor') ?? 1;
+  if (item.final_score == null) {
+    item.final_score = scoreOrNull(detail, 'final_score', 'score_e3', 'SCORE_E3');
+  }
+  item.matched_site_equipment = siteMatch?.name ?? null;
+  item.matched_site_equipment_score = rawSiteScore;
+  item.origin_kind = 'site';
+  item.origin_name = item.matched_site_equipment ?? null;
+  return item;
+}
+
 export function normalizeEquipmentTracePayload(payload: unknown): EquipmentScoreTrace[] {
   const root = recordFrom(payload);
   if (!root) return [];
@@ -87,136 +215,90 @@ export function normalizeEquipmentTracePayload(payload: unknown): EquipmentScore
     }
   }
 
-  const byId = new Map<string, EquipmentScoreTrace>();
-
-  const ensure = (equipmentId: string): EquipmentScoreTrace => {
-    const existing = byId.get(equipmentId);
-    if (existing) return existing;
-    const created: EquipmentScoreTrace = { equipment_id: equipmentId };
-    byId.set(equipmentId, created);
-    return created;
-  };
-
-  for (const item of equipmentAll) {
-    const equipmentId = normalizeId(item.id ?? item.equipment_id);
-    if (!equipmentId) continue;
-    const target = ensure(equipmentId);
-    target.equipment_name = toText(item.equipment_name) ?? target.equipment_name ?? null;
-    target.final_score = toFiniteNumber(item.score);
-    target.final_source = toText(item.source);
-    target.origin_kind = inferOriginFromSource(target.final_source, selectionStrategy);
-    if (target.origin_kind === 'okved') {
-      target.origin_name = target.origin_name ?? 'Подбор по ОКВЭД';
-    }
-  }
-
+  const oneWayById = new Map<string, AnyRecord>();
   for (const item of oneWayDetails) {
     const equipmentId = normalizeId(item.id ?? item.equipment_id);
     if (!equipmentId) continue;
-    const target = ensure(equipmentId);
-    target.equipment_name = toText(item.equipment_name) ?? target.equipment_name ?? null;
-    target.bd_score = toFiniteNumber(item.db_score ?? item.equipment_score_max);
-    target.gen_score = toFiniteNumber(item.gen_score ?? item.score_1 ?? item.SCORE_1);
-    target.factor = toFiniteNumber(item.factor);
-    if (target.final_score == null) {
-      target.final_score = toFiniteNumber(item.final_score ?? item.score_e1 ?? item.SCORE_E1);
-    }
-    target.calculation_path = toText(item.path);
-    if (target.origin_kind == null) {
-      target.origin_kind = selectionStrategy === 'okved' ? 'okved' : 'site';
-      target.origin_name = target.origin_kind === 'okved' ? 'Подбор по ОКВЭД' : target.origin_name ?? null;
+    const current = oneWayById.get(equipmentId);
+    if (shouldReplaceRecord(current, item, 'final_score', 'score_e1', 'SCORE_E1')) {
+      oneWayById.set(equipmentId, item);
     }
   }
 
+  const twoWayById = new Map<string, AnyRecord>();
   for (const item of twoWayDetails) {
     const equipmentId = normalizeId(item.equipment_id ?? item.id);
     if (!equipmentId) continue;
-    const target = ensure(equipmentId);
-    const scoreE2 = toFiniteNumber(item.final_score ?? item.score_e2 ?? item.SCORE_E2);
-    const currentFinal = toFiniteNumber(target.final_score);
-    const goodsTypeId = normalizeId(item.goods_type_id);
-    const matchedProductName =
-      toText(item.goods_type_name) ??
-      (goodsTypeId ? goodsTypeNames.get(goodsTypeId) ?? null : null);
-
-    target.equipment_name = toText(item.equipment_name) ?? target.equipment_name ?? null;
-
-    if (target.calculation_path == null || (currentFinal != null && scoreE2 != null && scoreE2 >= currentFinal - 1e-9)) {
-      target.calculation_path = '2way';
-    }
-
-    if (target.bd_score == null) {
-      target.bd_score = toFiniteNumber(item.db_score ?? item.crore_3 ?? item.CRORE_3);
-    }
-    if (target.vector_score == null) {
-      target.vector_score = toFiniteNumber(item.vector_score ?? item.crore_2 ?? item.CRORE_2);
-    }
-    if (target.gen_score == null) {
-      target.gen_score = toFiniteNumber(item.gen_score);
-    }
-    if (target.factor == null) {
-      target.factor = toFiniteNumber(item.factor) ?? 1;
-    }
-    if (target.final_score == null) {
-      target.final_score = scoreE2;
-    }
-    if (matchedProductName) {
-      target.matched_product_name = matchedProductName;
-      target.origin_kind = 'product';
-      target.origin_name = matchedProductName;
+    const current = twoWayById.get(equipmentId);
+    if (shouldReplaceRecord(current, item, 'final_score', 'score_e2', 'SCORE_E2')) {
+      twoWayById.set(equipmentId, item);
     }
   }
 
+  const threeWayById = new Map<string, AnyRecord>();
   for (const item of threeWayDetails) {
     const equipmentId = normalizeId(item.equipment_id ?? item.id);
     if (!equipmentId) continue;
-    const target = ensure(equipmentId);
-    target.vector_score = toFiniteNumber(item.vector_score ?? item.equipment_score);
-    if (target.factor == null) {
-      target.factor = toFiniteNumber(item.factor) ?? 1;
-    }
-    if (target.final_score == null) {
-      target.final_score = toFiniteNumber(item.final_score ?? item.score_e3 ?? item.SCORE_E3);
-    }
-    if (target.origin_kind == null) {
-      target.origin_kind = 'site';
+    const current = threeWayById.get(equipmentId);
+    if (shouldReplaceRecord(current, item, 'final_score', 'score_e3', 'SCORE_E3')) {
+      threeWayById.set(equipmentId, item);
     }
   }
 
+  const siteById = new Map<string, { name: string | null; score: number | null }>();
   for (const item of siteEquipment) {
     const equipmentId = normalizeId(item.equipment_id ?? item.id);
     if (!equipmentId) continue;
-    const target = ensure(equipmentId);
-    const siteScore = toFiniteNumber(item.equipment_score);
-    const currentScore = toFiniteNumber(target.matched_site_equipment_score);
-    if (currentScore != null && siteScore != null && currentScore > siteScore) continue;
-    target.matched_site_equipment = toText(item.equipment) ?? target.matched_site_equipment ?? null;
-    target.matched_site_equipment_score = siteScore;
-    if (target.vector_score == null && siteScore != null) {
-      target.vector_score = siteScore;
-    }
-    if (target.origin_kind == null) {
-      target.origin_kind = 'site';
-    }
-    if (target.origin_name == null) {
-      target.origin_name = target.matched_site_equipment ?? null;
+    const candidate = {
+      name: toText(item.equipment),
+      score: scoreOrNull(item, 'equipment_score'),
+    };
+    const current = siteById.get(equipmentId);
+    if (!current || (candidate.score ?? -1) > (current.score ?? -1)) {
+      siteById.set(equipmentId, candidate);
     }
   }
 
-  for (const item of Array.from(byId.values())) {
-    if (item.origin_kind == null) {
-      item.origin_kind = inferOriginFromSource(item.final_source, selectionStrategy);
-    }
-    if (item.origin_name == null) {
-      if (item.origin_kind === 'site') item.origin_name = item.matched_site_equipment ?? null;
-      if (item.origin_kind === 'okved') item.origin_name = 'Подбор по ОКВЭД';
-      if (item.origin_kind === 'product') item.origin_name = item.matched_product_name ?? null;
-    }
-  }
+  if (!equipmentAll.length) return [];
 
-  return Array.from(byId.values()).sort((left, right) => {
-    const leftScore = toFiniteNumber(left.final_score) ?? -1;
-    const rightScore = toFiniteNumber(right.final_score) ?? -1;
-    return rightScore - leftScore;
+  const traces: EquipmentScoreTrace[] = equipmentAll
+    .map((finalRow) => {
+      const equipmentId = normalizeId(finalRow.id ?? finalRow.equipment_id);
+      const finalSource = toText(finalRow.source);
+      const winnerSource =
+        finalSource === '1way' || finalSource === '2way' || finalSource === '3way'
+          ? finalSource
+          : null;
+
+      if (!equipmentId || !winnerSource) return null;
+      return createTraceFromWinner(
+        equipmentId,
+        finalRow,
+        winnerSource,
+        selectionStrategy,
+        oneWayById,
+        twoWayById,
+        threeWayById,
+        siteById,
+        goodsTypeNames,
+      );
+    })
+    .filter((item): item is EquipmentScoreTrace => Boolean(item));
+
+  traces.sort((left, right) => {
+    const leftScore = left.final_score ?? -1;
+    const rightScore = right.final_score ?? -1;
+    if (leftScore !== rightScore) return rightScore - leftScore;
+
+    const leftPriority = bestScore((left.final_source as TraceSource | null) ?? '3way');
+    const rightPriority = bestScore((right.final_source as TraceSource | null) ?? '3way');
+    if (leftPriority !== rightPriority) return rightPriority - leftPriority;
+
+    return String(left.equipment_name ?? left.equipment_id).localeCompare(
+      String(right.equipment_name ?? right.equipment_id),
+      'ru',
+    );
   });
+
+  return traces;
 }

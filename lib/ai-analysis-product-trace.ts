@@ -154,7 +154,7 @@ export function normalizeProductTracePayload(payload: unknown): ProductTraceItem
       equipment_id: equipmentId,
       equipment_name: toText(item.equipment_name),
       final_score: toFiniteNumber(item.final_score ?? item.score_e2 ?? item.SCORE_E2),
-      db_score: toFiniteNumber(item.db_score ?? item.crore_3 ?? item.CRORE_3),
+      db_score: toFiniteNumber(item.gen_score ?? item.db_score ?? item.crore_3 ?? item.CRORE_3),
       factor: toFiniteNumber(item.factor),
     };
 
