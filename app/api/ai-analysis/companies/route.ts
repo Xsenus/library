@@ -43,7 +43,9 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
     [industryId],
   );
 
-  const roots = rows.map((r) => r.root).filter(Boolean);
+  const roots = rows
+    .map((row: { root: string | null }) => row.root)
+    .filter((value): value is string => Boolean(value));
   rootsCache.set(industryId, { roots, ts: now });
   return roots;
 }
