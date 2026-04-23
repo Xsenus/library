@@ -65,7 +65,7 @@ Done in code and verified:
   - optional webhook alerts are supported through `AI_ANALYSIS_ACCEPTANCE_HEALTH_ALERT_WEBHOOK_URL`
 - production rollout helper was added for the current VPS layout:
   - `deploy/library-rollout.sh`
-  - the helper verifies `/opt/library/app`, repairs `node_modules` from `package-lock.json`, runs tests/build, restarts services, and runs health plus trace-acceptance smoke checks
+  - the helper verifies `/opt/library/app`, repairs `node_modules` from `package-lock.json`, runs tests/build, restarts services, waits for health readiness, and runs trace-acceptance smoke checks
 - local acceptance QA was verified against production:
   - `npm run test:acceptance:qa` -> success
   - `1841109992` confirms `okved` / `1way`

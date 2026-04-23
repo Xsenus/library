@@ -235,7 +235,8 @@ sudo bash deploy/library-rollout.sh
 The helper is intentionally scoped to `/opt/library/app`. It runs `git pull --ff-only`, stops
 `library.service` and monitoring timers, rebuilds `node_modules` with dev dependencies from
 `package-lock.json`, verifies `tsx`/`next`, runs tests/build, starts services back, and runs
-health plus trace-acceptance smoke checks.
+health plus trace-acceptance smoke checks. The health check waits for the Next.js service to
+become ready before running acceptance diagnostics.
 
 ---
 

@@ -3,6 +3,8 @@ set -Eeuo pipefail
 
 APP_DIR="${APP_DIR:-/opt/library/app}"
 HEALTH_URL="${LIBRARY_ROLLOUT_HEALTH_URL:-https://ai.irbistech.com/api/health}"
+HEALTH_TIMEOUT_SECONDS="${LIBRARY_ROLLOUT_HEALTH_TIMEOUT_SECONDS:-60}"
+HEALTH_RETRY_DELAY_SECONDS="${LIBRARY_ROLLOUT_HEALTH_RETRY_DELAY_SECONDS:-2}"
 ACCEPTANCE_BASE_URL="${AI_ANALYSIS_ACCEPTANCE_HEALTH_BASE_URL:-http://127.0.0.1:8090}"
 ACCEPTANCE_STATE_FILE="${AI_ANALYSIS_ACCEPTANCE_HEALTH_STATE_FILE:-/var/lib/library/ai-analysis-acceptance-health-state.json}"
 ACCEPTANCE_ARTIFACT_DIR="${AI_ANALYSIS_ACCEPTANCE_HEALTH_ARTIFACT_DIR:-/var/lib/library/ai-analysis-acceptance-health}"
@@ -27,6 +29,30 @@ run() {
 run_shell() {
   log "+ $*"
   bash -lc "$*"
+}
+
+wait_for_url() {
+  local url="$1"
+  local timeout_seconds="$2"
+  local retry_delay_seconds="$3"
+  local attempt=1
+  local deadline=$((SECONDS + timeout_seconds))
+
+  while true; do
+    log "+ curl -fsS $url (attempt $attempt)"
+    if curl -fsS "$url"; then
+      printf '\n'
+      return 0
+    fi
+
+    if (( SECONDS >= deadline )); then
+      log "URL did not become ready within ${timeout_seconds}s: $url"
+      return 1
+    fi
+
+    sleep "$retry_delay_seconds"
+    attempt=$((attempt + 1))
+  done
 }
 
 start_services_best_effort() {
@@ -111,7 +137,7 @@ if (( ${#SERVICES[@]} > 0 )) && command -v systemctl >/dev/null 2>&1; then
 fi
 
 if [[ "$SKIP_SMOKE" != "1" ]]; then
-  run curl -fsS "$HEALTH_URL"
+  wait_for_url "$HEALTH_URL" "$HEALTH_TIMEOUT_SECONDS" "$HEALTH_RETRY_DELAY_SECONDS"
   run npm run acceptance:healthcheck -- \
     --base-url "$ACCEPTANCE_BASE_URL" \
     --state-file "$ACCEPTANCE_STATE_FILE" \
