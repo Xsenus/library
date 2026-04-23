@@ -72,9 +72,9 @@ Done in code and verified:
   - card-level render-contract tests now cover `1way`, `2way`, `3way`, `okved`, and legacy fallback payloads
 - production rollout was completed:
   - repository was updated on the server
-  - current production `library` runs commit `ba353f5`
+  - current production `library` code was rolled out from commit `fdecb4d`
   - server-side node_modules were repaired with `npm install --include=dev --ignore-scripts`
-  - server-side `npm test` completed successfully (`44 passed`)
+  - server-side `npm test` completed successfully (`49 passed`)
   - production `next build` completed successfully
   - `library.service` restarted successfully
 - standalone `/api/health` monitoring was deployed to production:
@@ -89,6 +89,8 @@ Done in code and verified:
   - `analysis_score` API sorting
   - public root responds with `307 -> /login` for unauthenticated access as expected
   - public `https://ai.irbistech.com/api/health` responds with `ok=true`
+  - production `npm run test:acceptance:qa` responds with `ok=true`
+  - `okved` trace now returns readable `origin_name="Подбор по ОКВЭД"`
 
 Not done or intentionally deferred:
 
