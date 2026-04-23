@@ -31,6 +31,7 @@ Done in code and verified:
   - `npm test` -> `53 passed`
 - local production build was verified:
   - `npm run build` -> success
+- image API routes were marked dynamic so production build no longer emits a false `Dynamic server usage` warning for `/api/images/proxy`
 - browser-level smoke was added with Playwright:
   - `scripts/test-ai-analysis-ui-smoke.ts`
   - `npm run test:ui:smoke`

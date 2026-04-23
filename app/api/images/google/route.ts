@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server';
 import { requireApiAuth } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX_REQUESTS = 30;

@@ -4,6 +4,7 @@ import { isIP } from 'node:net';
 import { requireApiAuth } from '@/lib/api-auth';
 
 export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
 
 const ALLOWED_PROTOCOLS = new Set(['http:', 'https:']);
 const DEFAULT_USER_AGENT =
