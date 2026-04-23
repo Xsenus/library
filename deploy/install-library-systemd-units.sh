@@ -74,15 +74,14 @@ playwright_browser_ready() {
   (
     cd "$APP_DIR"
     node - <<'NODE'
-const fs = require('node:fs');
-
 try {
   const { chromium } = require('playwright');
-  const executablePath = chromium.executablePath();
-  if (!executablePath) {
+  (async () => {
+    const browser = await chromium.launch({ headless: true });
+    await browser.close();
+  })().catch(() => {
     process.exit(1);
-  }
-  fs.accessSync(executablePath, fs.constants.X_OK);
+  });
 } catch (error) {
   process.exit(1);
 }

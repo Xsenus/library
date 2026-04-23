@@ -261,7 +261,9 @@ The helper is intentionally scoped to `/opt/library/app`. It runs `git pull --ff
 `library.service` and installed monitoring timers, rebuilds `node_modules` with dev dependencies
 from `package-lock.json`, verifies `tsx`/`next`, runs tests/build, starts services back, and runs
 health plus trace-acceptance smoke checks. The health check waits for the Next.js service to
-become ready before running acceptance diagnostics. Browser-level smoke is also run automatically
+become ready before running acceptance diagnostics. If `npm ci` exits without a valid `tsx/next`
+toolchain, the helper now cleans the npm cache and retries the install once before failing.
+Browser-level smoke is also run automatically
 when Playwright Chromium is available; this can be forced or disabled through
 `LIBRARY_ROLLOUT_UI_SMOKE_MODE=always|never`. Authenticated browser QA artifact capture is also run
 automatically when Playwright Chromium and worker credentials are available; this can be controlled

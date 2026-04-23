@@ -56,6 +56,38 @@ run_shell() {
   bash -lc "$*"
 }
 
+node_modules_install_valid() {
+  [[ -f node_modules/tsx/dist/cli.mjs ]] &&
+    [[ -x node_modules/.bin/tsx ]] &&
+    [[ -f node_modules/next/dist/bin/next ]]
+}
+
+install_node_modules_with_retry() {
+  local install_cmd='env -u NODE_ENV npm ci --include=dev --ignore-scripts --no-audit --no-fund --prefer-online'
+
+  run rm -rf node_modules
+  if ! run_shell "$install_cmd"; then
+    log "npm ci failed, cleaning npm cache and retrying once"
+    run npm cache clean --force
+    run rm -rf node_modules
+    run_shell "$install_cmd"
+  fi
+
+  if node_modules_install_valid; then
+    return 0
+  fi
+
+  log "node_modules validation failed after npm ci, cleaning npm cache and retrying once"
+  run npm cache clean --force
+  run rm -rf node_modules
+  run_shell "$install_cmd"
+
+  if ! node_modules_install_valid; then
+    log "node_modules validation failed after npm ci retry"
+    return 1
+  fi
+}
+
 wait_for_url() {
   local url="$1"
   local timeout_seconds="$2"
@@ -82,15 +114,14 @@ wait_for_url() {
 
 playwright_browser_ready() {
   node - <<'NODE'
-const fs = require('node:fs');
-
 try {
   const { chromium } = require('playwright');
-  const executablePath = chromium.executablePath();
-  if (!executablePath) {
+  (async () => {
+    const browser = await chromium.launch({ headless: true });
+    await browser.close();
+  })().catch(() => {
     process.exit(1);
-  }
-  fs.accessSync(executablePath, fs.constants.X_OK);
+  });
 } catch (error) {
   process.exit(1);
 }
@@ -334,15 +365,7 @@ if (( ${#MANAGED_SERVICES[@]} > 0 )) && command -v systemctl >/dev/null 2>&1; th
 fi
 
 if [[ "$SKIP_INSTALL" != "1" ]]; then
-  run rm -rf node_modules
-
-  install_cmd='env -u NODE_ENV npm ci --include=dev --ignore-scripts --no-audit --no-fund --prefer-online'
-  if ! run_shell "$install_cmd"; then
-    log "npm ci failed, cleaning npm cache and retrying once"
-    run npm cache clean --force
-    run rm -rf node_modules
-    run_shell "$install_cmd"
-  fi
+  install_node_modules_with_retry
 fi
 
 run test -f node_modules/tsx/dist/cli.mjs

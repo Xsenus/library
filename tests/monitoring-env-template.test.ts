@@ -112,7 +112,9 @@ test('library rollout loads shared monitoring env and skips QA timer without cre
   assert.match(rollout, /\/etc\/default\/library-monitoring/);
   assert.match(rollout, /source "\$MONITORING_ENV_FILE"/);
   assert.match(rollout, /ai-analysis-ui-smoke-healthcheck\.timer/);
+  assert.match(rollout, /chromium\.launch/);
   assert.match(rollout, /skipping optional systemd unit until Playwright Chromium is available/);
   assert.match(rollout, /ai-analysis-ui-qa-healthcheck\.timer/);
   assert.match(rollout, /skipping optional systemd unit until worker credentials are configured/);
+  assert.match(rollout, /node_modules validation failed after npm ci/);
 });

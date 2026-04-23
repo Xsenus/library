@@ -88,6 +88,7 @@ Done in code and verified:
 - production rollout helper was added for the current VPS layout:
   - `deploy/library-rollout.sh`
   - the helper verifies `/opt/library/app`, repairs `node_modules` from `package-lock.json`, runs tests/build, restarts services, waits for health readiness, and runs trace-acceptance smoke checks
+  - if `npm ci` exits but leaves an invalid `node_modules` layout, rollout now cleans npm cache and retries the install once before failing
   - browser-level smoke is now auto-included in rollout when Playwright Chromium is available
   - authenticated browser QA artifact capture is now auto-included in rollout when Playwright Chromium and worker credentials are available
   - can install/update repo-managed monitoring units before restart via `LIBRARY_ROLLOUT_INSTALL_SYSTEMD=auto|always|never`
