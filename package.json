@@ -14,6 +14,7 @@
     "lint": "next lint",
     "test": "tsx --test tests/*.test.ts",
     "test:analysis:smoke": "tsx scripts/test-ai-analysis-companies-smoke.ts",
+    "test:acceptance:qa": "tsx scripts/test-ai-analysis-acceptance-qa.ts",
     "test:health:smoke": "tsx scripts/test-library-system-health-smoke.ts",
     "test:queue:smoke": "tsx scripts/test-ai-analysis-queue-smoke.ts",
     "test:ui:smoke": "tsx scripts/test-ai-analysis-ui-smoke.ts",

@@ -172,6 +172,7 @@
 - `GOOGLE_CSE_KEY`, `GOOGLE_CSE_CX`
 - `BITRIX_DB_*`
 - `AI_ANALYSIS_UI_SMOKE_*`
+- `AI_ANALYSIS_ACCEPTANCE_*` — acceptance QA для `1way/2way/3way/okved` trace-семантики
 - `LIBRARY_HEALTH_BASE_URL` — base URL для `npm run test:health:smoke`
 - `LIBRARY_SYSTEM_HEALTH_*` — standalone monitoring для `npm run healthcheck`
 
@@ -207,6 +208,7 @@ Smoke и диагностика:
 ```bash
 npm run test:ui:smoke
 npm run test:health:smoke
+npm run test:acceptance:qa
 npm run healthcheck -- --json
 ```
 
@@ -249,5 +251,6 @@ docker compose up --build
 - `npm run backfill:equipment-hash` — заполнение `hash_equipment` для старых записей.
 - `npm run test:ui:smoke` — browser-level smoke для `/login` и AI Analysis.
 - `npm run test:health:smoke` — проверка `GET /api/health` и сводки зависимостей.
+- `npm run test:acceptance:qa` — acceptance QA для live trace-семантики `1way/2way/3way/okved` с JSON-артефактом.
 - `npm run healthcheck` — standalone healthcheck `GET /api/health` с exit code, state-file и optional webhook alert.
 

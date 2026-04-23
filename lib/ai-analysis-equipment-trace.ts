@@ -148,7 +148,7 @@ function createTraceFromWinner(
       item.final_score = scoreOrNull(detail, 'final_score', 'score_e1', 'SCORE_E1');
     }
     if (item.origin_kind === 'okved') {
-      item.origin_name = 'РџРѕРґР±РѕСЂ РїРѕ РћРљР’Р­Р”';
+      item.origin_name = 'Подбор по ОКВЭД';
     }
     return item;
   }

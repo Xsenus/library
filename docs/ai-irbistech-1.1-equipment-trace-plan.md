@@ -28,7 +28,7 @@ Done in code and verified:
 - raw site score in the equipment card now uses only `matched_site_equipment_score`
 - product trace now prefers `gen_score` over legacy `db_score/crore_3` fallback semantics
 - frontend tests were updated and pass locally:
-  - `npm test` -> `44 passed`
+  - `npm test` -> `49 passed`
 - local production build was verified:
   - `npm run build` -> success
 - browser-level smoke was added with Playwright:
@@ -48,6 +48,16 @@ Done in code and verified:
   - `deploy/systemd/library-system-healthcheck.service`
   - `deploy/systemd/library-system-healthcheck.timer`
   - optional webhook alerts are supported through `LIBRARY_SYSTEM_HEALTH_ALERT_WEBHOOK_URL`
+- repeatable acceptance QA was added for live `1way/2way/3way/okved` trace semantics:
+  - `lib/ai-analysis-acceptance-qa.ts`
+  - `scripts/test-ai-analysis-acceptance-qa.ts`
+  - `npm run test:acceptance:qa`
+  - JSON artifacts are written to `artifacts/ai-analysis-acceptance-qa/`
+- local acceptance QA was verified against production:
+  - `npm run test:acceptance:qa` -> success
+  - `1841109992` confirms `okved` / `1way`
+  - `6320002223` confirms `2way` product trace
+  - `3444070534` confirms `3way` row semantics and raw site score
 - public browser smoke was verified against production:
   - `https://ai.irbistech.com/` redirects to `/login`
   - login page screenshot artifact was captured successfully
@@ -83,7 +93,7 @@ Done in code and verified:
 Not done or intentionally deferred:
 
 - no dedicated worker smoke account is configured yet for authenticated browser-level QA in production
-- screenshot artifacts are generated on demand and gitignored; there is still no committed acceptance baseline in the repository
+- screenshot and acceptance artifacts are generated on demand and gitignored; there is still no committed visual acceptance baseline in the repository
 - the repository now has a systemd-ready alert consumer for `GET /api/health`, but a real external webhook destination is still not configured
 
 ## Source of Truth
@@ -495,6 +505,37 @@ Covered flow:
   - open company details dialog
   - verify the equipment section is visible
 
+### 6.1 Add repeatable trace acceptance QA
+
+Files:
+
+- `lib/ai-analysis-acceptance-qa.ts`
+- `scripts/test-ai-analysis-acceptance-qa.ts`
+- `tests/ai-analysis-acceptance-qa.test.ts`
+
+Required outcome:
+
+- live trace semantics for known `1way`, `2way`, `3way`, and `okved` cases can be checked without a browser
+- the script validates `FINAL = VECTOR x GEN`
+- the script validates `GEN = clean_score` through `gen_score ~= bd_score`
+- the script catches winner-path leakage:
+  - `2way` rows should not borrow site matches
+  - `3way` rows should not borrow product matches
+  - `okved` rows should not borrow site/product matches
+- the script writes a JSON summary artifact outside git
+
+Operational command:
+
+```bash
+npm run test:acceptance:qa
+```
+
+Default production cases:
+
+- `1841109992` -> `okved` / `1way`
+- `6320002223` -> `site` / `2way`
+- `3444070534` -> `site` / `3way` row presence and raw site score
+
 After implementation, verify the following in the running UI:
 
 1. a `3way` winner shows:
@@ -630,6 +671,7 @@ This frontend task is complete only when all statements below are true:
 - `GEN` reflects `clean_score`
 - tests are updated and passing
 - browser-level smoke exists for `/login` and `AI Analysis`
+- trace acceptance QA exists for live `1way/2way/3way/okved` semantics
 - cross-service health route exists for `library -> ai-integration -> DB`
 - standalone healthcheck exists for `/api/health` and can be used by systemd/cron
 - `analysis_score` smoke verification succeeds after backend rollout
@@ -646,6 +688,7 @@ This frontend task is complete only when all statements below are true:
 - [x] Rewrite equipment trace tests
 - [x] Rewrite product trace tests
 - [x] Add browser-level smoke script for `/login` and `AI Analysis`
+- [x] Add live trace acceptance QA for `1way`, `2way`, `3way`, and `okved`
 - [x] Add cross-service `/api/health` diagnostics and smoke script
 - [x] Add standalone `/api/health` monitoring script and systemd timer templates
 - [ ] Run manual UI QA on `1way`, `2way`, `3way`, and `okved` cases

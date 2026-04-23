@@ -66,7 +66,7 @@ test('normalizeEquipmentTracePayload does not borrow site trace for 1way winners
 test('normalizeEquipmentTracePayload resolves matched product names and clean score for 2way rows', () => {
   const items = normalizeEquipmentTracePayload({
     equipment_all: [{ id: 44, equipment_name: 'Lyophilizer', score: 0.6004, source: '2way' }],
-    goods_types: [{ goods_type_id: 11, goods_type: 'Р’Р°РєС†РёРЅС‹' }],
+    goods_types: [{ goods_type_id: 11, goods_type: 'Вакцины' }],
     equipment_1way_details: [{ id: 44, db_score: 0.11, gen_score: 0.11, score_1: 0.22, factor: 0.5, path: 'direct' }],
     equipment_2way_details: [
       {
@@ -97,9 +97,9 @@ test('normalizeEquipmentTracePayload resolves matched product names and clean sc
       factor: 0.8,
       matched_site_equipment: null,
       matched_site_equipment_score: null,
-      matched_product_name: 'Р’Р°РєС†РёРЅС‹',
+      matched_product_name: 'Вакцины',
       origin_kind: 'product',
-      origin_name: 'Р’Р°РєС†РёРЅС‹',
+      origin_name: 'Вакцины',
     },
   ]);
 });
@@ -126,7 +126,7 @@ test('normalizeEquipmentTracePayload marks okved sourced equipment when strategy
       matched_site_equipment_score: null,
       matched_product_name: null,
       origin_kind: 'okved',
-      origin_name: 'РџРѕРґР±РѕСЂ РїРѕ РћРљР’Р­Р”',
+      origin_name: 'Подбор по ОКВЭД',
     },
   ]);
 });
