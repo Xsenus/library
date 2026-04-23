@@ -85,10 +85,11 @@ Done in code and verified:
   - card-level render-contract tests now cover `1way`, `2way`, `3way`, `okved`, and legacy fallback payloads
 - production rollout was completed:
   - repository was updated on the server
-  - current production `library` code was rolled out from commit `dbf83ae`
+  - current production `library` code was rolled out from commit `e98f55b`
   - server-side npm cache was cleaned after `TAR_ENTRY_ERROR` warnings
   - server-side node_modules were repaired with `env -u NODE_ENV npm ci --include=dev --ignore-scripts --no-audit --no-fund --prefer-online`
   - repeatable rollout is now captured in `deploy/library-rollout.sh`
+  - `deploy/library-rollout.sh` was executed successfully on production after adding health readiness retry
   - server-side `npm test` completed successfully (`58 passed`)
   - production `next build` completed successfully
   - production `next build` no longer emits the previous `/api/images/proxy` dynamic-server warning
