@@ -127,13 +127,16 @@ Done in code and verified:
   - card-level render-contract tests now cover `1way`, `2way`, `3way`, `okved`, and legacy fallback payloads
 - production rollout was completed:
   - the browser QA search-selector fix from commit `4d220e2` was rolled out on the current VPS working tree
-  - GitHub credentials are not configured for root on this host, so the rollout used direct file sync plus `LIBRARY_ROLLOUT_SKIP_GIT_PULL=1`
   - server-side npm cache was cleaned after `TAR_ENTRY_ERROR` warnings
   - server-side node_modules were repaired with `env -u NODE_ENV npm ci --include=dev --ignore-scripts --no-audit --no-fund --prefer-online`
   - a real rollout edge-case was reproduced on production:
     - plain `rm -rf node_modules` can fail with non-empty nested directories
     - the helper was updated to use Python `shutil.rmtree(...)` fallback for the next rollout
   - repeatable rollout is now captured in `deploy/library-rollout.sh`
+  - the current VPS repository path `/opt/library/app` was re-checked as a normal git working tree:
+    - `git pull --ff-only origin main` succeeds against `https://github.com/Xsenus/library`
+    - `run.sh` is now tracked as executable, so Linux filemode drift no longer leaves a fake modified file behind
+    - `public/static/` is now gitignored as generated host storage for image artifacts
   - current production timer state on `79.174.94.14`:
     - `library-system-healthcheck.timer` is enabled and active
     - `ai-analysis-acceptance-healthcheck.timer` is enabled and active

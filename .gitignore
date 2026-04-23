@@ -9,6 +9,7 @@ build/
 dist/
 cache/
 artifacts/
+public/static/
 
 # === Logs ===
 logs

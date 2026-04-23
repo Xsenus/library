@@ -273,6 +273,10 @@ The rollout script also loads `/etc/default/library-monitoring` by default via
 `LIBRARY_ROLLOUT_MONITORING_ENV_FILE`, so browser smoke/QA and acceptance checks can reuse the
 same credentials and base URLs as the systemd healthchecks.
 
+The repository also treats `public/static/` as generated host storage, so those production image
+artifacts no longer pollute `git status`. The tracked `run.sh` is now marked executable in git to
+avoid Linux-only filemode drift on the VPS working tree.
+
 Standalone installer for monitoring units:
 
 ```bash
