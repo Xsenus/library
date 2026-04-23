@@ -28,7 +28,7 @@ Done in code and verified:
 - raw site score in the equipment card now uses only `matched_site_equipment_score`
 - product trace now prefers `gen_score` over legacy `db_score/crore_3` fallback semantics
 - frontend tests were updated and pass locally:
-  - `npm test` -> `74 passed`
+  - `npm test` -> `75 passed`
 - local production build was verified:
   - `npm run build` -> success
 - image API routes were marked dynamic so production build no longer emits a false `Dynamic server usage` warning for `/api/images/proxy`
@@ -44,6 +44,7 @@ Done in code and verified:
   - `scripts/test-ai-analysis-ui-qa.ts`
   - `npm run test:ui:qa`
   - stable UI selectors were added for AI Analysis filters and the equipment list
+  - the browser QA selector contract was corrected so INN search now targets the company-query input instead of the responsible-person filter
   - screenshot and JSON artifacts are written to `artifacts/ai-analysis-ui-qa/`
 - standalone monitoring wrapper was added for authenticated browser QA:
   - `lib/ai-analysis-ui-qa-healthcheck.ts`
@@ -89,6 +90,7 @@ Done in code and verified:
   - `deploy/library-rollout.sh`
   - the helper verifies `/opt/library/app`, repairs `node_modules` from `package-lock.json`, runs tests/build, restarts services, waits for health readiness, and runs trace-acceptance smoke checks
   - if `npm ci` exits but leaves an invalid `node_modules` layout, rollout now cleans npm cache and retries the install once before failing
+  - if plain `rm -rf node_modules` fails on the host, rollout now falls back to Python `shutil.rmtree(...)` before reinstalling dependencies
   - browser-level smoke is now auto-included in rollout when Playwright Chromium is available
   - authenticated browser QA artifact capture is now auto-included in rollout when Playwright Chromium and worker credentials are available
   - can install/update repo-managed monitoring units before restart via `LIBRARY_ROLLOUT_INSTALL_SYSTEMD=auto|always|never`
@@ -100,10 +102,10 @@ Done in code and verified:
   - installs `deploy/systemd/library-monitoring.env.example` into `/etc/default/library-monitoring.example`
   - can bootstrap `/etc/default/library-monitoring` without overwriting an existing file
   - automated tests now verify env-template coverage, shared `EnvironmentFile`, and installer bootstrap references
-  - keeps `ai-analysis-ui-smoke-healthcheck.timer` disabled until Playwright Chromium is available on the server
-  - keeps `ai-analysis-ui-qa-healthcheck.timer` disabled until worker credentials are present in `/etc/default/library-monitoring`
+  - auto-enables `ai-analysis-ui-smoke-healthcheck.timer` when Playwright Chromium is available on the target host
+  - auto-enables `ai-analysis-ui-qa-healthcheck.timer` when worker credentials are present in `/etc/default/library-monitoring`
   - local verification after env-template coverage tests:
-    - `npm test` -> `74 passed`
+    - `npm test` -> `75 passed`
   - runs `systemctl daemon-reload`
   - enables monitoring timers
 - local acceptance QA was verified against production:
@@ -124,21 +126,24 @@ Done in code and verified:
   - `lib/ai-analysis-equipment-card-view.ts`
   - card-level render-contract tests now cover `1way`, `2way`, `3way`, `okved`, and legacy fallback payloads
 - production rollout was completed:
-  - repository was updated on the server
-  - current production `library` code is synced to commit `4a848a6`
+  - the browser QA search-selector fix from commit `4d220e2` was rolled out on the current VPS working tree
+  - GitHub credentials are not configured for root on this host, so the rollout used direct file sync plus `LIBRARY_ROLLOUT_SKIP_GIT_PULL=1`
   - server-side npm cache was cleaned after `TAR_ENTRY_ERROR` warnings
   - server-side node_modules were repaired with `env -u NODE_ENV npm ci --include=dev --ignore-scripts --no-audit --no-fund --prefer-online`
+  - a real rollout edge-case was reproduced on production:
+    - plain `rm -rf node_modules` can fail with non-empty nested directories
+    - the helper was updated to use Python `shutil.rmtree(...)` fallback for the next rollout
   - repeatable rollout is now captured in `deploy/library-rollout.sh`
   - current production timer state on `79.174.94.14`:
     - `library-system-healthcheck.timer` is enabled and active
     - `ai-analysis-acceptance-healthcheck.timer` is enabled and active
-    - `ai-analysis-ui-smoke-healthcheck.timer` is intentionally disabled until Playwright Chromium is installed
-    - `ai-analysis-ui-qa-healthcheck.timer` is intentionally disabled until Playwright Chromium and worker credentials are configured
+    - `ai-analysis-ui-smoke-healthcheck.timer` is enabled and active
+    - `ai-analysis-ui-qa-healthcheck.timer` is enabled and active
   - current production health state:
     - `http://127.0.0.1:8090/api/health` returns `ok=true`
     - public `https://ai.irbistech.com/api/health` returns `HTTP 200`
   - `deploy/library-rollout.sh` was executed successfully on production after adding health readiness retry
-  - server-side `npm test` completed successfully (`58 passed`)
+  - server-side `npm test` completed successfully (`75 passed`)
   - production `next build` completed successfully
   - production `next build` no longer emits the previous `/api/images/proxy` dynamic-server warning
   - production `next build` no longer emits missing Bitrix24 webhook/origin warnings during static analysis
@@ -155,6 +160,19 @@ Done in code and verified:
   - state file is written to `/var/lib/library/ai-analysis-acceptance-health-state.json`
   - JSON artifacts are written to `/var/lib/library/ai-analysis-acceptance-health/`
   - `/etc/default/library-monitoring` is configured without a webhook destination
+- standalone authenticated browser monitoring is deployed to production:
+  - `/etc/default/library-monitoring` now provides worker credentials and `AI_ANALYSIS_UI_SMOKE_REQUIRE_AUTH=true`
+  - `ai-analysis-ui-smoke-healthcheck.timer` is enabled and active
+  - `ai-analysis-ui-qa-healthcheck.timer` is enabled and active
+  - latest authenticated smoke summary is written under `/var/lib/library/ai-analysis-ui-smoke-health/`
+  - latest authenticated QA summary is written under `/var/lib/library/ai-analysis-ui-qa-health/`
+- browser-level production smoke and QA checks were completed for:
+  - authenticated `/login -> /library -> AI Analysis` smoke
+  - `okved` / `1way` UI card baseline
+  - `2way` / product UI card baseline
+  - `3way` / site UI card baseline
+  - local review copies were downloaded into `artifacts/ai-analysis-ui-qa-baseline/2026-04-23T09-55-32-026Z`
+  - baseline report was captured in `docs/ai-analysis-ui-qa-baseline-2026-04-23.md`
 - production smoke checks were completed for:
   - `1way` / `okved`
   - `2way` / product
@@ -168,7 +186,7 @@ Done in code and verified:
 
 Not done or intentionally deferred:
 
-- no dedicated worker smoke account is configured yet for authenticated browser-level QA in production, so the new `npm run test:ui:qa` flow and rollout-integrated UI QA step cannot be live-verified there yet
+- no dedicated isolated worker account is configured yet for authenticated browser monitoring; production currently uses an existing activated worker credential from the auth store
 - screenshot and acceptance artifacts are generated on demand and gitignored; there is still no committed visual acceptance baseline in the repository
 - the repository now has a systemd-ready alert consumer for browser-level smoke, but a real external webhook destination is still not configured
 - the repository now has a systemd-ready alert consumer for authenticated browser QA, but a real external webhook destination is still not configured
@@ -841,5 +859,5 @@ This frontend task is complete only when all statements below are true:
 - [x] Add standalone authenticated browser QA monitoring script and systemd timer templates
 - [x] Add standalone browser-level smoke monitoring script and systemd timer templates
 - [x] Add standalone trace acceptance monitoring script and systemd timer templates
-- [ ] Run manual UI QA on `1way`, `2way`, `3way`, and `okved` cases
+- [x] Run manual UI QA on `1way`, `2way`, `3way`, and `okved` cases
 - [x] Run API smoke checks for `analysis_score`

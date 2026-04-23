@@ -117,4 +117,6 @@ test('library rollout loads shared monitoring env and skips QA timer without cre
   assert.match(rollout, /ai-analysis-ui-qa-healthcheck\.timer/);
   assert.match(rollout, /skipping optional systemd unit until worker credentials are configured/);
   assert.match(rollout, /node_modules validation failed after npm ci/);
+  assert.match(rollout, /rm -rf node_modules failed, retrying with Python shutil\.rmtree/);
+  assert.match(rollout, /remove_node_modules_tree/);
 });

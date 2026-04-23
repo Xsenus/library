@@ -62,14 +62,37 @@ node_modules_install_valid() {
     [[ -f node_modules/next/dist/bin/next ]]
 }
 
+remove_node_modules_tree() {
+  if [[ ! -e node_modules ]]; then
+    return 0
+  fi
+
+  if run rm -rf node_modules; then
+    return 0
+  fi
+
+  log "rm -rf node_modules failed, retrying with Python shutil.rmtree"
+  if command -v python3 >/dev/null 2>&1; then
+    run python3 -c "from pathlib import Path; import shutil; p = Path('node_modules'); p.exists() and shutil.rmtree(p)"
+    return 0
+  fi
+  if command -v python >/dev/null 2>&1; then
+    run python -c "from pathlib import Path; import shutil; p = Path('node_modules'); p.exists() and shutil.rmtree(p)"
+    return 0
+  fi
+
+  log "python fallback is unavailable, cannot remove node_modules safely"
+  return 1
+}
+
 install_node_modules_with_retry() {
   local install_cmd='env -u NODE_ENV npm ci --include=dev --ignore-scripts --no-audit --no-fund --prefer-online'
 
-  run rm -rf node_modules
+  remove_node_modules_tree
   if ! run_shell "$install_cmd"; then
     log "npm ci failed, cleaning npm cache and retrying once"
     run npm cache clean --force
-    run rm -rf node_modules
+    remove_node_modules_tree
     run_shell "$install_cmd"
   fi
 
@@ -79,7 +102,7 @@ install_node_modules_with_retry() {
 
   log "node_modules validation failed after npm ci, cleaning npm cache and retrying once"
   run npm cache clean --force
-  run rm -rf node_modules
+  remove_node_modules_tree
   run_shell "$install_cmd"
 
   if ! node_modules_install_valid; then

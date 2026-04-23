@@ -288,6 +288,9 @@ browser QA timers are also kept disabled until Playwright Chromium is available 
 directory. For local verification and custom targets, override `LIBRARY_SYSTEMD_TARGET_DIR` and
 use `LIBRARY_SYSTEMD_SKIP_SYSTEMCTL=1` or `--dry-run`.
 
+When `node_modules` becomes partially broken on a host and plain `rm -rf node_modules` fails, the
+rollout helper now falls back to Python `shutil.rmtree(...)` before reinstalling dependencies.
+
 For local rollout dry-runs outside production, override `APP_DIR` together with
 `LIBRARY_ROLLOUT_ALLOWED_APP_DIR`. To validate the control flow without reinstalling dependencies,
 set `LIBRARY_ROLLOUT_SKIP_INSTALL=1`.
