@@ -33,6 +33,7 @@ Done in code and verified:
   - `npm run build` -> success
 - image API routes were marked dynamic so production build no longer emits a false `Dynamic server usage` warning for `/api/images/proxy`
 - Bitrix24 client config is now read lazily, so production build no longer emits missing `B24_WEBHOOK_URL` / `B24_PORTAL_ORIGIN` warnings unless B24 API is actually called
+- Browserslist data was refreshed in `package-lock.json`, so production build no longer emits the outdated `caniuse-lite` warning
 - browser-level smoke was added with Playwright:
   - `scripts/test-ai-analysis-ui-smoke.ts`
   - `npm run test:ui:smoke`
@@ -87,6 +88,7 @@ Done in code and verified:
   - production `next build` completed successfully
   - production `next build` no longer emits the previous `/api/images/proxy` dynamic-server warning
   - production `next build` no longer emits missing Bitrix24 webhook/origin warnings during static analysis
+  - production `next build` no longer emits the outdated Browserslist/caniuse-lite warning
   - `library.service` restarted successfully
 - standalone `/api/health` monitoring was deployed to production:
   - `library-system-healthcheck.timer` is enabled and active
