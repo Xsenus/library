@@ -38,8 +38,9 @@ Done in code and verified:
   - card-level render-contract tests now cover `1way`, `2way`, `3way`, `okved`, and legacy fallback payloads
 - production rollout was completed:
   - repository was updated on the server
-  - current production `library` runs commit `5ca17fb`
+  - current production `library` runs commit `cae7cf9`
   - missing build-time dev typings were installed on the server (`npm install --include=dev`)
+  - server-side `npm test` completed successfully (`36 passed`)
   - production `next build` completed successfully
   - `library.service` restarted successfully
 - production smoke checks were completed for:
