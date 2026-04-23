@@ -28,7 +28,7 @@ Done in code and verified:
 - raw site score in the equipment card now uses only `matched_site_equipment_score`
 - product trace now prefers `gen_score` over legacy `db_score/crore_3` fallback semantics
 - frontend tests were updated and pass locally:
-  - `npm test` -> `39 passed`
+  - `npm test` -> `44 passed`
 - local production build was verified:
   - `npm run build` -> success
 - browser-level smoke was added with Playwright:
@@ -62,17 +62,23 @@ Done in code and verified:
   - card-level render-contract tests now cover `1way`, `2way`, `3way`, `okved`, and legacy fallback payloads
 - production rollout was completed:
   - repository was updated on the server
-  - current production `library` runs commit `7b67fe9`
+  - current production `library` runs commit `ba353f5`
   - server-side node_modules were repaired with `npm install --include=dev --ignore-scripts`
-  - server-side `npm test` completed successfully (`39 passed`)
+  - server-side `npm test` completed successfully (`44 passed`)
   - production `next build` completed successfully
   - `library.service` restarted successfully
+- standalone `/api/health` monitoring was deployed to production:
+  - `library-system-healthcheck.timer` is enabled and active
+  - `library-system-healthcheck.service` runs successfully
+  - state file is written to `/var/lib/library/library-system-health-state.json`
+  - `/etc/default/library-monitoring` is configured without a webhook destination
 - production smoke checks were completed for:
   - `1way` / `okved`
   - `2way` / product
   - `3way` / site
   - `analysis_score` API sorting
   - public root responds with `307 -> /login` for unauthenticated access as expected
+  - public `https://ai.irbistech.com/api/health` responds with `ok=true`
 
 Not done or intentionally deferred:
 
