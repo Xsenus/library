@@ -99,6 +99,7 @@ Done in code and verified:
   - installs `deploy/systemd/library-monitoring.env.example` into `/etc/default/library-monitoring.example`
   - can bootstrap `/etc/default/library-monitoring` without overwriting an existing file
   - automated tests now verify env-template coverage, shared `EnvironmentFile`, and installer bootstrap references
+  - keeps `ai-analysis-ui-smoke-healthcheck.timer` disabled until Playwright Chromium is available on the server
   - keeps `ai-analysis-ui-qa-healthcheck.timer` disabled until worker credentials are present in `/etc/default/library-monitoring`
   - local verification after env-template coverage tests:
     - `npm test` -> `72 passed`

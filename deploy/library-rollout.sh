@@ -103,6 +103,17 @@ ui_qa_credentials_ready() {
   [[ -n "$login" && -n "$password" ]]
 }
 
+service_requires_browser() {
+  case "$1" in
+    ai-analysis-ui-smoke-healthcheck.service|ai-analysis-ui-smoke-healthcheck.timer|ai-analysis-ui-qa-healthcheck.service|ai-analysis-ui-qa-healthcheck.timer)
+      return 0
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 service_requires_ui_qa_credentials() {
   case "$1" in
     ai-analysis-ui-qa-healthcheck.service|ai-analysis-ui-qa-healthcheck.timer)
@@ -116,6 +127,11 @@ service_requires_ui_qa_credentials() {
 
 service_is_ready() {
   local unit="$1"
+
+  if service_requires_browser "$unit" && ! playwright_browser_ready; then
+    log "skipping optional systemd unit until Playwright Chromium is available: $unit"
+    return 1
+  fi
 
   if service_requires_ui_qa_credentials "$unit" && ! ui_qa_credentials_ready; then
     log "skipping optional systemd unit until worker credentials are configured: $unit"

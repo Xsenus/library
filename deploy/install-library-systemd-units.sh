@@ -3,6 +3,7 @@ set -Eeuo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 SOURCE_DIR="${LIBRARY_SYSTEMD_SOURCE_DIR:-$SCRIPT_DIR/systemd}"
+APP_DIR="${LIBRARY_SYSTEMD_APP_DIR:-$(cd "$SCRIPT_DIR/.." && pwd -P)}"
 TARGET_DIR="${LIBRARY_SYSTEMD_TARGET_DIR:-/etc/systemd/system}"
 UNITS_RAW="${LIBRARY_SYSTEMD_UNITS:-library-system-healthcheck.service library-system-healthcheck.timer ai-analysis-acceptance-healthcheck.service ai-analysis-acceptance-healthcheck.timer ai-analysis-ui-smoke-healthcheck.service ai-analysis-ui-smoke-healthcheck.timer ai-analysis-ui-qa-healthcheck.service ai-analysis-ui-qa-healthcheck.timer}"
 ENV_TEMPLATE_SOURCE="${LIBRARY_SYSTEMD_ENV_TEMPLATE_SOURCE:-$SCRIPT_DIR/systemd/library-monitoring.env.example}"
@@ -65,6 +66,30 @@ ui_qa_timer_ready() {
   return 1
 }
 
+playwright_browser_ready() {
+  if [[ ! -d "$APP_DIR" ]]; then
+    return 1
+  fi
+
+  (
+    cd "$APP_DIR"
+    node - <<'NODE'
+const fs = require('node:fs');
+
+try {
+  const { chromium } = require('playwright');
+  const executablePath = chromium.executablePath();
+  if (!executablePath) {
+    process.exit(1);
+  }
+  fs.accessSync(executablePath, fs.constants.X_OK);
+} catch (error) {
+  process.exit(1);
+}
+NODE
+  )
+}
+
 resolve_timers_to_enable() {
   TIMERS_TO_ENABLE=()
   TIMERS_TO_DISABLE=()
@@ -72,8 +97,19 @@ resolve_timers_to_enable() {
   local timer
   for timer in "${TIMERS[@]}"; do
     case "$timer" in
+      ai-analysis-ui-smoke-healthcheck.timer)
+        if playwright_browser_ready; then
+          TIMERS_TO_ENABLE+=("$timer")
+        else
+          TIMERS_TO_DISABLE+=("$timer")
+          log "skipping automatic enable for $timer until Playwright Chromium is available in $APP_DIR"
+        fi
+        ;;
       ai-analysis-ui-qa-healthcheck.timer)
-        if ui_qa_timer_ready "$ENV_FILE_TARGET"; then
+        if ! playwright_browser_ready; then
+          TIMERS_TO_DISABLE+=("$timer")
+          log "skipping automatic enable for $timer until Playwright Chromium is available in $APP_DIR"
+        elif ui_qa_timer_ready "$ENV_FILE_TARGET"; then
           TIMERS_TO_ENABLE+=("$timer")
         else
           TIMERS_TO_DISABLE+=("$timer")
@@ -92,6 +128,7 @@ usage() {
 Usage: bash deploy/install-library-systemd-units.sh [--dry-run]
 
 Environment overrides:
+  LIBRARY_SYSTEMD_APP_DIR
   LIBRARY_SYSTEMD_SOURCE_DIR
   LIBRARY_SYSTEMD_TARGET_DIR
   LIBRARY_SYSTEMD_UNITS

@@ -97,6 +97,8 @@ test('library systemd installer tracks monitoring env template and bootstrap tar
 test('library systemd installer keeps authenticated browser QA timer optional', () => {
   const installer = readText('deploy/install-library-systemd-units.sh');
 
+  assert.match(installer, /ai-analysis-ui-smoke-healthcheck\.timer/);
+  assert.match(installer, /Playwright Chromium/);
   assert.match(installer, /ai-analysis-ui-qa-healthcheck\.timer/);
   assert.match(installer, /AI_ANALYSIS_UI_QA_LOGIN/);
   assert.match(installer, /AI_ANALYSIS_UI_SMOKE_LOGIN/);
@@ -109,6 +111,8 @@ test('library rollout loads shared monitoring env and skips QA timer without cre
   assert.match(rollout, /LIBRARY_ROLLOUT_MONITORING_ENV_FILE/);
   assert.match(rollout, /\/etc\/default\/library-monitoring/);
   assert.match(rollout, /source "\$MONITORING_ENV_FILE"/);
+  assert.match(rollout, /ai-analysis-ui-smoke-healthcheck\.timer/);
+  assert.match(rollout, /skipping optional systemd unit until Playwright Chromium is available/);
   assert.match(rollout, /ai-analysis-ui-qa-healthcheck\.timer/);
   assert.match(rollout, /skipping optional systemd unit until worker credentials are configured/);
 });

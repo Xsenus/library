@@ -281,9 +281,10 @@ The installer copies `deploy/systemd/*.service|*.timer` into `/etc/systemd/syste
 `systemctl daemon-reload`, and enables the monitoring timers. The authenticated browser QA timer
 is kept disabled until `/etc/default/library-monitoring` contains either
 `AI_ANALYSIS_UI_QA_LOGIN/PASSWORD` or fallback `AI_ANALYSIS_UI_SMOKE_LOGIN/PASSWORD`, so first-time
-rollouts do not create false alarms on servers without worker credentials. For local verification
-and custom targets, override `LIBRARY_SYSTEMD_TARGET_DIR` and use
-`LIBRARY_SYSTEMD_SKIP_SYSTEMCTL=1` or `--dry-run`.
+rollouts do not create false alarms on servers without worker credentials. The browser smoke and
+browser QA timers are also kept disabled until Playwright Chromium is available in the target app
+directory. For local verification and custom targets, override `LIBRARY_SYSTEMD_TARGET_DIR` and
+use `LIBRARY_SYSTEMD_SKIP_SYSTEMCTL=1` or `--dry-run`.
 
 For local rollout dry-runs outside production, override `APP_DIR` together with
 `LIBRARY_ROLLOUT_ALLOWED_APP_DIR`. To validate the control flow without reinstalling dependencies,
