@@ -80,10 +80,11 @@ Done in code and verified:
   - card-level render-contract tests now cover `1way`, `2way`, `3way`, `okved`, and legacy fallback payloads
 - production rollout was completed:
   - repository was updated on the server
-  - current production `library` code was rolled out from commit `4665b20`
+  - current production `library` code was rolled out from commit `f911fd6`
   - server-side node_modules were repaired with `npm ci --include=dev --ignore-scripts --no-audit --no-fund`
   - server-side `npm test` completed successfully (`53 passed`)
   - production `next build` completed successfully
+  - production `next build` no longer emits the previous `/api/images/proxy` dynamic-server warning
   - `library.service` restarted successfully
 - standalone `/api/health` monitoring was deployed to production:
   - `library-system-healthcheck.timer` is enabled and active
