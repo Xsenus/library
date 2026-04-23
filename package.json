@@ -15,6 +15,7 @@
     "test": "tsx --test tests/*.test.ts",
     "test:analysis:smoke": "tsx scripts/test-ai-analysis-companies-smoke.ts",
     "test:queue:smoke": "tsx scripts/test-ai-analysis-queue-smoke.ts",
+    "test:ui:smoke": "tsx scripts/test-ai-analysis-ui-smoke.ts",
     "postinstall": "next telemetry disable",
     "backfill:equipment-hash": "node scripts/backfill-equipment-hashes.js"
   },
@@ -85,6 +86,7 @@
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
     "@types/pg": "^8.15.5",
+    "playwright": "^1.59.1",
     "tsx": "^4.21.0"
   }
 }

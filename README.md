@@ -170,6 +170,7 @@
 - `B24_WEBHOOK_URL`, `B24_PORTAL_ORIGIN`
 - `GOOGLE_CSE_KEY`, `GOOGLE_CSE_CX`
 - `BITRIX_DB_*`
+- `AI_ANALYSIS_UI_SMOKE_*`
 
 См. полный шаблон: `.env.example`.
 
@@ -190,6 +191,12 @@ npm run dev
 ```bash
 npm run build
 npm run start
+```
+
+Для browser-level smoke один раз установите Chromium для Playwright:
+
+```bash
+npx playwright install chromium
 ```
 
 ---

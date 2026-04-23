@@ -31,6 +31,14 @@ Done in code and verified:
   - `npm test` -> `36 passed`
 - local production build was verified:
   - `npm run build` -> success
+- browser-level smoke was added with Playwright:
+  - `scripts/test-ai-analysis-ui-smoke.ts`
+  - `npm run test:ui:smoke`
+  - stable UI selectors were added for login and AI Analysis entry points
+  - screenshot artifacts are written to `artifacts/ai-analysis-ui-smoke/`
+- public browser smoke was verified against production:
+  - `https://ai.irbistech.com/` redirects to `/login`
+  - login page screenshot artifact was captured successfully
 - the score breakdown in the equipment card was reduced to `VECTOR / GEN / K / FINAL`
 - `GEN` keeps backward-compatible fallback to legacy `bd_score` when older payloads are opened
 - equipment card display semantics were extracted into a pure helper:
@@ -52,8 +60,8 @@ Done in code and verified:
 
 Not done or intentionally deferred:
 
-- no separate visual QA artifact set (screenshots / acceptance sheet) was produced in this iteration
-- no dedicated browser-level E2E scenario exists yet; current protection is unit-level card and trace coverage plus production smoke
+- no dedicated worker smoke account is configured yet for authenticated browser-level QA in production
+- screenshot artifacts are generated on demand and gitignored; there is still no committed acceptance baseline in the repository
 
 ## Source of Truth
 
@@ -437,6 +445,33 @@ Required test updates:
 
 ## Workstream 6: Manual QA Checklist
 
+### 6.0 Add browser-level smoke and artifact generation
+
+Files:
+
+- `scripts/test-ai-analysis-ui-smoke.ts`
+- `app/login/page.tsx`
+- `app/(protected)/library/LibraryClient.tsx`
+- `components/library/ai-company-analysis-tab.tsx`
+
+Required outcome:
+
+- the repository has a repeatable browser-level smoke for the AI Analysis UI
+- smoke can run in public mode without credentials and verify the `/login` redirect path
+- smoke can optionally run in authenticated worker mode when `AI_ANALYSIS_UI_SMOKE_LOGIN/PASSWORD` are provided
+- screenshots and JSON summary are stored outside git in `artifacts/ai-analysis-ui-smoke/`
+
+Covered flow:
+
+- open public root and verify redirect to `/login`
+- verify login form is rendered
+- if worker credentials exist:
+  - sign in through the real login form
+  - open `/library?tab=aianalysis`
+  - verify the company table is rendered
+  - open company details dialog
+  - verify the equipment section is visible
+
 After implementation, verify the following in the running UI:
 
 1. a `3way` winner shows:
@@ -498,6 +533,7 @@ This frontend task is complete only when all statements below are true:
 - breakdown visually matches `FINAL = VECTOR x GEN`
 - `GEN` reflects `clean_score`
 - tests are updated and passing
+- browser-level smoke exists for `/login` and `AI Analysis`
 - `analysis_score` smoke verification succeeds after backend rollout
 
 ## Implementation Checklist
@@ -511,5 +547,6 @@ This frontend task is complete only when all statements below are true:
 - [x] Update product trace `db_score` resolution
 - [x] Rewrite equipment trace tests
 - [x] Rewrite product trace tests
+- [x] Add browser-level smoke script for `/login` and `AI Analysis`
 - [ ] Run manual UI QA on `1way`, `2way`, `3way`, and `okved` cases
 - [x] Run API smoke checks for `analysis_score`

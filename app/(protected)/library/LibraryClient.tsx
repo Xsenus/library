@@ -1023,6 +1023,7 @@ export default function LibraryPage() {
                 </TabsTrigger>
 
                 <TabsTrigger
+                  data-testid="tab-aianalysis"
                   value="aianalysis"
                   disabled={!isWorker}
                   onClick={(event) => handleOpenTabInNewPage(event, 'aianalysis', !isWorker)}

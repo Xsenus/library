@@ -92,6 +92,7 @@ function LoginInner() {
         <div className="space-y-2">
           <label className="text-sm">Логин</label>
           <input
+            data-testid="login-input"
             className="w-full rounded-md border px-3 py-2"
             value={login}
             onChange={(e) => setLogin(e.target.value)}
@@ -103,6 +104,7 @@ function LoginInner() {
         <div className="space-y-2">
           <label className="text-sm">Пароль</label>
           <input
+            data-testid="login-password-input"
             className="w-full rounded-md border px-3 py-2"
             type="password"
             value={password}
@@ -130,6 +132,7 @@ function LoginInner() {
         {err && <div className="text-sm text-red-600">{err}</div>}
 
         <button
+          data-testid="login-submit"
           type="submit"
           className="w-full rounded-md bg-black text-white py-2 disabled:opacity-50"
           disabled={!canSubmit}>

@@ -3938,6 +3938,7 @@ export default function AiCompanyAnalysisTab() {
                   </div>
                 )}
                 <table
+                  data-testid="ai-analysis-table"
                   className="w-full table-fixed border-separate border-spacing-0 text-sm"
                   style={{ minWidth: tableMinWidth }}
                 >
@@ -4081,6 +4082,7 @@ export default function AiCompanyAnalysisTab() {
 
                         return (
                           <tr
+                            data-testid={`ai-analysis-company-row-${company.inn}`}
                             key={company.inn}
                             className={cn(
                               'border-b border-border/60 align-top outline outline-0 -outline-offset-1 transition-[outline-color,box-shadow]',
@@ -4335,6 +4337,7 @@ export default function AiCompanyAnalysisTab() {
                                   <Tooltip>
                                     <TooltipTrigger asChild>
                                       <Button
+                                        data-testid={`ai-analysis-company-info-${company.inn}`}
                                         type="button"
                                         variant="ghost"
                                         size="icon"
@@ -5127,9 +5130,12 @@ export default function AiCompanyAnalysisTab() {
         </Dialog>
 
         <Dialog open={!!infoCompany} onOpenChange={(open) => !open && setInfoCompany(null)}>
-          <DialogContent className="flex h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-background p-5 sm:p-6">
+          <DialogContent
+            data-testid="ai-analysis-company-dialog"
+            className="flex h-[90vh] w-full max-w-6xl flex-col overflow-hidden rounded-2xl border bg-background p-5 sm:p-6"
+          >
             <DialogHeader>
-              <DialogTitle>
+              <DialogTitle data-testid="ai-analysis-company-dialog-title">
                 {formatCompanyDisplayName(infoCompany?.short_name, infoCompany?.company_id ?? null)} · ИНН{' '}
                 {infoCompany?.inn ?? ''}
               </DialogTitle>
@@ -5417,7 +5423,10 @@ export default function AiCompanyAnalysisTab() {
                   value="main"
                   className="mt-0 hidden h-full min-h-0 flex-1 flex-col space-y-4 overflow-y-auto pr-1 pb-2 data-[state=active]:flex"
                 >
-                <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                <div
+                  data-testid="ai-analysis-company-equipment"
+                  className="rounded-xl border bg-background/90 p-4 shadow-sm"
+                >
                   <div className="mb-3 text-xs font-medium uppercase tracking-wide text-muted-foreground">Сводка по компании</div>
                   <div className="grid gap-3 md:grid-cols-4">
                   <div className="flex min-h-[94px] flex-col justify-center rounded-lg border bg-muted/20 px-4 py-3 text-center">
