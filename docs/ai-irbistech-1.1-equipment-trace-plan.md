@@ -35,6 +35,7 @@ Done in code and verified:
 - `GEN` keeps backward-compatible fallback to legacy `bd_score` when older payloads are opened
 - production rollout was completed:
   - repository was updated on the server
+  - current production `library` runs commit `5ca17fb`
   - missing build-time dev typings were installed on the server (`npm install --include=dev`)
   - production `next build` completed successfully
   - `library.service` restarted successfully
@@ -43,6 +44,7 @@ Done in code and verified:
   - `2way` / product
   - `3way` / site
   - `analysis_score` API sorting
+  - public root responds with `307 -> /login` for unauthenticated access as expected
 
 Not done or intentionally deferred:
 
