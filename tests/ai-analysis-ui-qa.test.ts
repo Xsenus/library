@@ -95,3 +95,16 @@ test('runAiAnalysisUiQa fails with a clear error when worker credentials are abs
   assert.match(summary.error ?? '', /AI Analysis UI QA requires/);
   assert.equal(fs.existsSync(summary.artifactPath), true);
 });
+
+test('ui qa targets the dedicated company search input and keeps responsible filter separate', () => {
+  const qaSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ai-analysis-ui-qa.ts'), 'utf8');
+  const componentSource = fs.readFileSync(
+    path.join(__dirname, '..', 'components', 'library', 'ai-company-analysis-tab.tsx'),
+    'utf8',
+  );
+
+  assert.match(qaSource, /ai-analysis-filters-query/);
+  assert.match(qaSource, /waitForResponse/);
+  assert.match(componentSource, /data-testid="ai-analysis-filters-query"/);
+  assert.match(componentSource, /data-testid="ai-analysis-filters-responsible"/);
+});

@@ -4441,6 +4441,7 @@ export default function AiCompanyAnalysisTab() {
               <div className="space-y-1">
                 <span className="text-[11px] uppercase text-muted-foreground">Поиск</span>
                 <Input
+                  data-testid="ai-analysis-filters-query"
                   className="h-9 text-sm"
                   placeholder="Поиск по названию или ИНН"
                   value={search}
@@ -4450,7 +4451,7 @@ export default function AiCompanyAnalysisTab() {
               <div className="space-y-1">
                 <span className="text-[11px] uppercase text-muted-foreground">Ответственный</span>
                 <Input
-                  data-testid="ai-analysis-filters-search"
+                  data-testid="ai-analysis-filters-responsible"
                   className="h-9 text-sm"
                   placeholder="Поиск по ответственному"
                   value={responsibleFilter}

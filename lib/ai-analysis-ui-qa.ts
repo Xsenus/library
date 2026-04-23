@@ -14,6 +14,7 @@ import {
   captureLocatorScreenshot,
   capturePageScreenshot,
   loginToLibrary,
+  locatorByTestIdOr,
   normalizeAiAnalysisUiSmokeBaseUrl,
   openAiAnalysisPage,
   sanitizeArtifactSegment,
@@ -222,10 +223,31 @@ async function focusCompanyByInn(page: Page, inn: string, timeoutMs: number) {
   const filtersDialog = page.getByTestId('ai-analysis-filters-dialog');
   await filtersDialog.waitFor({ state: 'visible', timeout: timeoutMs });
 
-  const searchInput = page.getByTestId('ai-analysis-filters-search');
+  const searchInput = locatorByTestIdOr(
+    page,
+    'ai-analysis-filters-query',
+    'input[placeholder*="ИНН"], input[placeholder*="названию"]',
+  );
   await searchInput.fill('');
+  const companySearchResponse = page
+    .waitForResponse(
+      (response) => {
+        if (!response.url().includes('/api/ai-analysis/companies?')) {
+          return false;
+        }
+
+        try {
+          const url = new URL(response.url());
+          return url.searchParams.get('q') === inn;
+        } catch {
+          return false;
+        }
+      },
+      { timeout: timeoutMs },
+    )
+    .catch(() => null);
   await searchInput.fill(inn);
-  await page.waitForTimeout(500);
+  await companySearchResponse;
   await page.keyboard.press('Escape');
   await filtersDialog.waitFor({ state: 'hidden', timeout: timeoutMs });
 
