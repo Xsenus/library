@@ -53,6 +53,13 @@ Done in code and verified:
   - `scripts/test-ai-analysis-acceptance-qa.ts`
   - `npm run test:acceptance:qa`
   - JSON artifacts are written to `artifacts/ai-analysis-acceptance-qa/`
+- standalone monitoring wrapper was added for live trace acceptance QA:
+  - `lib/ai-analysis-acceptance-healthcheck.ts`
+  - `scripts/ai-analysis-acceptance-healthcheck.ts`
+  - `npm run acceptance:healthcheck`
+  - `deploy/systemd/ai-analysis-acceptance-healthcheck.service`
+  - `deploy/systemd/ai-analysis-acceptance-healthcheck.timer`
+  - optional webhook alerts are supported through `AI_ANALYSIS_ACCEPTANCE_HEALTH_ALERT_WEBHOOK_URL`
 - local acceptance QA was verified against production:
   - `npm run test:acceptance:qa` -> success
   - `1841109992` confirms `okved` / `1way`
@@ -97,6 +104,7 @@ Not done or intentionally deferred:
 - no dedicated worker smoke account is configured yet for authenticated browser-level QA in production
 - screenshot and acceptance artifacts are generated on demand and gitignored; there is still no committed visual acceptance baseline in the repository
 - the repository now has a systemd-ready alert consumer for `GET /api/health`, but a real external webhook destination is still not configured
+- the repository now has a systemd-ready alert consumer for live trace acceptance QA, but a real external webhook destination is still not configured
 
 ## Source of Truth
 
@@ -626,6 +634,40 @@ Environment variables:
 - `LIBRARY_SYSTEM_HEALTH_ALERT_ON_RECOVERY`
 - `LIBRARY_SYSTEM_HEALTH_STATE_FILE`
 
+### 7.2 Add standalone monitoring for live trace acceptance QA
+
+Files:
+
+- `lib/ai-analysis-acceptance-healthcheck.ts`
+- `scripts/ai-analysis-acceptance-healthcheck.ts`
+- `tests/ai-analysis-acceptance-healthcheck.test.ts`
+- `deploy/systemd/ai-analysis-acceptance-healthcheck.service`
+- `deploy/systemd/ai-analysis-acceptance-healthcheck.timer`
+
+Required outcome:
+
+- live `1way`, `2way`, `3way`, and `okved` trace semantics can be monitored without a browser or CI runner
+- the command returns exit code `0` only when `/api/health` is healthy and all acceptance cases pass
+- the command writes a local state file to deduplicate repeated unhealthy alerts
+- timestamped and `latest.json` artifacts are written outside git for operational inspection
+- optional webhook notifications are sent on unhealthy transitions and recovery
+- systemd timer templates are present for VPS deployment
+
+Operational command:
+
+```bash
+npm run acceptance:healthcheck -- --json
+```
+
+Environment variables:
+
+- `AI_ANALYSIS_ACCEPTANCE_HEALTH_BASE_URL`
+- `AI_ANALYSIS_ACCEPTANCE_HEALTH_TIMEOUT_MS`
+- `AI_ANALYSIS_ACCEPTANCE_HEALTH_ALERT_WEBHOOK_URL`
+- `AI_ANALYSIS_ACCEPTANCE_HEALTH_ALERT_ON_RECOVERY`
+- `AI_ANALYSIS_ACCEPTANCE_HEALTH_STATE_FILE`
+- `AI_ANALYSIS_ACCEPTANCE_HEALTH_ARTIFACT_DIR`
+
 ## Risks and Review Points
 
 ### Risk 1: Hidden data mixing survives the refactor
@@ -676,6 +718,7 @@ This frontend task is complete only when all statements below are true:
 - trace acceptance QA exists for live `1way/2way/3way/okved` semantics
 - cross-service health route exists for `library -> ai-integration -> DB`
 - standalone healthcheck exists for `/api/health` and can be used by systemd/cron
+- standalone healthcheck exists for live trace acceptance QA and can be used by systemd/cron
 - `analysis_score` smoke verification succeeds after backend rollout
 
 ## Implementation Checklist
@@ -693,5 +736,6 @@ This frontend task is complete only when all statements below are true:
 - [x] Add live trace acceptance QA for `1way`, `2way`, `3way`, and `okved`
 - [x] Add cross-service `/api/health` diagnostics and smoke script
 - [x] Add standalone `/api/health` monitoring script and systemd timer templates
+- [x] Add standalone trace acceptance monitoring script and systemd timer templates
 - [ ] Run manual UI QA on `1way`, `2way`, `3way`, and `okved` cases
 - [x] Run API smoke checks for `analysis_score`

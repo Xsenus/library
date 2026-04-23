@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Library AI Analysis trace acceptance healthcheck
+
+[Timer]
+OnBootSec=4min
+OnUnitActiveSec=30min
+Unit=ai-analysis-acceptance-healthcheck.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

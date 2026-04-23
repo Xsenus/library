@@ -173,6 +173,7 @@
 - `BITRIX_DB_*`
 - `AI_ANALYSIS_UI_SMOKE_*`
 - `AI_ANALYSIS_ACCEPTANCE_*` — acceptance QA для `1way/2way/3way/okved` trace-семантики
+- `AI_ANALYSIS_ACCEPTANCE_HEALTH_*` — standalone monitoring для live trace acceptance QA
 - `LIBRARY_HEALTH_BASE_URL` — base URL для `npm run test:health:smoke`
 - `LIBRARY_SYSTEM_HEALTH_*` — standalone monitoring для `npm run healthcheck`
 
@@ -210,12 +211,18 @@ npm run test:ui:smoke
 npm run test:health:smoke
 npm run test:acceptance:qa
 npm run healthcheck -- --json
+npm run acceptance:healthcheck -- --json
 ```
 
 Для production-мониторинга `/api/health` добавлены systemd-шаблоны:
 
 - `deploy/systemd/library-system-healthcheck.service`
 - `deploy/systemd/library-system-healthcheck.timer`
+
+Для production-мониторинга live trace acceptance QA добавлены systemd-шаблоны:
+
+- `deploy/systemd/ai-analysis-acceptance-healthcheck.service`
+- `deploy/systemd/ai-analysis-acceptance-healthcheck.timer`
 
 Они используют optional env-file `/etc/default/library-monitoring`.
 
@@ -253,4 +260,5 @@ docker compose up --build
 - `npm run test:health:smoke` — проверка `GET /api/health` и сводки зависимостей.
 - `npm run test:acceptance:qa` — acceptance QA для live trace-семантики `1way/2way/3way/okved` с JSON-артефактом.
 - `npm run healthcheck` — standalone healthcheck `GET /api/health` с exit code, state-file и optional webhook alert.
+- `npm run acceptance:healthcheck` — standalone monitoring live trace acceptance QA с exit code, state-file, JSON-артефактом и optional webhook alert.
 
