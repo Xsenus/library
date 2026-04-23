@@ -67,6 +67,7 @@
 - `app/api/industries/*`, `prodclasses/*`, `workshops/*`, `equipment/*` — иерархия и карточки.
 - `app/api/ai-search/route.ts` — AI поиск.
 - `app/api/ai-analysis/*` — очередь/запуск/остановка/список компаний для анализа.
+- `app/api/health/route.ts` — сводная health-диагностика `library -> DB -> AI integration`.
 - `app/api/ai-debug/events/route.ts` — журнал AI‑событий.
 - `app/api/b24/*`, `app/api/okved/*` — Bitrix24 и ОКВЭД.
 - `app/api/images/*` — картинки Google/proxy.
@@ -171,6 +172,7 @@
 - `GOOGLE_CSE_KEY`, `GOOGLE_CSE_CX`
 - `BITRIX_DB_*`
 - `AI_ANALYSIS_UI_SMOKE_*`
+- `LIBRARY_HEALTH_BASE_URL` — base URL для `npm run test:health:smoke`
 
 См. полный шаблон: `.env.example`.
 
@@ -197,6 +199,13 @@ npm run start
 
 ```bash
 npx playwright install chromium
+```
+
+Smoke и диагностика:
+
+```bash
+npm run test:ui:smoke
+npm run test:health:smoke
 ```
 
 ---
@@ -229,4 +238,6 @@ docker compose up --build
 - `npm run start` — запуск production сервера.
 - `npm run lint` — линтер.
 - `npm run backfill:equipment-hash` — заполнение `hash_equipment` для старых записей.
+- `npm run test:ui:smoke` — browser-level smoke для `/login` и AI Analysis.
+- `npm run test:health:smoke` — проверка `GET /api/health` и сводки зависимостей.
 

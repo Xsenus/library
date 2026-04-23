@@ -36,6 +36,11 @@ Done in code and verified:
   - `npm run test:ui:smoke`
   - stable UI selectors were added for login and AI Analysis entry points
   - screenshot artifacts are written to `artifacts/ai-analysis-ui-smoke/`
+- cross-service health diagnostics were added for `library -> postgres/bitrix -> ai-integration`:
+  - `app/api/health/route.ts`
+  - `lib/library-system-health.ts`
+  - `scripts/test-library-system-health-smoke.ts`
+  - `npm run test:health:smoke`
 - public browser smoke was verified against production:
   - `https://ai.irbistech.com/` redirects to `/login`
   - login page screenshot artifact was captured successfully
@@ -62,6 +67,7 @@ Not done or intentionally deferred:
 
 - no dedicated worker smoke account is configured yet for authenticated browser-level QA in production
 - screenshot artifacts are generated on demand and gitignored; there is still no committed acceptance baseline in the repository
+- there is still no external uptime/alert consumer wired to the new `GET /api/health` route
 
 ## Source of Truth
 
@@ -487,6 +493,47 @@ After implementation, verify the following in the running UI:
    - `GEN = clean_score`
 4. the list sorted by analysis score still behaves correctly after backend rollout
 
+## Workstream 7: Cross-Service Health Diagnostics
+
+### 7.0 Add a single health endpoint for the live service chain
+
+Files:
+
+- `app/api/health/route.ts`
+- `lib/library-system-health.ts`
+- `scripts/test-library-system-health-smoke.ts`
+- `tests/library-system-health.test.ts`
+
+Required outcome:
+
+- one unauthenticated route returns the current health summary for the live `library` dependency chain
+- the route checks:
+  - main PostgreSQL
+  - `bitrix_data` PostgreSQL
+  - `ai-integration /health`
+  - optional `analysis-score-sync-health` inside `ai-integration`
+- required dependency failures return `HTTP 503`
+- optional diagnostic failures degrade the payload semantics without hiding the main service state
+
+Required payload semantics:
+
+- top-level `ok=true` means all required dependencies are healthy
+- top-level `severity` is:
+  - `ok` when everything is healthy
+  - `degraded` when only optional diagnostics fail
+  - `failed` when a required dependency fails
+- each service entry keeps:
+  - `required`
+  - `status`
+  - `detail`
+  - `latencyMs`
+
+Smoke verification:
+
+- `npm run test:health:smoke` must call `/api/health`
+- the smoke output must print a compact JSON summary for CI/manual use
+- production verification should confirm the route can be called without authentication and reports the current dependency states
+
 ## Risks and Review Points
 
 ### Risk 1: Hidden data mixing survives the refactor
@@ -534,6 +581,7 @@ This frontend task is complete only when all statements below are true:
 - `GEN` reflects `clean_score`
 - tests are updated and passing
 - browser-level smoke exists for `/login` and `AI Analysis`
+- cross-service health route exists for `library -> ai-integration -> DB`
 - `analysis_score` smoke verification succeeds after backend rollout
 
 ## Implementation Checklist
@@ -548,5 +596,6 @@ This frontend task is complete only when all statements below are true:
 - [x] Rewrite equipment trace tests
 - [x] Rewrite product trace tests
 - [x] Add browser-level smoke script for `/login` and `AI Analysis`
+- [x] Add cross-service `/api/health` diagnostics and smoke script
 - [ ] Run manual UI QA on `1way`, `2way`, `3way`, and `okved` cases
 - [x] Run API smoke checks for `analysis_score`
