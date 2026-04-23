@@ -5,6 +5,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/library
+WorkingDirectory=/opt/library/app
 EnvironmentFile=-/etc/default/library-monitoring
 ExecStart=/usr/bin/env npm run healthcheck -- --json
