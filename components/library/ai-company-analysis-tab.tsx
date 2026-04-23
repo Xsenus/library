@@ -41,6 +41,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import SquareImgButton from '@/components/library/square-img-button';
 import InlineRevenueBars from '@/components/library/inline-revenue-bar';
 import { cn } from '@/lib/utils';
+import { buildEquipmentCardView } from '@/lib/ai-analysis-equipment-card-view';
 import type { Industry } from '@/lib/validators';
 import type { AiIntegrationHealth } from '@/lib/ai-integration';
 import type { AiDebugEventRecord } from '@/lib/ai-debug';
@@ -5492,23 +5493,30 @@ export default function AiCompanyAnalysisTab() {
                         <ul className="grid gap-2 sm:grid-cols-2">
                           {equipmentItems.map((item, idx) => {
                             const trace = item.trace ?? (item.id ? equipmentTraceById[item.id] : undefined);
-                            const displayFinalScore = trace?.final_score ?? item.score ?? null;
-                            const scoreLabel =
-                              formatSimilarityScore(displayFinalScore) ??
-                              formatRawScore(displayFinalScore) ??
-                              '—';
-                            const matchedSiteEquipment = trace?.matched_site_equipment?.trim() || null;
-                            const matchedProductName = trace?.matched_product_name?.trim() || null;
-                            const originName = trace?.origin_name?.trim() || null;
-                            const matchedSiteScore = formatSimilarityScore(
-                              trace?.matched_site_equipment_score ?? null,
-                            );
-                            const calcPathLabel = formatEquipmentCalcPath(trace?.calculation_path);
-                            const finalSourceLabel = formatEquipmentSource(trace?.final_source);
-                            const originLabel = formatEquipmentOrigin(trace?.origin_kind);
-                            const displayVectorScore = trace?.vector_score ?? null;
-                            const displayGenScore = trace?.gen_score ?? trace?.bd_score ?? null;
-                            const displayFactor = trace?.factor ?? null;
+                            const cardView = buildEquipmentCardView({
+                              itemName: item.name,
+                              itemScore: item.score ?? null,
+                              trace,
+                              showOkvedFallbackBadge,
+                            });
+                            const displayFinalScore = cardView.displayFinalScore;
+                            const scoreLabel = cardView.scoreLabel;
+                            const matchedSiteEquipment =
+                              cardView.context?.kind === 'site' ? cardView.context.value : null;
+                            const matchedProductName =
+                              cardView.context?.kind === 'product' ? cardView.context.value : null;
+                            const originName =
+                              cardView.context?.kind === 'okved' || cardView.context?.kind === 'origin'
+                                ? cardView.context.value
+                                : null;
+                            const matchedSiteScore =
+                              cardView.context?.kind === 'site' ? cardView.context.scoreLabel ?? null : null;
+                            const calcPathLabel = cardView.calcPathLabel;
+                            const finalSourceLabel = cardView.finalSourceLabel;
+                            const originLabel = cardView.originLabel;
+                            const displayVectorScore = cardView.breakdown?.vector.value ?? null;
+                            const displayGenScore = cardView.breakdown?.gen.value ?? null;
+                            const displayFactor = cardView.breakdown?.factor.value ?? null;
                             const hasTraceBreakdown = [
                               displayVectorScore,
                               displayGenScore,
@@ -5524,7 +5532,7 @@ export default function AiCompanyAnalysisTab() {
                                 <div className="flex items-start justify-between gap-3">
                                   <div className="min-w-0 flex-1 space-y-1">
                                     <div className="truncate pr-2 font-medium leading-snug text-foreground">
-                                      {trace?.equipment_name || item.name}
+                                      {cardView.equipmentName}
                                     </div>
                                     {matchedProductName ? (
                                       <div className="text-[11px] text-muted-foreground">

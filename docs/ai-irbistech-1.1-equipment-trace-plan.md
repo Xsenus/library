@@ -28,11 +28,14 @@ Done in code and verified:
 - raw site score in the equipment card now uses only `matched_site_equipment_score`
 - product trace now prefers `gen_score` over legacy `db_score/crore_3` fallback semantics
 - frontend tests were updated and pass locally:
-  - `npm test` -> `31 passed`
+  - `npm test` -> `36 passed`
 - local production build was verified:
   - `npm run build` -> success
 - the score breakdown in the equipment card was reduced to `VECTOR / GEN / K / FINAL`
 - `GEN` keeps backward-compatible fallback to legacy `bd_score` when older payloads are opened
+- equipment card display semantics were extracted into a pure helper:
+  - `lib/ai-analysis-equipment-card-view.ts`
+  - card-level render-contract tests now cover `1way`, `2way`, `3way`, `okved`, and legacy fallback payloads
 - production rollout was completed:
   - repository was updated on the server
   - current production `library` runs commit `5ca17fb`
@@ -49,6 +52,7 @@ Done in code and verified:
 Not done or intentionally deferred:
 
 - no separate visual QA artifact set (screenshots / acceptance sheet) was produced in this iteration
+- no dedicated browser-level E2E scenario exists yet; current protection is unit-level card and trace coverage plus production smoke
 
 ## Source of Truth
 
@@ -368,6 +372,27 @@ Expected result:
 
 ## Workstream 5: Tests
 
+### 5.0 Add explicit card-view render contract coverage
+
+Files:
+
+- `lib/ai-analysis-equipment-card-view.ts`
+- `tests/ai-analysis-equipment-card-view.test.ts`
+
+Required outcome:
+
+- the equipment card display rules are testable without rendering the whole `ai-company-analysis-tab.tsx`
+- UI semantics for winner-path traces are pinned in one pure helper
+- regressions like "site score accidentally equals vector score" are caught before manual QA
+
+Covered cases:
+
+- `3way` winner uses raw site score for the "found on site" badge
+- `2way` winner shows product context and `GEN = clean_score`
+- legacy payload without `gen_score` falls back to `bd_score`
+- `okved` badge keeps correct context text
+- card still renders stable values when trace is absent
+
 ### 5.1 Rewrite equipment trace tests around winner-path behavior
 
 File:
@@ -481,6 +506,7 @@ This frontend task is complete only when all statements below are true:
 - [x] Keep `okved` origin labeling while using `clean_score` semantics
 - [x] Stop using `vector_score` as fallback for raw site score display
 - [x] Simplify score breakdown to `VECTOR`, `GEN`, `K`, `FINAL`
+- [x] Add pure equipment-card render contract helper and tests
 - [x] Update product trace `db_score` resolution
 - [x] Rewrite equipment trace tests
 - [x] Rewrite product trace tests
