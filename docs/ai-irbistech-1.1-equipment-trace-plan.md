@@ -28,7 +28,7 @@ Done in code and verified:
 - raw site score in the equipment card now uses only `matched_site_equipment_score`
 - product trace now prefers `gen_score` over legacy `db_score/crore_3` fallback semantics
 - frontend tests were updated and pass locally:
-  - `npm test` -> `72 passed`
+  - `npm test` -> `74 passed`
 - local production build was verified:
   - `npm run build` -> success
 - image API routes were marked dynamic so production build no longer emits a false `Dynamic server usage` warning for `/api/images/proxy`
@@ -103,7 +103,7 @@ Done in code and verified:
   - keeps `ai-analysis-ui-smoke-healthcheck.timer` disabled until Playwright Chromium is available on the server
   - keeps `ai-analysis-ui-qa-healthcheck.timer` disabled until worker credentials are present in `/etc/default/library-monitoring`
   - local verification after env-template coverage tests:
-    - `npm test` -> `72 passed`
+    - `npm test` -> `74 passed`
   - runs `systemctl daemon-reload`
   - enables monitoring timers
 - local acceptance QA was verified against production:
@@ -125,10 +125,18 @@ Done in code and verified:
   - card-level render-contract tests now cover `1way`, `2way`, `3way`, `okved`, and legacy fallback payloads
 - production rollout was completed:
   - repository was updated on the server
-  - current production `library` code was rolled out from commit `e98f55b`
+  - current production `library` code is synced to commit `4a848a6`
   - server-side npm cache was cleaned after `TAR_ENTRY_ERROR` warnings
   - server-side node_modules were repaired with `env -u NODE_ENV npm ci --include=dev --ignore-scripts --no-audit --no-fund --prefer-online`
   - repeatable rollout is now captured in `deploy/library-rollout.sh`
+  - current production timer state on `79.174.94.14`:
+    - `library-system-healthcheck.timer` is enabled and active
+    - `ai-analysis-acceptance-healthcheck.timer` is enabled and active
+    - `ai-analysis-ui-smoke-healthcheck.timer` is intentionally disabled until Playwright Chromium is installed
+    - `ai-analysis-ui-qa-healthcheck.timer` is intentionally disabled until Playwright Chromium and worker credentials are configured
+  - current production health state:
+    - `http://127.0.0.1:8090/api/health` returns `ok=true`
+    - public `https://ai.irbistech.com/api/health` returns `HTTP 200`
   - `deploy/library-rollout.sh` was executed successfully on production after adding health readiness retry
   - server-side `npm test` completed successfully (`58 passed`)
   - production `next build` completed successfully
