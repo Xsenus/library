@@ -41,6 +41,13 @@ Done in code and verified:
   - `lib/library-system-health.ts`
   - `scripts/test-library-system-health-smoke.ts`
   - `npm run test:health:smoke`
+- standalone monitoring wrapper was added for `GET /api/health`:
+  - `lib/library-system-healthcheck.ts`
+  - `scripts/library-system-healthcheck.ts`
+  - `npm run healthcheck`
+  - `deploy/systemd/library-system-healthcheck.service`
+  - `deploy/systemd/library-system-healthcheck.timer`
+  - optional webhook alerts are supported through `LIBRARY_SYSTEM_HEALTH_ALERT_WEBHOOK_URL`
 - public browser smoke was verified against production:
   - `https://ai.irbistech.com/` redirects to `/login`
   - login page screenshot artifact was captured successfully
@@ -71,7 +78,7 @@ Not done or intentionally deferred:
 
 - no dedicated worker smoke account is configured yet for authenticated browser-level QA in production
 - screenshot artifacts are generated on demand and gitignored; there is still no committed acceptance baseline in the repository
-- there is still no external uptime/alert consumer wired to the new `GET /api/health` route
+- the repository now has a systemd-ready alert consumer for `GET /api/health`, but a real external webhook destination is still not configured
 
 ## Source of Truth
 
@@ -538,6 +545,38 @@ Smoke verification:
 - the smoke output must print a compact JSON summary for CI/manual use
 - production verification should confirm the route can be called without authentication and reports the current dependency states
 
+### 7.1 Add standalone monitoring for `/api/health`
+
+Files:
+
+- `lib/library-system-healthcheck.ts`
+- `scripts/library-system-healthcheck.ts`
+- `tests/library-system-healthcheck.test.ts`
+- `deploy/systemd/library-system-healthcheck.service`
+- `deploy/systemd/library-system-healthcheck.timer`
+
+Required outcome:
+
+- the library service chain can be monitored without a browser or CI runner
+- the command returns exit code `0` only when `/api/health` reports `ok=true`
+- the command writes a local state file to deduplicate repeated unhealthy alerts
+- optional webhook notifications are sent on unhealthy transitions and recovery
+- systemd timer templates are present for VPS deployment
+
+Operational command:
+
+```bash
+npm run healthcheck -- --json
+```
+
+Environment variables:
+
+- `LIBRARY_SYSTEM_HEALTH_URL`
+- `LIBRARY_SYSTEM_HEALTH_TIMEOUT_MS`
+- `LIBRARY_SYSTEM_HEALTH_ALERT_WEBHOOK_URL`
+- `LIBRARY_SYSTEM_HEALTH_ALERT_ON_RECOVERY`
+- `LIBRARY_SYSTEM_HEALTH_STATE_FILE`
+
 ## Risks and Review Points
 
 ### Risk 1: Hidden data mixing survives the refactor
@@ -586,6 +625,7 @@ This frontend task is complete only when all statements below are true:
 - tests are updated and passing
 - browser-level smoke exists for `/login` and `AI Analysis`
 - cross-service health route exists for `library -> ai-integration -> DB`
+- standalone healthcheck exists for `/api/health` and can be used by systemd/cron
 - `analysis_score` smoke verification succeeds after backend rollout
 
 ## Implementation Checklist
@@ -601,5 +641,6 @@ This frontend task is complete only when all statements below are true:
 - [x] Rewrite product trace tests
 - [x] Add browser-level smoke script for `/login` and `AI Analysis`
 - [x] Add cross-service `/api/health` diagnostics and smoke script
+- [x] Add standalone `/api/health` monitoring script and systemd timer templates
 - [ ] Run manual UI QA on `1way`, `2way`, `3way`, and `okved` cases
 - [x] Run API smoke checks for `analysis_score`

@@ -1,0 +1,10 @@
+[Unit]
+Description=Library service-chain healthcheck
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/library
+EnvironmentFile=-/etc/default/library-monitoring
+ExecStart=/usr/bin/env npm run healthcheck -- --json

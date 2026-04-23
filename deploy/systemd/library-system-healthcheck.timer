@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Library service-chain healthcheck
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Unit=library-system-healthcheck.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

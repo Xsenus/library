@@ -17,6 +17,7 @@
     "test:health:smoke": "tsx scripts/test-library-system-health-smoke.ts",
     "test:queue:smoke": "tsx scripts/test-ai-analysis-queue-smoke.ts",
     "test:ui:smoke": "tsx scripts/test-ai-analysis-ui-smoke.ts",
+    "healthcheck": "tsx scripts/library-system-healthcheck.ts",
     "postinstall": "next telemetry disable",
     "backfill:equipment-hash": "node scripts/backfill-equipment-hashes.js"
   },
