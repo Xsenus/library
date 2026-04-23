@@ -17,8 +17,11 @@
     "test:acceptance:qa": "tsx scripts/test-ai-analysis-acceptance-qa.ts",
     "test:health:smoke": "tsx scripts/test-library-system-health-smoke.ts",
     "test:queue:smoke": "tsx scripts/test-ai-analysis-queue-smoke.ts",
+    "test:ui:qa": "tsx scripts/test-ai-analysis-ui-qa.ts",
     "test:ui:smoke": "tsx scripts/test-ai-analysis-ui-smoke.ts",
     "healthcheck": "tsx scripts/library-system-healthcheck.ts",
+    "ui:qa:healthcheck": "tsx scripts/ai-analysis-ui-qa-healthcheck.ts",
+    "ui:smoke:healthcheck": "tsx scripts/ai-analysis-ui-smoke-healthcheck.ts",
     "acceptance:healthcheck": "tsx scripts/ai-analysis-acceptance-healthcheck.ts",
     "postinstall": "next telemetry disable",
     "backfill:equipment-hash": "node scripts/backfill-equipment-hashes.js"

@@ -171,7 +171,10 @@
 - `B24_WEBHOOK_URL`, `B24_PORTAL_ORIGIN`
 - `GOOGLE_CSE_KEY`, `GOOGLE_CSE_CX`
 - `BITRIX_DB_*`
-- `AI_ANALYSIS_UI_SMOKE_*`
+- `AI_ANALYSIS_UI_SMOKE_*` — browser smoke для `/login` и AI Analysis
+- `AI_ANALYSIS_UI_QA_*` — browser QA artifact capture для `okved/1way`, `2way`, `3way`
+- `AI_ANALYSIS_UI_QA_HEALTH_*` — standalone monitoring для authenticated browser QA
+- `AI_ANALYSIS_UI_SMOKE_HEALTH_*` — standalone monitoring для browser-level smoke
 - `AI_ANALYSIS_ACCEPTANCE_*` — acceptance QA для `1way/2way/3way/okved` trace-семантики
 - `AI_ANALYSIS_ACCEPTANCE_HEALTH_*` — standalone monitoring для live trace acceptance QA
 - `LIBRARY_HEALTH_BASE_URL` — base URL для `npm run test:health:smoke`
@@ -208,11 +211,23 @@ Smoke и диагностика:
 
 ```bash
 npm run test:ui:smoke
+npm run test:ui:qa
 npm run test:health:smoke
 npm run test:acceptance:qa
 npm run healthcheck -- --json
+npm run ui:qa:healthcheck -- --json
+npm run ui:smoke:healthcheck -- --json
 npm run acceptance:healthcheck -- --json
 ```
+
+`npm run test:ui:qa` requires worker credentials in `AI_ANALYSIS_UI_QA_LOGIN/PASSWORD`
+or falls back to `AI_ANALYSIS_UI_SMOKE_LOGIN/PASSWORD`. It captures row/dialog/equipment
+screenshots plus `companies`, `equipment-trace`, and `product-trace` JSON artifacts for
+the configured `okved/1way`, `2way`, and `3way` INN cases.
+
+`npm run ui:qa:healthcheck -- --json` uses the same credentials, writes timestamped plus
+`latest.json` monitoring artifacts, and supports state-file deduplication and optional
+webhook alerts for unhealthy transitions and recovery.
 
 Для production-мониторинга `/api/health` добавлены systemd-шаблоны:
 
@@ -224,6 +239,16 @@ npm run acceptance:healthcheck -- --json
 - `deploy/systemd/ai-analysis-acceptance-healthcheck.service`
 - `deploy/systemd/ai-analysis-acceptance-healthcheck.timer`
 
+Для production-мониторинга browser-level smoke добавлены systemd-шаблоны:
+
+- `deploy/systemd/ai-analysis-ui-smoke-healthcheck.service`
+- `deploy/systemd/ai-analysis-ui-smoke-healthcheck.timer`
+
+Для production-мониторинга authenticated browser QA добавлены systemd-шаблоны:
+
+- `deploy/systemd/ai-analysis-ui-qa-healthcheck.service`
+- `deploy/systemd/ai-analysis-ui-qa-healthcheck.timer`
+
 Они используют optional env-file `/etc/default/library-monitoring`.
 
 Production rollout helper for the current VPS layout:
@@ -233,10 +258,41 @@ sudo bash deploy/library-rollout.sh
 ```
 
 The helper is intentionally scoped to `/opt/library/app`. It runs `git pull --ff-only`, stops
-`library.service` and monitoring timers, rebuilds `node_modules` with dev dependencies from
-`package-lock.json`, verifies `tsx`/`next`, runs tests/build, starts services back, and runs
+`library.service` and installed monitoring timers, rebuilds `node_modules` with dev dependencies
+from `package-lock.json`, verifies `tsx`/`next`, runs tests/build, starts services back, and runs
 health plus trace-acceptance smoke checks. The health check waits for the Next.js service to
-become ready before running acceptance diagnostics.
+become ready before running acceptance diagnostics. Browser-level smoke is also run automatically
+when Playwright Chromium is available; this can be forced or disabled through
+`LIBRARY_ROLLOUT_UI_SMOKE_MODE=always|never`. Authenticated browser QA artifact capture is also run
+automatically when Playwright Chromium and worker credentials are available; this can be controlled
+through `LIBRARY_ROLLOUT_UI_QA_MODE=always|never`. It can also install/update repo-managed
+monitoring units before restart through `LIBRARY_ROLLOUT_INSTALL_SYSTEMD=auto|always|never`.
+The rollout script also loads `/etc/default/library-monitoring` by default via
+`LIBRARY_ROLLOUT_MONITORING_ENV_FILE`, so browser smoke/QA and acceptance checks can reuse the
+same credentials and base URLs as the systemd healthchecks.
+
+Standalone installer for monitoring units:
+
+```bash
+sudo bash deploy/install-library-systemd-units.sh
+```
+
+The installer copies `deploy/systemd/*.service|*.timer` into `/etc/systemd/system`, runs
+`systemctl daemon-reload`, and enables the monitoring timers. The authenticated browser QA timer
+is kept disabled until `/etc/default/library-monitoring` contains either
+`AI_ANALYSIS_UI_QA_LOGIN/PASSWORD` or fallback `AI_ANALYSIS_UI_SMOKE_LOGIN/PASSWORD`, so first-time
+rollouts do not create false alarms on servers without worker credentials. For local verification
+and custom targets, override `LIBRARY_SYSTEMD_TARGET_DIR` and use
+`LIBRARY_SYSTEMD_SKIP_SYSTEMCTL=1` or `--dry-run`.
+
+For local rollout dry-runs outside production, override `APP_DIR` together with
+`LIBRARY_ROLLOUT_ALLOWED_APP_DIR`. To validate the control flow without reinstalling dependencies,
+set `LIBRARY_ROLLOUT_SKIP_INSTALL=1`.
+
+The same installer now also writes `deploy/systemd/library-monitoring.env.example` to
+`/etc/default/library-monitoring.example` and can bootstrap the real
+`/etc/default/library-monitoring` file when `LIBRARY_SYSTEMD_BOOTSTRAP_ENV_FILE=true` is set.
+Existing real env files are never overwritten.
 
 ---
 
@@ -269,8 +325,11 @@ docker compose up --build
 - `npm run lint` — линтер.
 - `npm run backfill:equipment-hash` — заполнение `hash_equipment` для старых записей.
 - `npm run test:ui:smoke` — browser-level smoke для `/login` и AI Analysis.
+- `npm run test:ui:qa` — авторизованный browser QA capture для `okved/1way`, `2way`, `3way` с screenshot+JSON артефактами.
 - `npm run test:health:smoke` — проверка `GET /api/health` и сводки зависимостей.
 - `npm run test:acceptance:qa` — acceptance QA для live trace-семантики `1way/2way/3way/okved` с JSON-артефактом.
 - `npm run healthcheck` — standalone healthcheck `GET /api/health` с exit code, state-file и optional webhook alert.
+- `npm run ui:qa:healthcheck` — standalone monitoring authenticated browser QA с exit code, state-file, screenshot/JSON-артефактами и optional webhook alert.
+- `npm run ui:smoke:healthcheck` — standalone browser-level smoke monitoring с exit code, state-file, screenshot/JSON-артефактами и optional webhook alert.
 - `npm run acceptance:healthcheck` — standalone monitoring live trace acceptance QA с exit code, state-file, JSON-артефактом и optional webhook alert.
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Library AI Analysis browser smoke healthcheck
+
+[Timer]
+OnBootSec=6min
+OnUnitActiveSec=45min
+Unit=ai-analysis-ui-smoke-healthcheck.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -28,7 +28,7 @@ Done in code and verified:
 - raw site score in the equipment card now uses only `matched_site_equipment_score`
 - product trace now prefers `gen_score` over legacy `db_score/crore_3` fallback semantics
 - frontend tests were updated and pass locally:
-  - `npm test` -> `58 passed`
+  - `npm test` -> `72 passed`
 - local production build was verified:
   - `npm run build` -> success
 - image API routes were marked dynamic so production build no longer emits a false `Dynamic server usage` warning for `/api/images/proxy`
@@ -39,6 +39,28 @@ Done in code and verified:
   - `npm run test:ui:smoke`
   - stable UI selectors were added for login and AI Analysis entry points
   - screenshot artifacts are written to `artifacts/ai-analysis-ui-smoke/`
+- repeatable authenticated browser QA artifact capture was added for target trace cases:
+  - `lib/ai-analysis-ui-qa.ts`
+  - `scripts/test-ai-analysis-ui-qa.ts`
+  - `npm run test:ui:qa`
+  - stable UI selectors were added for AI Analysis filters and the equipment list
+  - screenshot and JSON artifacts are written to `artifacts/ai-analysis-ui-qa/`
+- standalone monitoring wrapper was added for authenticated browser QA:
+  - `lib/ai-analysis-ui-qa-healthcheck.ts`
+  - `scripts/ai-analysis-ui-qa-healthcheck.ts`
+  - `npm run ui:qa:healthcheck`
+  - `deploy/systemd/ai-analysis-ui-qa-healthcheck.service`
+  - `deploy/systemd/ai-analysis-ui-qa-healthcheck.timer`
+  - timestamped and `latest.json` artifacts are written to `/var/lib/library/ai-analysis-ui-qa-health/`
+  - optional webhook alerts are supported through `AI_ANALYSIS_UI_QA_HEALTH_ALERT_WEBHOOK_URL`
+- standalone monitoring wrapper was added for browser-level smoke:
+  - `lib/ai-analysis-ui-smoke.ts`
+  - `lib/ai-analysis-ui-smoke-healthcheck.ts`
+  - `scripts/ai-analysis-ui-smoke-healthcheck.ts`
+  - `npm run ui:smoke:healthcheck`
+  - `deploy/systemd/ai-analysis-ui-smoke-healthcheck.service`
+  - `deploy/systemd/ai-analysis-ui-smoke-healthcheck.timer`
+  - optional webhook alerts are supported through `AI_ANALYSIS_UI_SMOKE_HEALTH_ALERT_WEBHOOK_URL`
 - cross-service health diagnostics were added for `library -> postgres/bitrix -> ai-integration`:
   - `app/api/health/route.ts`
   - `lib/library-system-health.ts`
@@ -66,6 +88,22 @@ Done in code and verified:
 - production rollout helper was added for the current VPS layout:
   - `deploy/library-rollout.sh`
   - the helper verifies `/opt/library/app`, repairs `node_modules` from `package-lock.json`, runs tests/build, restarts services, waits for health readiness, and runs trace-acceptance smoke checks
+  - browser-level smoke is now auto-included in rollout when Playwright Chromium is available
+  - authenticated browser QA artifact capture is now auto-included in rollout when Playwright Chromium and worker credentials are available
+  - can install/update repo-managed monitoring units before restart via `LIBRARY_ROLLOUT_INSTALL_SYSTEMD=auto|always|never`
+  - local validation can now skip dependency reinstall through `LIBRARY_ROLLOUT_SKIP_INSTALL=1`
+  - rollout now loads `/etc/default/library-monitoring` via `LIBRARY_ROLLOUT_MONITORING_ENV_FILE`, so smoke/QA/acceptance commands can reuse the same operational credentials and base URLs
+- standalone systemd installer was added for first-time monitoring rollout:
+  - `deploy/install-library-systemd-units.sh`
+  - copies repo-managed monitoring units into `/etc/systemd/system`
+  - installs `deploy/systemd/library-monitoring.env.example` into `/etc/default/library-monitoring.example`
+  - can bootstrap `/etc/default/library-monitoring` without overwriting an existing file
+  - automated tests now verify env-template coverage, shared `EnvironmentFile`, and installer bootstrap references
+  - keeps `ai-analysis-ui-qa-healthcheck.timer` disabled until worker credentials are present in `/etc/default/library-monitoring`
+  - local verification after env-template coverage tests:
+    - `npm test` -> `72 passed`
+  - runs `systemctl daemon-reload`
+  - enables monitoring timers
 - local acceptance QA was verified against production:
   - `npm run test:acceptance:qa` -> success
   - `1841109992` confirms `okved` / `1way`
@@ -120,8 +158,10 @@ Done in code and verified:
 
 Not done or intentionally deferred:
 
-- no dedicated worker smoke account is configured yet for authenticated browser-level QA in production
+- no dedicated worker smoke account is configured yet for authenticated browser-level QA in production, so the new `npm run test:ui:qa` flow and rollout-integrated UI QA step cannot be live-verified there yet
 - screenshot and acceptance artifacts are generated on demand and gitignored; there is still no committed visual acceptance baseline in the repository
+- the repository now has a systemd-ready alert consumer for browser-level smoke, but a real external webhook destination is still not configured
+- the repository now has a systemd-ready alert consumer for authenticated browser QA, but a real external webhook destination is still not configured
 - the repository now has a systemd-ready alert consumer for `GET /api/health`, but a real external webhook destination is still not configured
 - the repository now has a systemd-ready alert consumer for live trace acceptance QA, but a real external webhook destination is still not configured
 
@@ -534,7 +574,36 @@ Covered flow:
   - open company details dialog
   - verify the equipment section is visible
 
-### 6.1 Add repeatable trace acceptance QA
+### 6.1 Add repeatable authenticated browser QA artifact capture
+
+Files:
+
+- `lib/ai-analysis-ui-qa.ts`
+- `scripts/test-ai-analysis-ui-qa.ts`
+- `tests/ai-analysis-ui-qa.test.ts`
+- `components/library/ai-company-analysis-tab.tsx`
+
+Required outcome:
+
+- the repository has a repeatable browser QA runner for target `okved/1way`, `2way`, and `3way` cases
+- the runner signs in through the real login form and opens the real AI Analysis UI
+- the runner filters the company table by INN using stable selectors instead of fragile text matching
+- each case stores row, dialog, and equipment screenshots outside git
+- each case stores `companies`, `equipment-trace`, and `product-trace` JSON payloads for the same INN
+- each case reuses acceptance semantics and fails if the winning path or formula expectations are broken
+
+Operational command:
+
+```bash
+npm run test:ui:qa
+```
+
+Credential note:
+
+- the script requires `AI_ANALYSIS_UI_QA_LOGIN/PASSWORD`
+- if dedicated QA credentials are not set, it falls back to `AI_ANALYSIS_UI_SMOKE_LOGIN/PASSWORD`
+
+### 6.2 Add repeatable trace acceptance QA
 
 Files:
 
@@ -734,9 +803,12 @@ This frontend task is complete only when all statements below are true:
 - `GEN` reflects `clean_score`
 - tests are updated and passing
 - browser-level smoke exists for `/login` and `AI Analysis`
+- repeatable browser QA artifact capture exists for targeted `okved/1way`, `2way`, and `3way` cases
 - trace acceptance QA exists for live `1way/2way/3way/okved` semantics
 - cross-service health route exists for `library -> ai-integration -> DB`
 - standalone healthcheck exists for `/api/health` and can be used by systemd/cron
+- standalone healthcheck exists for authenticated browser QA and can be used by systemd/cron
+- standalone healthcheck exists for browser-level smoke and can be used by systemd/cron
 - standalone healthcheck exists for live trace acceptance QA and can be used by systemd/cron
 - `analysis_score` smoke verification succeeds after backend rollout
 
@@ -752,9 +824,12 @@ This frontend task is complete only when all statements below are true:
 - [x] Rewrite equipment trace tests
 - [x] Rewrite product trace tests
 - [x] Add browser-level smoke script for `/login` and `AI Analysis`
+- [x] Add repeatable browser QA artifact capture for `1way`, `2way`, `3way`, and `okved` cases
 - [x] Add live trace acceptance QA for `1way`, `2way`, `3way`, and `okved`
 - [x] Add cross-service `/api/health` diagnostics and smoke script
 - [x] Add standalone `/api/health` monitoring script and systemd timer templates
+- [x] Add standalone authenticated browser QA monitoring script and systemd timer templates
+- [x] Add standalone browser-level smoke monitoring script and systemd timer templates
 - [x] Add standalone trace acceptance monitoring script and systemd timer templates
 - [ ] Run manual UI QA on `1way`, `2way`, `3way`, and `okved` cases
 - [x] Run API smoke checks for `analysis_score`

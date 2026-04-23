@@ -1,0 +1,10 @@
+[Unit]
+Description=Library AI Analysis authenticated browser QA healthcheck
+After=network-online.target library.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+WorkingDirectory=/opt/library/app
+EnvironmentFile=-/etc/default/library-monitoring
+ExecStart=/usr/bin/env npm run ui:qa:healthcheck -- --json

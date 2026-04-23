@@ -1,0 +1,11 @@
+[Unit]
+Description=Periodic Library AI Analysis authenticated browser QA healthcheck
+
+[Timer]
+OnBootSec=6min
+OnUnitActiveSec=6h
+Unit=ai-analysis-ui-qa-healthcheck.service
+Persistent=true
+
+[Install]
+WantedBy=timers.target

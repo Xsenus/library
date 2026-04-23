@@ -3672,6 +3672,7 @@ export default function AiCompanyAnalysisTab() {
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex flex-wrap items-center gap-2">
                 <Button
+                  data-testid="ai-analysis-filters-button"
                   type="button"
                   variant={hasFilters ? 'secondary' : 'outline'}
                   className="h-9 gap-2"
@@ -4432,7 +4433,7 @@ export default function AiCompanyAnalysisTab() {
         </Card>
 
         <Dialog open={filtersDialogOpen} onOpenChange={setFiltersDialogOpen}>
-          <DialogContent className="max-w-4xl">
+          <DialogContent data-testid="ai-analysis-filters-dialog" className="max-w-4xl">
             <DialogHeader>
               <DialogTitle>Фильтры AI-анализа</DialogTitle>
             </DialogHeader>
@@ -4449,6 +4450,7 @@ export default function AiCompanyAnalysisTab() {
               <div className="space-y-1">
                 <span className="text-[11px] uppercase text-muted-foreground">Ответственный</span>
                 <Input
+                  data-testid="ai-analysis-filters-search"
                   className="h-9 text-sm"
                   placeholder="Поиск по ответственному"
                   value={responsibleFilter}
@@ -5499,7 +5501,7 @@ export default function AiCompanyAnalysisTab() {
                     return (
                       <div className="space-y-2">
                         {traceStatusNote}
-                        <ul className="grid gap-2 sm:grid-cols-2">
+                        <ul data-testid="ai-analysis-company-equipment-list" className="grid gap-2 sm:grid-cols-2">
                           {equipmentItems.map((item, idx) => {
                             const trace = item.trace ?? (item.id ? equipmentTraceById[item.id] : undefined);
                             const cardView = buildEquipmentCardView({
