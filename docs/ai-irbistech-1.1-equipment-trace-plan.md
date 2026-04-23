@@ -28,7 +28,7 @@ Done in code and verified:
 - raw site score in the equipment card now uses only `matched_site_equipment_score`
 - product trace now prefers `gen_score` over legacy `db_score/crore_3` fallback semantics
 - frontend tests were updated and pass locally:
-  - `npm test` -> `53 passed`
+  - `npm test` -> `58 passed`
 - local production build was verified:
   - `npm run build` -> success
 - image API routes were marked dynamic so production build no longer emits a false `Dynamic server usage` warning for `/api/images/proxy`
@@ -81,9 +81,9 @@ Done in code and verified:
   - card-level render-contract tests now cover `1way`, `2way`, `3way`, `okved`, and legacy fallback payloads
 - production rollout was completed:
   - repository was updated on the server
-  - current production `library` code was rolled out from commit `f911fd6`
-  - server-side node_modules were repaired with `npm ci --include=dev --ignore-scripts --no-audit --no-fund`
-  - server-side `npm test` completed successfully (`53 passed`)
+  - current production `library` code was rolled out from commit `a4517a3`
+  - server-side node_modules were repaired with `env -u NODE_ENV npm ci --include=dev --ignore-scripts --no-audit --no-fund`
+  - server-side `npm test` completed successfully (`58 passed`)
   - production `next build` completed successfully
   - production `next build` no longer emits the previous `/api/images/proxy` dynamic-server warning
   - production `next build` no longer emits missing Bitrix24 webhook/origin warnings during static analysis
