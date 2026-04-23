@@ -226,6 +226,17 @@ npm run acceptance:healthcheck -- --json
 
 Они используют optional env-file `/etc/default/library-monitoring`.
 
+Production rollout helper for the current VPS layout:
+
+```bash
+sudo bash deploy/library-rollout.sh
+```
+
+The helper is intentionally scoped to `/opt/library/app`. It runs `git pull --ff-only`, stops
+`library.service` and monitoring timers, rebuilds `node_modules` with dev dependencies from
+`package-lock.json`, verifies `tsx`/`next`, runs tests/build, starts services back, and runs
+health plus trace-acceptance smoke checks.
+
 ---
 
 ## 11) Docker

@@ -63,6 +63,9 @@ Done in code and verified:
   - `deploy/systemd/ai-analysis-acceptance-healthcheck.service`
   - `deploy/systemd/ai-analysis-acceptance-healthcheck.timer`
   - optional webhook alerts are supported through `AI_ANALYSIS_ACCEPTANCE_HEALTH_ALERT_WEBHOOK_URL`
+- production rollout helper was added for the current VPS layout:
+  - `deploy/library-rollout.sh`
+  - the helper verifies `/opt/library/app`, repairs `node_modules` from `package-lock.json`, runs tests/build, restarts services, and runs health plus trace-acceptance smoke checks
 - local acceptance QA was verified against production:
   - `npm run test:acceptance:qa` -> success
   - `1841109992` confirms `okved` / `1way`
@@ -85,6 +88,7 @@ Done in code and verified:
   - current production `library` code was rolled out from commit `dbf83ae`
   - server-side npm cache was cleaned after `TAR_ENTRY_ERROR` warnings
   - server-side node_modules were repaired with `env -u NODE_ENV npm ci --include=dev --ignore-scripts --no-audit --no-fund --prefer-online`
+  - repeatable rollout is now captured in `deploy/library-rollout.sh`
   - server-side `npm test` completed successfully (`58 passed`)
   - production `next build` completed successfully
   - production `next build` no longer emits the previous `/api/images/proxy` dynamic-server warning
