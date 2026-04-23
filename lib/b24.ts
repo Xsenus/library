@@ -1,15 +1,28 @@
 // lib/b24.ts
-const WEBHOOK = process.env.B24_WEBHOOK_URL ?? '';
-const PORTAL_ORIGIN = process.env.B24_PORTAL_ORIGIN ?? '';
+type B24Config = {
+  webhook: string;
+  portalOrigin: string;
+};
 
-if (!WEBHOOK) console.warn('B24_WEBHOOK_URL is not set');
-if (!PORTAL_ORIGIN) console.warn('B24_PORTAL_ORIGIN is not set');
+function getB24Config(): B24Config {
+  return {
+    webhook: process.env.B24_WEBHOOK_URL?.trim() ?? '',
+    portalOrigin: process.env.B24_PORTAL_ORIGIN?.trim() ?? '',
+  };
+}
+
+function getWebhookOrThrow(): string {
+  const { webhook } = getB24Config();
+  if (!webhook) throw new Error('B24 webhook not configured');
+  return webhook;
+}
 
 export function getPortalOrigin(): string {
+  const { webhook, portalOrigin } = getB24Config();
   try {
-    return PORTAL_ORIGIN || new URL(WEBHOOK).origin;
+    return portalOrigin || new URL(webhook).origin;
   } catch {
-    return PORTAL_ORIGIN || '';
+    return portalOrigin || '';
   }
 }
 
@@ -19,9 +32,9 @@ export async function b24Call<T = unknown>(
   method: string,
   params: Record<string, any> = {},
 ): Promise<T> {
-  if (!WEBHOOK) throw new Error('B24 webhook not configured');
+  const webhook = getWebhookOrThrow();
   const body = toFormUrlEncoded(params);
-  const r = await fetch(`${WEBHOOK}${method}.json`, {
+  const r = await fetch(`${webhook}${method}.json`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8' },
     body,
@@ -35,8 +48,8 @@ export async function b24Call<T = unknown>(
 
 /** JSON-вариант batch */
 export async function b24BatchJson(cmd: Record<string, string>, halt = 0): Promise<any> {
-  if (!WEBHOOK) throw new Error('B24 webhook not configured');
-  const r = await fetch(`${WEBHOOK}batch.json`, {
+  const webhook = getWebhookOrThrow();
+  const r = await fetch(`${webhook}batch.json`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ halt, cmd }),
