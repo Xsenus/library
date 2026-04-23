@@ -5507,10 +5507,9 @@ export default function AiCompanyAnalysisTab() {
                             const finalSourceLabel = formatEquipmentSource(trace?.final_source);
                             const originLabel = formatEquipmentOrigin(trace?.origin_kind);
                             const displayVectorScore = trace?.vector_score ?? null;
-                            const displayGenScore = trace?.gen_score ?? null;
+                            const displayGenScore = trace?.gen_score ?? trace?.bd_score ?? null;
                             const displayFactor = trace?.factor ?? null;
                             const hasTraceBreakdown = [
-                              trace?.bd_score,
                               displayVectorScore,
                               displayGenScore,
                               displayFactor,
@@ -5566,10 +5565,6 @@ export default function AiCompanyAnalysisTab() {
                                 <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
                                   {hasTraceBreakdown ? (
                                     <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-muted-foreground">
-                                      <div className="whitespace-nowrap">
-                                        <span className="font-medium text-foreground/90">CLEAN_SCORE:</span>{' '}
-                                        {formatSimilarityScore(trace?.bd_score) ?? formatRawScore(trace?.bd_score) ?? '\u2014'}
-                                      </div>
                                       <div className="whitespace-nowrap">
                                         <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
                                         {formatSimilarityScore(displayVectorScore) ?? formatRawScore(displayVectorScore) ?? '\u2014'}

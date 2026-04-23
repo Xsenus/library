@@ -31,6 +31,8 @@ Done in code and verified:
   - `npm test` -> `31 passed`
 - local production build was verified:
   - `npm run build` -> success
+- the score breakdown in the equipment card was reduced to `VECTOR / GEN / K / FINAL`
+- `GEN` keeps backward-compatible fallback to legacy `bd_score` when older payloads are opened
 - production rollout was completed:
   - repository was updated on the server
   - missing build-time dev typings were installed on the server (`npm install --include=dev`)
@@ -44,7 +46,6 @@ Done in code and verified:
 
 Not done or intentionally deferred:
 
-- the score breakdown was not reduced to exactly `VECTOR / GEN / K / FINAL`; the card still shows an explicit `CLEAN_SCORE` line for clarity
 - no separate visual QA artifact set (screenshots / acceptance sheet) was produced in this iteration
 
 ## Source of Truth
@@ -477,7 +478,7 @@ This frontend task is complete only when all statements below are true:
 - [x] Build path-specific lookup maps in `normalizeEquipmentTracePayload()`
 - [x] Keep `okved` origin labeling while using `clean_score` semantics
 - [x] Stop using `vector_score` as fallback for raw site score display
-- [ ] Simplify score breakdown to `VECTOR`, `GEN`, `K`, `FINAL`
+- [x] Simplify score breakdown to `VECTOR`, `GEN`, `K`, `FINAL`
 - [x] Update product trace `db_score` resolution
 - [x] Rewrite equipment trace tests
 - [x] Rewrite product trace tests
