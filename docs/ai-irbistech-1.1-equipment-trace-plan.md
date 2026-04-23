@@ -33,7 +33,7 @@ Done in code and verified:
   - `npm run build` -> success
 - image API routes were marked dynamic so production build no longer emits a false `Dynamic server usage` warning for `/api/images/proxy`
 - Bitrix24 client config is now read lazily, so production build no longer emits missing `B24_WEBHOOK_URL` / `B24_PORTAL_ORIGIN` warnings unless B24 API is actually called
-- Browserslist data was refreshed in `package-lock.json`, so production build no longer emits the outdated `caniuse-lite` warning
+- Browserslist data was refreshed in `package-lock.json` to `caniuse-lite@1.0.30001790`, so production build no longer emits the outdated `caniuse-lite` warning
 - browser-level smoke was added with Playwright:
   - `scripts/test-ai-analysis-ui-smoke.ts`
   - `npm run test:ui:smoke`
@@ -82,8 +82,9 @@ Done in code and verified:
   - card-level render-contract tests now cover `1way`, `2way`, `3way`, `okved`, and legacy fallback payloads
 - production rollout was completed:
   - repository was updated on the server
-  - current production `library` code was rolled out from commit `a4517a3`
-  - server-side node_modules were repaired with `env -u NODE_ENV npm ci --include=dev --ignore-scripts --no-audit --no-fund`
+  - current production `library` code was rolled out from commit `dbf83ae`
+  - server-side npm cache was cleaned after `TAR_ENTRY_ERROR` warnings
+  - server-side node_modules were repaired with `env -u NODE_ENV npm ci --include=dev --ignore-scripts --no-audit --no-fund --prefer-online`
   - server-side `npm test` completed successfully (`58 passed`)
   - production `next build` completed successfully
   - production `next build` no longer emits the previous `/api/images/proxy` dynamic-server warning
