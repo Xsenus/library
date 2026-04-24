@@ -2,6 +2,10 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  DEFAULT_ARTIFACT_RETENTION,
+  pruneArtifactEntries,
+} from './artifact-retention';
+import {
   resolveAiAnalysisUiQaOptions,
   runAiAnalysisUiQa,
   type AiAnalysisUiQaSummary,
@@ -17,6 +21,7 @@ export type RunAiAnalysisUiQaHealthcheckOptions = {
   capture: boolean;
   headless: boolean;
   artifactDir: string;
+  artifactRetentionCount: number;
   webhookUrl?: string | null;
   stateFile: string;
   alertOnRecovery: boolean;
@@ -121,6 +126,17 @@ async function writeArtifact(
   return artifactPath;
 }
 
+const UI_QA_HEALTH_ARTIFACT_PATTERN = /^ai-analysis-ui-qa-health-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.json$/i;
+
+async function pruneHealthArtifacts(artifactDir: string, artifactRetentionCount: number): Promise<void> {
+  await pruneArtifactEntries({
+    rootDir: path.resolve(artifactDir),
+    keepLatest: artifactRetentionCount,
+    preserveNames: ['latest.json'],
+    matchEntry: (entry) => !entry.isDirectory && UI_QA_HEALTH_ARTIFACT_PATTERN.test(entry.name),
+  });
+}
+
 async function sendWebhook(webhookUrl: string, summary: AiAnalysisUiQaSummary): Promise<void> {
   const response = await fetch(webhookUrl, {
     method: 'POST',
@@ -147,6 +163,7 @@ export async function runAiAnalysisUiQaHealthcheck({
   capture,
   headless,
   artifactDir,
+  artifactRetentionCount = DEFAULT_ARTIFACT_RETENTION,
   webhookUrl,
   stateFile,
   alertOnRecovery,
@@ -163,6 +180,7 @@ export async function runAiAnalysisUiQaHealthcheck({
       AI_ANALYSIS_UI_QA_CAPTURE: String(capture),
       AI_ANALYSIS_UI_QA_HEADLESS: String(headless),
       AI_ANALYSIS_UI_QA_ARTIFACT_DIR: artifactDir,
+      AI_ANALYSIS_UI_QA_ARTIFACT_RETENTION: String(artifactRetentionCount),
       AI_ANALYSIS_UI_QA_OKVED_INN: okvedInn ?? undefined,
       AI_ANALYSIS_UI_QA_2WAY_INN: twoWayInn ?? undefined,
       AI_ANALYSIS_UI_QA_3WAY_INN: threeWayInn ?? undefined,
@@ -172,6 +190,7 @@ export async function runAiAnalysisUiQaHealthcheck({
 
   const summary = await runAiAnalysisUiQa(resolved);
   const healthArtifactPath = await writeArtifact(artifactDir, summary);
+  await pruneHealthArtifacts(artifactDir, artifactRetentionCount).catch(() => undefined);
   const previousState = await loadState(stateFile);
   const previousStatus = typeof previousState.status === 'string' ? previousState.status : null;
   const currentStatus = currentAiAnalysisUiQaState(summary.ok);

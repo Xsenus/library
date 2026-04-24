@@ -2,6 +2,10 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 
+import {
+  DEFAULT_ARTIFACT_RETENTION,
+  parseArtifactRetentionCount,
+} from '../lib/artifact-retention';
 import { normalizeAiAnalysisUiSmokeBaseUrl, runAiAnalysisUiSmoke } from '../lib/ai-analysis-ui-smoke';
 
 function loadEnv(filePath: string) {
@@ -52,6 +56,10 @@ async function main() {
     process.cwd(),
     process.env.AI_ANALYSIS_UI_SMOKE_ARTIFACT_DIR || 'artifacts/ai-analysis-ui-smoke',
   );
+  const artifactRetentionCount = parseArtifactRetentionCount(
+    process.env.AI_ANALYSIS_UI_SMOKE_ARTIFACT_RETENTION,
+    DEFAULT_ARTIFACT_RETENTION,
+  );
   const summary = await runAiAnalysisUiSmoke({
     baseUrl,
     login,
@@ -60,6 +68,7 @@ async function main() {
     headless,
     requireAuth,
     artifactDir,
+    artifactRetentionCount,
     timeoutMs: Number.isFinite(timeoutMs) && timeoutMs > 0 ? timeoutMs : 30_000,
   });
 

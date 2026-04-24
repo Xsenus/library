@@ -1,11 +1,16 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 
 import {
   buildLibrarySystemHealthAlertText,
   currentLibraryHealthState,
   normalizeLibrarySystemHealthPayload,
+  runLibrarySystemHealthcheck,
   shouldSendLibraryHealthAlert,
+  summaryToJson,
 } from '../lib/library-system-healthcheck';
 
 test('normalizeLibrarySystemHealthPayload accepts healthy /api/health payload', () => {
@@ -122,4 +127,85 @@ test('buildLibrarySystemHealthAlertText includes compact failure context', () =>
   assert.match(text, /library health is NOT OK/);
   assert.match(text, /failed=ai_integration/);
   assert.match(text, /ai_integration:error:connect timeout/);
+});
+
+test('summaryToJson exposes artifact path for monitoring consumers', () => {
+  const payload = summaryToJson({
+    checkedAt: '2026-04-24T10:00:00.000Z',
+    url: 'https://ai.irbistech.com/api/health',
+    ok: true,
+    httpStatus: 200,
+    severity: 'ok',
+    reason: 'ok',
+    failedServices: [],
+    degradedServices: [],
+    services: {},
+    artifactPath: '/tmp/library-system-health/latest.json',
+  });
+
+  assert.equal(payload.artifactPath, '/tmp/library-system-health/latest.json');
+});
+
+test('runLibrarySystemHealthcheck writes latest artifact and prunes old timestamped files', async () => {
+  const originalFetch = globalThis.fetch;
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'library-system-health-'));
+  const artifactDir = path.join(tmpDir, 'artifacts');
+  const stateFile = path.join(tmpDir, 'state.json');
+
+  fs.mkdirSync(artifactDir, { recursive: true });
+  const oldArtifactA = path.join(artifactDir, 'library-system-health-2026-04-20T10-00-00-000Z.json');
+  const oldArtifactB = path.join(artifactDir, 'library-system-health-2026-04-21T10-00-00-000Z.json');
+  fs.writeFileSync(oldArtifactA, '{}\n', 'utf8');
+  fs.writeFileSync(oldArtifactB, '{}\n', 'utf8');
+  fs.utimesSync(oldArtifactA, new Date('2026-04-20T10:00:00.000Z'), new Date('2026-04-20T10:00:00.000Z'));
+  fs.utimesSync(oldArtifactB, new Date('2026-04-21T10:00:00.000Z'), new Date('2026-04-21T10:00:00.000Z'));
+
+  globalThis.fetch = async () =>
+    new Response(
+      JSON.stringify({
+        ok: true,
+        severity: 'ok',
+        failedServices: [],
+        degradedServices: [],
+        services: {
+          main_db: { required: true, status: 'ok' },
+          bitrix_db: { required: true, status: 'ok' },
+          ai_integration: { required: true, status: 'ok' },
+          analysis_score_sync: { required: false, status: 'ok' },
+        },
+      }),
+      {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+  try {
+    const summary = await runLibrarySystemHealthcheck({
+      url: 'https://ai.irbistech.com/api/health',
+      timeoutMs: 1_000,
+      webhookUrl: null,
+      stateFile,
+      artifactDir,
+      artifactRetentionCount: 1,
+      alertOnRecovery: false,
+    });
+
+    assert.equal(summary.ok, true);
+    assert.equal(typeof summary.artifactPath, 'string');
+    assert.equal(fs.existsSync(summary.artifactPath ?? ''), true);
+    assert.equal(fs.existsSync(path.join(artifactDir, 'latest.json')), true);
+    assert.equal(fs.existsSync(oldArtifactA), false);
+    assert.equal(fs.existsSync(oldArtifactB), false);
+
+    const artifactFiles = fs
+      .readdirSync(artifactDir)
+      .filter((item) => item !== 'latest.json' && item.endsWith('.json'));
+    assert.equal(artifactFiles.length, 1);
+  } finally {
+    globalThis.fetch = originalFetch;
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
 });

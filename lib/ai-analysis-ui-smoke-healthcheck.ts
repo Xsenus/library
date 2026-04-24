@@ -1,6 +1,7 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { DEFAULT_ARTIFACT_RETENTION } from './artifact-retention';
 import { runAiAnalysisUiSmoke, type AiAnalysisUiSmokeSummary } from './ai-analysis-ui-smoke';
 
 export type AiAnalysisUiSmokeHealthState = 'healthy' | 'unhealthy';
@@ -14,6 +15,7 @@ export type RunAiAnalysisUiSmokeHealthcheckOptions = {
   requireAuth: boolean;
   timeoutMs: number;
   artifactDir: string;
+  artifactRetentionCount: number;
   webhookUrl?: string | null;
   stateFile: string;
   alertOnRecovery: boolean;
@@ -125,6 +127,7 @@ export async function runAiAnalysisUiSmokeHealthcheck({
   requireAuth,
   timeoutMs,
   artifactDir,
+  artifactRetentionCount = DEFAULT_ARTIFACT_RETENTION,
   webhookUrl,
   stateFile,
   alertOnRecovery,
@@ -138,6 +141,7 @@ export async function runAiAnalysisUiSmokeHealthcheck({
     requireAuth,
     timeoutMs,
     artifactDir,
+    artifactRetentionCount,
   });
   const previousState = await loadState(stateFile);
   const previousStatus = typeof previousState.status === 'string' ? previousState.status : null;

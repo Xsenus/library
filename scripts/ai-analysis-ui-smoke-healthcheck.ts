@@ -3,6 +3,10 @@ import {
   runAiAnalysisUiSmokeHealthcheck,
   summaryToJson,
 } from '../lib/ai-analysis-ui-smoke-healthcheck';
+import {
+  DEFAULT_ARTIFACT_RETENTION,
+  parseArtifactRetentionCount,
+} from '../lib/artifact-retention';
 import { normalizeAiAnalysisUiSmokeBaseUrl } from '../lib/ai-analysis-ui-smoke';
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:8090';
@@ -66,6 +70,7 @@ Options:
   --webhook-url <url>      Optional webhook for unhealthy/recovery notifications.
   --state-file <path>      State file for alert deduplication.
   --artifact-dir <path>    Directory for timestamped browser-smoke artifacts.
+  --artifact-retention <n> Keep the newest N timestamped artifact runs. 0 disables pruning.
   --json                   Print full JSON summary.
   --alert-on-recovery      Send recovery notification after an unhealthy state.
   --no-alert-on-recovery   Disable recovery notification.
@@ -99,6 +104,13 @@ async function main(): Promise<void> {
         ? npmConfigBool('alert_on_recovery', true)
         : envBool('AI_ANALYSIS_UI_SMOKE_HEALTH_ALERT_ON_RECOVERY', true);
   const shouldPrintJson = hasFlag(args, '--json') || npmConfigBool('json', false);
+  const artifactRetentionCount = parseArtifactRetentionCount(
+    readOption(args, '--artifact-retention') ??
+      readNpmConfig('artifact_retention') ??
+      process.env.AI_ANALYSIS_UI_SMOKE_HEALTH_ARTIFACT_RETENTION ??
+      process.env.AI_ANALYSIS_UI_SMOKE_ARTIFACT_RETENTION,
+    DEFAULT_ARTIFACT_RETENTION,
+  );
 
   const baseUrl = normalizeAiAnalysisUiSmokeBaseUrl(
     readOption(args, '--base-url') ??
@@ -135,6 +147,7 @@ async function main(): Promise<void> {
       process.env.AI_ANALYSIS_UI_SMOKE_HEALTH_STATE_FILE ??
       DEFAULT_STATE_FILE,
     alertOnRecovery,
+    artifactRetentionCount,
   });
 
   if (shouldPrintJson) {

@@ -5,6 +5,12 @@ import path from 'node:path';
 import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
 
 import {
+  DEFAULT_ARTIFACT_RETENTION,
+  isTimestampedArtifactRunDirectory,
+  parseArtifactRetentionCount,
+  pruneArtifactEntries,
+} from './artifact-retention';
+import {
   validateAcceptanceTraceCase,
   type AcceptanceCaseConfig,
   type AcceptanceCaseResult,
@@ -30,6 +36,7 @@ export type AiAnalysisUiQaRuntimeOptions = {
   capture: boolean;
   headless: boolean;
   artifactDir: string;
+  artifactRetentionCount: number;
   cases: AiAnalysisUiQaCaseConfig[];
 };
 
@@ -180,6 +187,10 @@ export function resolveAiAnalysisUiQaOptions(
     artifactDir: path.resolve(
       cwd,
       pickFirstNonEmpty(env, ['AI_ANALYSIS_UI_QA_ARTIFACT_DIR'], 'artifacts/ai-analysis-ui-qa'),
+    ),
+    artifactRetentionCount: parseArtifactRetentionCount(
+      pickFirstNonEmpty(env, ['AI_ANALYSIS_UI_QA_ARTIFACT_RETENTION']),
+      DEFAULT_ARTIFACT_RETENTION,
     ),
     cases: makeDefaultCases(env),
   };
@@ -388,6 +399,7 @@ export async function runAiAnalysisUiQa({
   capture,
   headless,
   artifactDir,
+  artifactRetentionCount,
   cases,
 }: RunAiAnalysisUiQaOptions): Promise<AiAnalysisUiQaSummary> {
   const checkedAt = nowIso();
@@ -469,6 +481,11 @@ export async function runAiAnalysisUiQa({
     return summary;
   } finally {
     writeSummary(summary);
+    await pruneArtifactEntries({
+      rootDir: artifactDir,
+      keepLatest: artifactRetentionCount,
+      matchEntry: (entry) => entry.isDirectory && isTimestampedArtifactRunDirectory(entry.name),
+    }).catch(() => undefined);
     await context?.close().catch(() => undefined);
     await browser?.close().catch(() => undefined);
   }

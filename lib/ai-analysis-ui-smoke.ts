@@ -4,6 +4,12 @@ import path from 'node:path';
 
 import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
 
+import {
+  DEFAULT_ARTIFACT_RETENTION,
+  isTimestampedArtifactRunDirectory,
+  pruneArtifactEntries,
+} from './artifact-retention';
+
 export type AiAnalysisUiSmokeMode = 'public' | 'authenticated';
 
 export type AiAnalysisUiSmokeSummary = {
@@ -31,6 +37,7 @@ export type RunAiAnalysisUiSmokeOptions = {
   headless: boolean;
   requireAuth: boolean;
   artifactDir: string;
+  artifactRetentionCount?: number | null;
   timeoutMs: number;
 };
 
@@ -168,8 +175,10 @@ export async function runAiAnalysisUiSmoke({
   headless,
   requireAuth,
   artifactDir,
+  artifactRetentionCount = DEFAULT_ARTIFACT_RETENTION,
   timeoutMs,
 }: RunAiAnalysisUiSmokeOptions): Promise<AiAnalysisUiSmokeSummary> {
+  const retentionCount = artifactRetentionCount ?? DEFAULT_ARTIFACT_RETENTION;
   const checkedAt = nowIso();
   const normalizedBaseUrl = normalizeAiAnalysisUiSmokeBaseUrl(baseUrl);
   const hasCredentials = Boolean(login && password);
@@ -282,6 +291,11 @@ export async function runAiAnalysisUiSmoke({
     return summary;
   } finally {
     await writeSummary(summary).catch(() => undefined);
+    await pruneArtifactEntries({
+      rootDir: artifactRoot,
+      keepLatest: retentionCount,
+      matchEntry: (entry) => entry.isDirectory && isTimestampedArtifactRunDirectory(entry.name),
+    }).catch(() => undefined);
     await context?.close().catch(() => undefined);
     await browser?.close().catch(() => undefined);
   }

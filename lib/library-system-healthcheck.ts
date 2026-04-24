@@ -1,6 +1,8 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
+import { DEFAULT_ARTIFACT_RETENTION, pruneArtifactEntries } from './artifact-retention';
+
 export type LibraryHealthcheckState = 'healthy' | 'unhealthy';
 
 export type LibraryHealthcheckService = {
@@ -28,6 +30,7 @@ export type LibrarySystemHealthcheckSummary = {
   failedServices: string[];
   degradedServices: string[];
   services: Record<string, LibraryHealthcheckService>;
+  artifactPath?: string | null;
 };
 
 type NormalizeOptions = {
@@ -43,9 +46,12 @@ type RunOptions = {
   webhookUrl?: string | null;
   stateFile: string;
   alertOnRecovery: boolean;
+  artifactDir?: string | null;
+  artifactRetentionCount?: number | null;
 };
 
 const SERVICE_KEYS_FOR_ALERT = ['main_db', 'bitrix_db', 'ai_integration', 'analysis_score_sync'];
+const LIBRARY_SYSTEM_HEALTH_ARTIFACT_PATTERN = /^library-system-health-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.json$/i;
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -210,7 +216,46 @@ export function summaryToJson(summary: LibrarySystemHealthcheckSummary): Record<
     failedServices: summary.failedServices,
     degradedServices: summary.degradedServices,
     services: summary.services,
+    artifactPath: summary.artifactPath ?? null,
   };
+}
+
+function sanitizeSegment(value: string): string {
+  return value.replace(/[^a-z0-9._-]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
+}
+
+async function writeArtifact(
+  artifactDir: string | null | undefined,
+  summary: LibrarySystemHealthcheckSummary,
+): Promise<string | null> {
+  if (!artifactDir) {
+    return null;
+  }
+
+  const runDir = path.resolve(artifactDir);
+  await mkdir(runDir, { recursive: true });
+  const fileName = `library-system-health-${sanitizeSegment(summary.checkedAt.replace(/[:.]/g, '-'))}.json`;
+  const artifactPath = path.join(runDir, fileName);
+  const payload = JSON.stringify(summaryToJson({ ...summary, artifactPath }), null, 2);
+  await writeFile(artifactPath, `${payload}\n`, 'utf8');
+  await writeFile(path.join(runDir, 'latest.json'), `${payload}\n`, 'utf8');
+  return artifactPath;
+}
+
+async function pruneHealthArtifacts(
+  artifactDir: string | null | undefined,
+  artifactRetentionCount: number,
+): Promise<void> {
+  if (!artifactDir) {
+    return;
+  }
+
+  await pruneArtifactEntries({
+    rootDir: path.resolve(artifactDir),
+    keepLatest: artifactRetentionCount,
+    preserveNames: ['latest.json'],
+    matchEntry: (entry) => !entry.isDirectory && LIBRARY_SYSTEM_HEALTH_ARTIFACT_PATTERN.test(entry.name),
+  });
 }
 
 export async function fetchLibrarySystemHealth(url: string, timeoutMs: number): Promise<LibrarySystemHealthcheckSummary> {
@@ -286,11 +331,17 @@ export async function runLibrarySystemHealthcheck({
   webhookUrl,
   stateFile,
   alertOnRecovery,
+  artifactDir,
+  artifactRetentionCount = DEFAULT_ARTIFACT_RETENTION,
 }: RunOptions): Promise<LibrarySystemHealthcheckSummary> {
+  const retentionCount = artifactRetentionCount ?? DEFAULT_ARTIFACT_RETENTION;
   const summary = await fetchLibrarySystemHealth(url, timeoutMs);
+  const artifactPath = await writeArtifact(artifactDir, summary);
+  await pruneHealthArtifacts(artifactDir, retentionCount).catch(() => undefined);
+  const summaryWithArtifact = artifactPath ? { ...summary, artifactPath } : summary;
   const previousState = await loadState(stateFile);
   const previousStatus = typeof previousState.status === 'string' ? previousState.status : null;
-  const currentStatus = currentLibraryHealthState(summary.ok);
+  const currentStatus = currentLibraryHealthState(summaryWithArtifact.ok);
   let webhookError: string | null = null;
 
   if (
@@ -302,7 +353,7 @@ export async function runLibrarySystemHealthcheck({
     })
   ) {
     try {
-      await sendWebhook(webhookUrl, summary);
+      await sendWebhook(webhookUrl, summaryWithArtifact);
     } catch (error) {
       webhookError = error instanceof Error ? error.message : String(error);
     }
@@ -310,22 +361,23 @@ export async function runLibrarySystemHealthcheck({
 
   await saveState(stateFile, {
     status: currentStatus,
-    checkedAt: summary.checkedAt,
-    ok: summary.ok,
-    httpStatus: summary.httpStatus,
-    severity: summary.severity,
-    reason: summary.reason,
+    checkedAt: summaryWithArtifact.checkedAt,
+    ok: summaryWithArtifact.ok,
+    httpStatus: summaryWithArtifact.httpStatus,
+    severity: summaryWithArtifact.severity,
+    reason: summaryWithArtifact.reason,
+    artifactPath: summaryWithArtifact.artifactPath ?? null,
     webhookError,
   });
 
-  if (webhookError && summary.ok) {
+  if (webhookError && summaryWithArtifact.ok) {
     return {
-      ...summary,
+      ...summaryWithArtifact,
       ok: false,
       severity: 'failed',
       reason: `webhook_error:${webhookError}`,
     };
   }
 
-  return summary;
+  return summaryWithArtifact;
 }

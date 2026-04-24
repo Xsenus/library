@@ -2,6 +2,10 @@ import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
 import {
+  DEFAULT_ARTIFACT_RETENTION,
+  pruneArtifactEntries,
+} from './artifact-retention';
+import {
   validateAcceptanceTraceCase,
   type AcceptanceCaseConfig,
   type AcceptanceCaseResult,
@@ -48,6 +52,7 @@ type RunHealthcheckOptions = RunProbeOptions & {
   stateFile: string;
   alertOnRecovery: boolean;
   artifactDir?: string | null;
+  artifactRetentionCount?: number | null;
 };
 
 export function normalizeAcceptanceBaseUrl(value: string): string {
@@ -310,6 +315,25 @@ async function writeArtifact(
   return artifactPath;
 }
 
+const ACCEPTANCE_HEALTH_ARTIFACT_PATTERN =
+  /^ai-analysis-acceptance-health-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.json$/i;
+
+async function pruneAcceptanceArtifacts(
+  artifactDir: string | null | undefined,
+  artifactRetentionCount: number,
+): Promise<void> {
+  if (!artifactDir) {
+    return;
+  }
+
+  await pruneArtifactEntries({
+    rootDir: path.resolve(artifactDir),
+    keepLatest: artifactRetentionCount,
+    preserveNames: ['latest.json'],
+    matchEntry: (entry) => !entry.isDirectory && ACCEPTANCE_HEALTH_ARTIFACT_PATTERN.test(entry.name),
+  });
+}
+
 async function sendWebhook(webhookUrl: string, summary: AiAnalysisAcceptanceHealthSummary): Promise<void> {
   const response = await fetch(webhookUrl, {
     method: 'POST',
@@ -336,9 +360,12 @@ export async function runAiAnalysisAcceptanceHealthcheck({
   stateFile,
   alertOnRecovery,
   artifactDir,
+  artifactRetentionCount = DEFAULT_ARTIFACT_RETENTION,
 }: RunHealthcheckOptions): Promise<AiAnalysisAcceptanceHealthSummary> {
+  const retentionCount = artifactRetentionCount ?? DEFAULT_ARTIFACT_RETENTION;
   const summary = await runAiAnalysisAcceptanceProbe({ baseUrl, timeoutMs, cases });
   const artifactPath = await writeArtifact(artifactDir, summary);
+  await pruneAcceptanceArtifacts(artifactDir, retentionCount).catch(() => undefined);
   const summaryWithArtifact = artifactPath ? { ...summary, artifactPath } : summary;
   const previousState = await loadState(stateFile);
   const previousStatus = typeof previousState.status === 'string' ? previousState.status : null;

@@ -3,6 +3,10 @@ import {
   runAiAnalysisUiQaHealthcheck,
   summaryToJson,
 } from '../lib/ai-analysis-ui-qa-healthcheck';
+import {
+  DEFAULT_ARTIFACT_RETENTION,
+  parseArtifactRetentionCount,
+} from '../lib/artifact-retention';
 
 const DEFAULT_BASE_URL = 'http://127.0.0.1:8090';
 const DEFAULT_TIMEOUT_MS = 60_000;
@@ -65,6 +69,7 @@ Options:
   --webhook-url <url>      Optional webhook for unhealthy/recovery notifications.
   --state-file <path>      State file for alert deduplication.
   --artifact-dir <path>    Directory for latest and timestamped JSON artifacts.
+  --artifact-retention <n> Keep the newest N artifact runs and health files. 0 disables pruning.
   --json                   Print full JSON summary.
   --alert-on-recovery      Send recovery notification after an unhealthy state.
   --no-alert-on-recovery   Disable recovery notification.
@@ -95,6 +100,13 @@ async function main(): Promise<void> {
         ? npmConfigBool('alert_on_recovery', true)
         : envBool('AI_ANALYSIS_UI_QA_HEALTH_ALERT_ON_RECOVERY', true);
   const shouldPrintJson = hasFlag(args, '--json') || npmConfigBool('json', false);
+  const artifactRetentionCount = parseArtifactRetentionCount(
+    readOption(args, '--artifact-retention') ??
+      readNpmConfig('artifact_retention') ??
+      process.env.AI_ANALYSIS_UI_QA_HEALTH_ARTIFACT_RETENTION ??
+      process.env.AI_ANALYSIS_UI_QA_ARTIFACT_RETENTION,
+    DEFAULT_ARTIFACT_RETENTION,
+  );
 
   const summary = await runAiAnalysisUiQaHealthcheck({
     baseUrl:
@@ -137,6 +149,7 @@ async function main(): Promise<void> {
       process.env.AI_ANALYSIS_UI_QA_HEALTH_STATE_FILE ??
       DEFAULT_STATE_FILE,
     alertOnRecovery,
+    artifactRetentionCount,
     okvedInn: process.env.AI_ANALYSIS_UI_QA_OKVED_INN ?? process.env.AI_ANALYSIS_ACCEPTANCE_OKVED_INN ?? null,
     twoWayInn: process.env.AI_ANALYSIS_UI_QA_2WAY_INN ?? process.env.AI_ANALYSIS_ACCEPTANCE_2WAY_INN ?? null,
     threeWayInn: process.env.AI_ANALYSIS_UI_QA_3WAY_INN ?? process.env.AI_ANALYSIS_ACCEPTANCE_3WAY_INN ?? null,

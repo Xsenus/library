@@ -3,6 +3,12 @@ import path from 'node:path';
 import process from 'node:process';
 
 import {
+  DEFAULT_ARTIFACT_RETENTION,
+  isTimestampedArtifactRunDirectory,
+  parseArtifactRetentionCount,
+  pruneArtifactEntries,
+} from '../lib/artifact-retention';
+import {
   validateAcceptanceTraceCase,
   type AcceptanceCaseConfig,
   type AcceptanceTracePayload,
@@ -109,6 +115,10 @@ async function main() {
     process.cwd(),
     process.env.AI_ANALYSIS_ACCEPTANCE_ARTIFACT_DIR || 'artifacts/ai-analysis-acceptance-qa',
   );
+  const artifactRetentionCount = parseArtifactRetentionCount(
+    process.env.AI_ANALYSIS_ACCEPTANCE_ARTIFACT_RETENTION,
+    DEFAULT_ARTIFACT_RETENTION,
+  );
   const runStamp = new Date().toISOString().replace(/[:.]/g, '-');
   const runDir = path.join(artifactRoot, sanitizeSegment(runStamp));
   const artifactPath = path.join(runDir, 'summary.json');
@@ -121,6 +131,8 @@ async function main() {
     artifactPath,
     cases: [],
   };
+
+  let failure: unknown = null;
 
   try {
     const health = await fetchJson<{ ok?: boolean; severity?: string | null }>(`${baseUrl}/api/health`);
@@ -140,13 +152,23 @@ async function main() {
     }
 
     summary.ok = true;
-    fs.writeFileSync(artifactPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
-    console.log(JSON.stringify(summary));
   } catch (error) {
     summary.error = error instanceof Error ? error.message : String(error);
-    fs.writeFileSync(artifactPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
-    throw error;
+    failure = error;
   }
+
+  fs.writeFileSync(artifactPath, `${JSON.stringify(summary, null, 2)}\n`, 'utf8');
+  await pruneArtifactEntries({
+    rootDir: artifactRoot,
+    keepLatest: artifactRetentionCount,
+    matchEntry: (entry) => entry.isDirectory && isTimestampedArtifactRunDirectory(entry.name),
+  }).catch(() => undefined);
+
+  if (failure) {
+    throw failure;
+  }
+
+  console.log(JSON.stringify(summary));
 }
 
 main().catch((error) => {

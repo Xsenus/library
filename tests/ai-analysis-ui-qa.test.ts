@@ -30,6 +30,7 @@ test('resolveAiAnalysisUiQaOptions prefers dedicated UI QA env values', () => {
   assert.equal(options.capture, false);
   assert.equal(options.headless, false);
   assert.equal(options.artifactDir, path.resolve('/workspace/library', 'custom/ui-qa'));
+  assert.equal(options.artifactRetentionCount, 14);
   assert.deepEqual(
     options.cases.map((item) => [item.name, item.inn, item.requiredSource]),
     [
@@ -49,6 +50,7 @@ test('resolveAiAnalysisUiQaOptions falls back to smoke and acceptance env values
       AI_ANALYSIS_UI_SMOKE_TIMEOUT_MS: '30000',
       AI_ANALYSIS_UI_SMOKE_CAPTURE: 'true',
       AI_ANALYSIS_UI_SMOKE_HEADLESS: 'true',
+      AI_ANALYSIS_UI_QA_ARTIFACT_RETENTION: '9',
       AI_ANALYSIS_ACCEPTANCE_OKVED_INN: '1841109992',
       AI_ANALYSIS_ACCEPTANCE_2WAY_INN: '6320002223',
       AI_ANALYSIS_ACCEPTANCE_3WAY_INN: '3444070534',
@@ -63,6 +65,7 @@ test('resolveAiAnalysisUiQaOptions falls back to smoke and acceptance env values
   assert.equal(options.capture, true);
   assert.equal(options.headless, true);
   assert.equal(options.artifactDir, path.resolve('/workspace/library', 'artifacts/ai-analysis-ui-qa'));
+  assert.equal(options.artifactRetentionCount, 9);
   assert.deepEqual(
     options.cases.map((item) => ({
       name: item.name,
@@ -88,6 +91,7 @@ test('runAiAnalysisUiQa fails with a clear error when worker credentials are abs
     capture: false,
     headless: true,
     artifactDir,
+    artifactRetentionCount: 14,
     cases: [],
   });
 

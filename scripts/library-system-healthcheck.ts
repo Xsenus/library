@@ -3,10 +3,12 @@ import {
   runLibrarySystemHealthcheck,
   summaryToJson,
 } from '../lib/library-system-healthcheck';
+import { DEFAULT_ARTIFACT_RETENTION, parseArtifactRetentionCount } from '../lib/artifact-retention';
 
 const DEFAULT_HEALTH_URL = 'http://127.0.0.1:8090/api/health';
 const DEFAULT_TIMEOUT_MS = 10_000;
 const DEFAULT_STATE_FILE = '/var/lib/library/library-system-health-state.json';
+const DEFAULT_ARTIFACT_DIR = '/var/lib/library/library-system-health';
 
 function envBool(name: string, defaultValue: boolean): boolean {
   const raw = process.env[name];
@@ -63,6 +65,8 @@ Options:
   --timeout-ms <ms>        HTTP timeout in milliseconds. Defaults to LIBRARY_SYSTEM_HEALTH_TIMEOUT_MS or ${DEFAULT_TIMEOUT_MS}
   --webhook-url <url>      Optional webhook for unhealthy/recovery notifications.
   --state-file <path>      State file for alert deduplication.
+  --artifact-dir <path>    Directory for latest and timestamped JSON artifacts.
+  --artifact-retention <n> Keep the newest N timestamped health artifacts. 0 disables pruning.
   --json                   Print full JSON summary.
   --alert-on-recovery      Send recovery notification after an unhealthy state.
   --no-alert-on-recovery   Disable recovery notification.
@@ -83,6 +87,12 @@ async function main(): Promise<void> {
       readNpmConfig('timeout_ms') ??
       process.env.LIBRARY_SYSTEM_HEALTH_TIMEOUT_MS ??
       DEFAULT_TIMEOUT_MS,
+  );
+  const artifactRetentionCount = parseArtifactRetentionCount(
+    readOption(args, '--artifact-retention') ??
+      readNpmConfig('artifact_retention') ??
+      process.env.LIBRARY_SYSTEM_HEALTH_ARTIFACT_RETENTION,
+    DEFAULT_ARTIFACT_RETENTION,
   );
   const alertOnRecovery = hasFlag(args, '--alert-on-recovery')
     ? true
@@ -112,6 +122,12 @@ async function main(): Promise<void> {
       positionalArgs[1] ??
       process.env.LIBRARY_SYSTEM_HEALTH_STATE_FILE ??
       DEFAULT_STATE_FILE,
+    artifactDir:
+      readOption(args, '--artifact-dir') ??
+      readNpmConfig('artifact_dir') ??
+      process.env.LIBRARY_SYSTEM_HEALTH_ARTIFACT_DIR ??
+      DEFAULT_ARTIFACT_DIR,
+    artifactRetentionCount,
     alertOnRecovery,
   });
 

@@ -190,7 +190,7 @@ Done in code and verified:
 Not done or intentionally deferred:
 
 - no dedicated isolated worker account is configured yet for authenticated browser monitoring; production currently uses an existing activated worker credential from the auth store
-- screenshot and acceptance artifacts are generated on demand and gitignored; there is still no committed visual acceptance baseline in the repository
+- screenshot and acceptance artifacts are generated on demand and stay outside git, but the repository now includes a committed metadata baseline workflow through `npm run ui:qa:baseline`
 - the repository now has a systemd-ready alert consumer for browser-level smoke, but a real external webhook destination is still not configured
 - the repository now has a systemd-ready alert consumer for authenticated browser QA, but a real external webhook destination is still not configured
 - the repository now has a systemd-ready alert consumer for `GET /api/health`, but a real external webhook destination is still not configured

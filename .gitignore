@@ -9,6 +9,9 @@ build/
 dist/
 cache/
 artifacts/
+docs/ai-irbistech-acceptance-report/
+docs/ai-irbistech-release-gate/
+docs/ai-irbistech-release-readiness/
 public/static/
 
 # === Logs ===

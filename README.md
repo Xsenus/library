@@ -215,9 +215,12 @@ npm run test:ui:qa
 npm run test:health:smoke
 npm run test:acceptance:qa
 npm run healthcheck -- --json
+npm run healthcheck -- --artifact-dir /var/lib/library/library-system-health --json
 npm run ui:qa:healthcheck -- --json
 npm run ui:smoke:healthcheck -- --json
 npm run acceptance:healthcheck -- --json
+npm run acceptance:suite
+npm run acceptance:report -- --library-health artifacts/library-system-health/latest.json
 ```
 
 `npm run test:ui:qa` requires worker credentials in `AI_ANALYSIS_UI_QA_LOGIN/PASSWORD`
@@ -228,6 +231,53 @@ the configured `okved/1way`, `2way`, and `3way` INN cases.
 `npm run ui:qa:healthcheck -- --json` uses the same credentials, writes timestamped plus
 `latest.json` monitoring artifacts, and supports state-file deduplication and optional
 webhook alerts for unhealthy transitions and recovery.
+
+`npm run ui:qa:baseline -- --summary <path-to-summary.json>` exports committed baseline
+metadata into `docs/ai-analysis-ui-qa-baseline/` so the release baseline stays reviewable
+in git without storing screenshot binaries.
+
+`npm run healthcheck -- --artifact-dir <path>` now writes timestamped plus `latest.json`
+artifacts for `/api/health`, so service-chain evidence is stored in the same form as the
+other monitoring jobs.
+
+`npm run acceptance:report` consolidates JSON artifacts from `ai-integration`, `library`,
+and `ai-site-analyzer` into one markdown/json acceptance report. The ai-integration block now
+also understands direct `analysis-score-sql-readiness` artifacts in addition to acceptance and
+sync-health artifacts. Each input may point either to a concrete JSON file or to a directory
+with `latest.json` / `summary.json`. If a source is not passed explicitly, the script also
+tries to auto-discover standard artifact locations in the workspace and under `/var/lib/...`.
+For automation, `--require-release-ready` fails on `fail/missing`, and `--require-clean` also
+fails on warnings.
+
+`npm run acceptance:suite` runs the local smoke/acceptance chain end-to-end, writes isolated
+per-run artifacts and logs under `artifacts/ai-irbistech-acceptance-suite/`, and then assembles
+the final acceptance report automatically. By default it is strict about release readiness,
+continues after individual task failures so the report is still produced, and keeps browser smoke
+plus browser QA in `auto` mode so those steps are skipped with an explicit blocker reason when
+Playwright Chromium is unavailable. UI QA auto-mode also skips when worker credentials are absent.
+The suite now also runs ai-integration SQL readiness directly and supports
+`--require-postgres-sql-target` when rollout verification must treat the postgres target as strict.
+It also emits an auxiliary release-readiness markdown/json report from the freshly collected suite
+artifacts, so the same run captures both acceptance semantics and operational evidence.
+
+`npm run release:gate` adds one more orchestration layer on top of the suite: it runs the
+acceptance suite, keeps the suite-level companion release-readiness report, and then optionally
+executes a separate live release-readiness audit against the configured monitoring env files. When
+explicit base URLs are not passed, the gate now auto-resolves `library`, `ai-integration`, and
+`ai-site-analyzer` base URLs from the standard monitoring env files, so a configured host can run
+the full gate with one command and get one combined markdown/json verdict under
+`docs/ai-irbistech-release-gate/`.
+
+`npm run release:readiness` builds a separate release-readiness audit from monitoring env files,
+systemd timers, webhook destinations, optional browser prerequisites, and the latest monitoring
+artifacts across `ai-integration`, `library`, and `ai-site-analyzer`. It writes markdown/json
+output under `docs/ai-irbistech-release-readiness/` and supports `--require-ready`,
+`--require-clean`, plus `--skip-systemctl` for hosts where timer probing must be deferred. For
+server-side strict gating without extra CLI forwarding, `npm run release:readiness:require-ready`
+is also available. Missing required monitoring artifacts now mark the audit as `incomplete`, and
+required artifacts with `ok=false` mark it as `not_ready`. The audit now also enforces freshness
+windows for required `latest.json` evidence, so stale artifacts are surfaced as missing release
+evidence instead of silently passing.
 
 Для production-мониторинга `/api/health` добавлены systemd-шаблоны:
 
@@ -336,9 +386,15 @@ docker compose up --build
 - `npm run backfill:equipment-hash` — заполнение `hash_equipment` для старых записей.
 - `npm run test:ui:smoke` — browser-level smoke для `/login` и AI Analysis.
 - `npm run test:ui:qa` — авторизованный browser QA capture для `okved/1way`, `2way`, `3way` с screenshot+JSON артефактами.
+- `npm run ui:qa:baseline` — экспорт committed visual-baseline metadata из `summary.json` в `docs/ai-analysis-ui-qa-baseline/`.
 - `npm run test:health:smoke` — проверка `GET /api/health` и сводки зависимостей.
 - `npm run test:acceptance:qa` — acceptance QA для live trace-семантики `1way/2way/3way/okved` с JSON-артефактом.
-- `npm run healthcheck` — standalone healthcheck `GET /api/health` с exit code, state-file и optional webhook alert.
+- `npm run acceptance:report` — сборка сводного markdown/json acceptance report из JSON-артефактов `ai-integration`, `library` и `ai-site-analyzer`, включая `analysis-score-sql-readiness`, с auto-discovery стандартных artifact-путей и gating-флагами `--require-release-ready` / `--require-clean`.
+- `npm run acceptance:suite` — единый orchestration-прогон smoke/acceptance задач с per-run artifacts/logs, preflight по Playwright Chromium и UI QA credentials, прямым ai-integration SQL readiness-check, автоматической сборкой итогового acceptance report и companion release-readiness report, по умолчанию со строгой проверкой `release-ready`.
+- `npm run release:gate` — единый итоговый gate поверх acceptance suite и отдельного live release-readiness audit с export в `docs/ai-irbistech-release-gate/`, общим verdict по readiness, и автоподхватом base URL из стандартных monitoring env-файлов, если явные `--*-base-url` не переданы.
+- `npm run release:readiness` — сводный release-readiness audit по monitoring env-файлам, systemd timers, webhook destinations, browser prerequisites и latest monitoring artifacts с export в `docs/ai-irbistech-release-readiness/` и gating-флагами `--require-ready` / `--require-clean`.
+- `npm run release:readiness:require-ready` — server-side strict запуск release-readiness audit без дополнительной передачи CLI-флагов через `npm run -- ...`.
+- `npm run healthcheck` — standalone healthcheck `GET /api/health` с exit code, state-file, `latest.json`/timestamped JSON-артефактами и optional webhook alert.
 - `npm run ui:qa:healthcheck` — standalone monitoring authenticated browser QA с exit code, state-file, screenshot/JSON-артефактами и optional webhook alert.
 - `npm run ui:smoke:healthcheck` — standalone browser-level smoke monitoring с exit code, state-file, screenshot/JSON-артефактами и optional webhook alert.
 - `npm run acceptance:healthcheck` — standalone monitoring live trace acceptance QA с exit code, state-file, JSON-артефактом и optional webhook alert.
