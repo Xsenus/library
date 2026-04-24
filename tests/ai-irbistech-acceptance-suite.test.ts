@@ -9,6 +9,8 @@ import {
   type AiIrbistechAcceptanceSuiteRunCommand,
 } from '../lib/ai-irbistech-acceptance-suite';
 
+const TEST_NOW = new Date('2026-04-24T08:10:00.000Z');
+
 function writeJson(filePath: string, payload: unknown): void {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.writeFileSync(filePath, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
@@ -211,6 +213,7 @@ test('runAiIrbistechAcceptanceSuite builds a report and auto-skips UI QA without
 
   try {
     const summary = await runAiIrbistechAcceptanceSuite({
+      now: TEST_NOW,
       cwd: libraryRoot,
       roots: {
         workspaceRoot,
@@ -273,6 +276,7 @@ test('runAiIrbistechAcceptanceSuite continues after task failure and keeps the f
 
   try {
     const summary = await runAiIrbistechAcceptanceSuite({
+      now: TEST_NOW,
       cwd: libraryRoot,
       roots: {
         workspaceRoot,
@@ -362,6 +366,7 @@ test('runAiIrbistechAcceptanceSuite auto-skips browser tasks when Playwright Chr
 
   try {
     const summary = await runAiIrbistechAcceptanceSuite({
+      now: TEST_NOW,
       cwd: libraryRoot,
       roots: {
         workspaceRoot,
@@ -427,6 +432,7 @@ test('runAiIrbistechAcceptanceSuite release-readiness respects browser modes set
 
   try {
     const summary = await runAiIrbistechAcceptanceSuite({
+      now: TEST_NOW,
       cwd: libraryRoot,
       roots: {
         workspaceRoot,
@@ -484,6 +490,7 @@ test('runAiIrbistechAcceptanceSuite forwards strict postgres SQL requirement to 
     let sqlCommand: AiIrbistechAcceptanceSuiteRunCommand | null = null;
 
     await runAiIrbistechAcceptanceSuite({
+      now: TEST_NOW,
       cwd: libraryRoot,
       roots: {
         workspaceRoot,
@@ -533,6 +540,7 @@ test('runAiIrbistechAcceptanceSuite supports split production roots and remote a
     let aiSiteCommand: AiIrbistechAcceptanceSuiteRunCommand | null = null;
 
     const summary = await runAiIrbistechAcceptanceSuite({
+      now: TEST_NOW,
       cwd: libraryRoot,
       roots: {
         libraryRoot,

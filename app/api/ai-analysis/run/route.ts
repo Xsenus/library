@@ -4,6 +4,7 @@ import { db } from '@/lib/db';
 import type { PoolClient } from 'pg';
 import { getSession } from '@/lib/auth';
 import { aiRequestId, callAiIntegration, getAiIntegrationBase } from '@/lib/ai-integration';
+import { refreshCompanyContacts } from '@/lib/company-contacts';
 import { logAiDebugEvent } from '@/lib/ai-debug';
 import {
   getForcedLaunchMode,
@@ -610,7 +611,7 @@ type StepAttempt = {
   path: (inn: string) => string;
   label: string;
   method: 'GET' | 'POST';
-  body?: (inn: string, context?: { clientId: number | null }) => Record<string, unknown>;
+  body?: (inn: string, context?: StepRunContext) => Record<string, unknown>;
 };
 
 type StepDefinition = {
@@ -641,6 +642,17 @@ type StepRunResult = {
 type StepRuntimeFlags = {
   parseSiteOkvedFallback: boolean;
   analyzeJsonOkvedFallback: boolean;
+};
+
+type AiAnalysisContactHints = {
+  parseDomains: string[];
+  parseEmails: string[];
+};
+
+type StepRunContext = {
+  clientId: number | null;
+  parseDomains: string[];
+  parseEmails: string[];
 };
 
 type PipelineFullResponsePayload = {
@@ -681,6 +693,57 @@ function normalizeStringList(raw: unknown): string[] {
     values.push(value);
   }
   return values;
+}
+
+function normalizeHintStringList(raw: unknown): string[] {
+  if (Array.isArray(raw)) return normalizeStringList(raw);
+  if (typeof raw === 'string') return normalizeStringList(raw.split(/[\s,;]+/));
+  return [];
+}
+
+function emptyContactHints(): AiAnalysisContactHints {
+  return { parseDomains: [], parseEmails: [] };
+}
+
+function normalizeContactHints(raw: unknown): AiAnalysisContactHints {
+  if (!raw || typeof raw !== 'object') return emptyContactHints();
+  const item = raw as Record<string, unknown>;
+  return {
+    parseDomains: normalizeHintStringList(item.parse_domains ?? item.parseDomains),
+    parseEmails: normalizeHintStringList(item.parse_emails ?? item.parseEmails),
+  };
+}
+
+function contactHintsToPayload(
+  hintsByInn: Map<string, AiAnalysisContactHints>,
+): Record<string, { parse_domains?: string[]; parse_emails?: string[] }> {
+  const payload: Record<string, { parse_domains?: string[]; parse_emails?: string[] }> = {};
+  hintsByInn.forEach((hints, inn) => {
+    const parseDomains = normalizeHintStringList(hints.parseDomains);
+    const parseEmails = normalizeHintStringList(hints.parseEmails);
+    if (!parseDomains.length && !parseEmails.length) return;
+    payload[inn] = {
+      ...(parseDomains.length ? { parse_domains: parseDomains } : {}),
+      ...(parseEmails.length ? { parse_emails: parseEmails } : {}),
+    };
+  });
+  return payload;
+}
+
+function getContactHintsForInn(raw: unknown, inn: string): AiAnalysisContactHints {
+  if (!raw || typeof raw !== 'object') return emptyContactHints();
+  return normalizeContactHints((raw as Record<string, unknown>)[inn]);
+}
+
+function applyContactHintsToBody(
+  body: Record<string, unknown>,
+  context?: Pick<StepRunContext, 'parseDomains' | 'parseEmails'>,
+): Record<string, unknown> {
+  const parseDomains = normalizeHintStringList(context?.parseDomains);
+  const parseEmails = normalizeHintStringList(context?.parseEmails);
+  if (parseDomains.length) body.parse_domains = parseDomains;
+  if (parseEmails.length) body.parse_emails = parseEmails;
+  return body;
 }
 
 function inferCompletedPipelineSteps(payload: PipelineFullResponsePayload): string[] {
@@ -784,7 +847,7 @@ const STEP_DEFINITIONS: Record<StepKey, StepDefinition> = {
       path: () => '/v1/parse-site',
       label: 'Парсинг сайта',
       method: 'POST',
-      body: (inn) => ({ inn }),
+      body: (inn, context) => applyContactHintsToBody({ inn }, context),
     },
     fallbacks: [
       {
@@ -859,6 +922,43 @@ async function safeLog(entry: Parameters<typeof logAiDebugEvent>[0]) {
   } catch (error) {
     console.warn('AI debug log skipped', error);
   }
+}
+
+async function resolveAiAnalysisContactHints(inns: string[]): Promise<Map<string, AiAnalysisContactHints>> {
+  const hintsByInn = new Map<string, AiAnalysisContactHints>();
+  if (!inns.length) return hintsByInn;
+
+  try {
+    const contacts = await refreshCompanyContacts(inns, { maxAgeMinutes: 24 * 60 });
+    for (const item of contacts.items ?? []) {
+      const parseDomains = normalizeHintStringList(item?.webSites);
+      const parseEmails = normalizeHintStringList(item?.emails);
+      if (!parseDomains.length && !parseEmails.length) continue;
+      hintsByInn.set(item.inn, { parseDomains, parseEmails });
+    }
+
+    if (hintsByInn.size) {
+      await safeLog({
+        type: 'notification',
+        source: 'library',
+        message: 'Сайты и email из карточек компаний переданы в AI parse-site',
+        payload: {
+          count: hintsByInn.size,
+          hints: contactHintsToPayload(hintsByInn),
+        },
+      });
+    }
+  } catch (error) {
+    console.warn('Failed to resolve AI analysis contact hints', error);
+    await safeLog({
+      type: 'notification',
+      source: 'library',
+      message: 'Не удалось подготовить сайты из карточек компаний для AI parse-site, запуск продолжится по данным backend',
+      payload: { error: error instanceof Error ? error.message : String(error) },
+    });
+  }
+
+  return hintsByInn;
 }
 
 async function ensureIntegrationHealthy(context: {
@@ -1104,6 +1204,7 @@ async function runStep(
     parseSiteOkvedFallback: false,
     analyzeJsonOkvedFallback: false,
   },
+  contactHints: AiAnalysisContactHints = emptyContactHints(),
 ): Promise<StepRunResult> {
   const definition = STEP_DEFINITIONS[step];
   const attempts: StepAttempt[] = [definition.primary, ...(definition.fallbacks ?? [])];
@@ -1137,7 +1238,11 @@ async function runStep(
         const path = attempt.path(inn);
         const init: RequestInit & { timeoutMs?: number } = { method: attempt.method };
 
-        const requestBody = attempt.body?.(inn, { clientId });
+        const requestBody = attempt.body?.(inn, {
+          clientId,
+          parseDomains: contactHints.parseDomains,
+          parseEmails: contactHints.parseEmails,
+        });
         if (requestBody) {
           init.body = JSON.stringify(requestBody);
         }
@@ -1513,7 +1618,11 @@ async function consumeStopSignals(existing?: Set<string>) {
   return { stopSet, freshStops: fresh };
 }
 
-async function runFullPipeline(inn: string, timeoutMs: number): Promise<RunResult> {
+async function runFullPipeline(
+  inn: string,
+  timeoutMs: number,
+  contactHints: AiAnalysisContactHints = emptyContactHints(),
+): Promise<RunResult> {
   let lastStatus = 0;
   let lastError: string | undefined;
   let lastOutcome: RunResult['outcome'];
@@ -1533,18 +1642,19 @@ async function runFullPipeline(inn: string, timeoutMs: number): Promise<RunResul
       lastError = health.error;
     } else {
       const requestId = aiRequestId();
+      const requestBody = applyContactHintsToBody({ inn }, contactHints);
       await safeLog({
         type: 'request',
         source: 'ai-integration',
         requestId,
         companyId: inn,
         message: `Пуск пайплайна через /v1/pipeline/full, попытка ${attemptNo}/${MAX_STEP_ATTEMPTS}`,
-        payload: { path: '/v1/pipeline/full', body: { inn } },
+        payload: { path: '/v1/pipeline/full', body: requestBody },
       });
 
       const res = await callAiIntegration(`/v1/pipeline/full`, {
         method: 'POST',
-        body: JSON.stringify({ inn }),
+        body: JSON.stringify(requestBody),
         timeoutMs,
       });
 
@@ -1661,9 +1771,15 @@ async function processQueue(lockClient: PoolClient) {
       completed_steps?: unknown;
       parse_site_okved_fallback?: unknown;
       analyze_json_okved_fallback?: unknown;
+      contact_hints?: unknown;
     };
     const modeFromPayload: 'full' | 'steps' = payload.mode === 'full' ? 'full' : 'steps';
     const stepsFromPayload = modeFromPayload === 'steps' ? normalizeSteps(payload.steps) : null;
+    let contactHints = getContactHintsForInn(payload.contact_hints, inn);
+    if (!contactHints.parseDomains.length && !contactHints.parseEmails.length) {
+      const freshHints = await resolveAiAnalysisContactHints([inn]);
+      contactHints = freshHints.get(inn) ?? contactHints;
+    }
     const deferCount = Number.isFinite((payload as any).defer_count)
       ? Number((payload as any).defer_count)
       : 0;
@@ -1738,7 +1854,7 @@ async function processQueue(lockClient: PoolClient) {
           if (completedSteps.has(step)) {
             continue;
           }
-          const res = await runStep(inn, step, stepTimeoutMs, runtimeFlags);
+          const res = await runStep(inn, step, stepTimeoutMs, runtimeFlags, contactHints);
           stepResults.push(res);
           if (res.ok) {
             completedSteps.add(step);
@@ -1768,7 +1884,7 @@ async function processQueue(lockClient: PoolClient) {
         };
       }
 
-      return runFullPipeline(inn, overallTimeoutMs);
+      return runFullPipeline(inn, overallTimeoutMs, contactHints);
     };
 
     let timedResult: RunResult;
@@ -2045,6 +2161,8 @@ export async function POST(request: NextRequest) {
 
     const session = await getSession();
     const requestedBy = session?.login ?? session?.id?.toString() ?? null;
+    const contactHintsByInn = await resolveAiAnalysisContactHints(inns);
+    const contactHintsPayload = contactHintsToPayload(contactHintsByInn);
 
     const payload: Record<string, unknown> = {
       ...payloadRaw,
@@ -2057,6 +2175,7 @@ export async function POST(request: NextRequest) {
       completed_steps: [],
       parse_site_okved_fallback: false,
       analyze_json_okved_fallback: false,
+      contact_hints: contactHintsPayload,
     };
     const queuePriority = resolveAiAnalysisQueuePriority(source, inns.length);
 
@@ -2069,16 +2188,17 @@ export async function POST(request: NextRequest) {
       const inn = inns[0];
       const step = steps![0]!;
       const stepTimeoutMs = getStepTimeoutMs();
+      const contactHints = contactHintsByInn.get(inn) ?? emptyContactHints();
 
       await safeLog({
         type: 'notification',
         source: 'ai-integration',
         companyId: inn,
         message: 'Запуск одиночного шага для отладки (без очереди)',
-        payload: { step, requestedBy, source },
+        payload: { step, requestedBy, source, contactHints },
       });
 
-      const runResult = await runStep(inn, step, stepTimeoutMs);
+      const runResult = await runStep(inn, step, stepTimeoutMs, undefined, contactHints);
 
       await safeLog({
         type: runResult.ok ? 'response' : 'error',
@@ -2142,19 +2262,29 @@ export async function POST(request: NextRequest) {
       type: 'notification',
       source: 'ai-integration',
       message: 'Компании поставлены в очередь на AI-анализ',
-      payload: { inns, requestedBy, mode, steps, source, queuePriority },
+      payload: { inns, requestedBy, mode, steps, source, queuePriority, contactHints: contactHintsPayload },
     });
 
     // Немедленно помечаем компании как поставленные в очередь, чтобы UI не ждал долгий запрос
     await markQueuedMany(inns);
 
     const sampleInn = inns[0] ?? '{inn}';
+    const sampleContactHints = contactHintsByInn.get(sampleInn) ?? emptyContactHints();
+    const sampleStepContext: StepRunContext = {
+      clientId: null,
+      parseDomains: sampleContactHints.parseDomains,
+      parseEmails: sampleContactHints.parseEmails,
+    };
     const stepPlan =
       mode === 'full'
         ? [
             {
               label: 'Полный пайплайн',
-              request: { method: 'POST' as const, path: '/v1/pipeline/full', body: { inn: sampleInn } },
+              request: {
+                method: 'POST' as const,
+                path: '/v1/pipeline/full',
+                body: applyContactHintsToBody({ inn: sampleInn }, sampleContactHints),
+              },
               fallbacks: [],
             },
           ]
@@ -2166,12 +2296,12 @@ export async function POST(request: NextRequest) {
               request: {
                 method: def.primary.method,
                 path: def.primary.path(sampleInn),
-                body: def.primary.body?.(sampleInn),
+                body: def.primary.body?.(sampleInn, sampleStepContext),
               },
               fallbacks: (def.fallbacks ?? []).map((fb) => ({
                 method: fb.method,
                 path: fb.path(sampleInn),
-                body: fb.body?.(sampleInn),
+                body: fb.body?.(sampleInn, sampleStepContext),
               })),
             };
           });
