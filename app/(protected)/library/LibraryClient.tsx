@@ -40,6 +40,7 @@ import AiCompanyAnalysisTab from '@/components/library/ai-company-analysis-tab';
 import AiDebugTab from '@/components/library/ai-debug-tab';
 import HistoryTab from '@/components/library/history-tab';
 import SquareImgButton from '@/components/library/square-img-button';
+import CompaniesMapTab from '@/components/library/companies-map-tab';
 
 interface ListState<T> {
   items: T[];
@@ -62,13 +63,18 @@ export default function LibraryPage() {
     | 'history'
     | 'cleanscore'
     | 'okved'
+    | 'companiesmap'
     | 'aianalysis'
     | 'aidebug';
   const initialTab = (searchParams.get('tab') ?? 'library') as
     | LibraryTab;
 
   const [tab, setTab] = useState<LibraryTab>(
-    initialTab === 'cleanscore' || initialTab === 'okved' || initialTab === 'aianalysis' || initialTab === 'aidebug'
+    initialTab === 'cleanscore' ||
+      initialTab === 'okved' ||
+      initialTab === 'companiesmap' ||
+      initialTab === 'aianalysis' ||
+      initialTab === 'aidebug'
       ? 'library'
       : initialTab,
   );
@@ -115,7 +121,12 @@ export default function LibraryPage() {
       | LibraryTab;
 
     setTab(
-      !isWorker && (tSafe === 'cleanscore' || tSafe === 'okved' || tSafe === 'aianalysis' || tSafe === 'aidebug')
+      !isWorker &&
+        (tSafe === 'cleanscore' ||
+          tSafe === 'okved' ||
+          tSafe === 'companiesmap' ||
+          tSafe === 'aianalysis' ||
+          tSafe === 'aidebug')
         ? 'library'
         : tSafe,
     );
@@ -675,7 +686,14 @@ export default function LibraryPage() {
   }, [autoSelectEquipment, equipmentState.loading, equipmentState.items]); // eslint-disable-line
 
   useEffect(() => {
-    if (!isWorker && (tab === 'cleanscore' || tab === 'okved' || tab === 'aianalysis' || tab === 'aidebug')) {
+    if (
+      !isWorker &&
+      (tab === 'cleanscore' ||
+        tab === 'okved' ||
+        tab === 'companiesmap' ||
+        tab === 'aianalysis' ||
+        tab === 'aidebug')
+    ) {
       setTab('library');
     }
   }, [isWorker, tab]);
@@ -938,13 +956,22 @@ export default function LibraryPage() {
           <Tabs
             value={tab}
             onValueChange={(v) => {
-              if ((v === 'cleanscore' || v === 'okved' || v === 'aianalysis' || v === 'aidebug') && !isWorker) return;
+              if (
+                (v === 'cleanscore' ||
+                  v === 'okved' ||
+                  v === 'companiesmap' ||
+                  v === 'aianalysis' ||
+                  v === 'aidebug') &&
+                !isWorker
+              ) {
+                return;
+              }
               setTab(v as any);
               router.replace(getTabHref(v as LibraryTab));
             }}
             className="w-full">
             <div className="pb-1 md:pb-0">
-              <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1 sm:grid-cols-4 md:grid-cols-7">
+              <div className="grid grid-cols-2 gap-1 rounded-lg bg-muted p-1 sm:grid-cols-4 lg:grid-cols-8">
               <TabsList className="contents">
                 <TabsTrigger
                   value="library"
@@ -1020,6 +1047,23 @@ export default function LibraryPage() {
                     shadow-none transition
                   ">
                   База компаний
+                </TabsTrigger>
+
+                <TabsTrigger
+                  value="companiesmap"
+                  disabled={!isWorker}
+                  onClick={(event) => handleOpenTabInNewPage(event, 'companiesmap', !isWorker)}
+                  onAuxClick={(event) => handleOpenTabInNewPage(event, 'companiesmap', !isWorker)}
+                  title={!isWorker ? 'Доступно только сотрудникам' : undefined}
+                  className="
+                    h-auto min-h-10 w-full justify-center rounded-md px-3 py-2 text-center text-sm leading-tight
+                    border border-transparent
+                    data-[state=active]:bg-background data-[state=active]:border-border
+                    data-[state=inactive]:text-muted-foreground data-[state=active]:text-foreground
+                    disabled:opacity-50 disabled:cursor-not-allowed
+                    shadow-none transition
+                  ">
+                  Компании на карте
                 </TabsTrigger>
 
                 <TabsTrigger
@@ -1566,6 +1610,12 @@ export default function LibraryPage() {
                 <div className="py-4">
                   <OkvedTab />
                 </div>
+              </TabsContent>
+            )}
+
+            {isWorker && (
+              <TabsContent value="companiesmap" className="mt-0">
+                <CompaniesMapTab />
               </TabsContent>
             )}
 
