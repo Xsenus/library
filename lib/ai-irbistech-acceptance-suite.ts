@@ -775,7 +775,7 @@ function findTaskArtifactPath(
   if (!task?.artifactInputPath) {
     throw new Error(`artifact input path is missing for suite task ${taskId}`);
   }
-  return task.artifactInputPath;
+  return task.artifactResolvedPath ?? task.artifactInputPath;
 }
 
 function buildSyntheticReleaseReadinessEnvFiles(

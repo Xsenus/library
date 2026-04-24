@@ -287,7 +287,11 @@ test('runAiIrbistechReleaseGate auto-resolves suite base URLs from monitoring en
     );
     writeMarkdown(
       path.join(envDir, 'library.env'),
-      ['AI_ANALYSIS_ACCEPTANCE_HEALTH_BASE_URL=http://127.0.0.1:8090'].join('\n'),
+      [
+        'AI_ANALYSIS_ACCEPTANCE_HEALTH_BASE_URL=http://127.0.0.1:8090',
+        'AI_ANALYSIS_UI_QA_LOGIN=worker',
+        'AI_ANALYSIS_UI_QA_PASSWORD=secret',
+      ].join('\n'),
     );
     writeMarkdown(
       path.join(envDir, 'ai-site-analyzer.env'),
@@ -366,6 +370,8 @@ test('runAiIrbistechReleaseGate auto-resolves suite base URLs from monitoring en
     assert.equal(receivedOptions?.libraryBaseUrl, 'http://127.0.0.1:8090');
     assert.equal(receivedOptions?.aiIntegrationBaseUrl, 'http://127.0.0.1:8000');
     assert.equal(receivedOptions?.aiSiteAnalyzerBaseUrl, 'http://127.0.0.1:8123');
+    assert.equal((receivedOptions?.env as NodeJS.ProcessEnv | undefined)?.AI_ANALYSIS_UI_QA_LOGIN, 'worker');
+    assert.equal((receivedOptions?.env as NodeJS.ProcessEnv | undefined)?.AI_ANALYSIS_UI_QA_PASSWORD, 'secret');
     assert.equal(summary.resolvedInputs.libraryBaseUrl, 'http://127.0.0.1:8090');
     assert.equal(summary.resolvedInputs.aiIntegrationBaseUrl, 'http://127.0.0.1:8000');
     assert.equal(summary.resolvedInputs.aiSiteAnalyzerBaseUrl, 'http://127.0.0.1:8123');

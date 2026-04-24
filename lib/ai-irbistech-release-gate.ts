@@ -227,6 +227,28 @@ function resolveAiIrbistechReleaseGateInputs(
   };
 }
 
+function buildReleaseGateSuiteEnv(
+  baseEnv: NodeJS.ProcessEnv,
+  resolvedInputs: AiIrbistechReleaseGateResolvedInputs,
+): NodeJS.ProcessEnv {
+  const envFromFiles = [
+    resolvedInputs.aiIntegrationEnvFile,
+    resolvedInputs.libraryEnvFile,
+    resolvedInputs.aiSiteAnalyzerEnvFile,
+  ].reduce<Record<string, string>>((acc, envFile) => {
+    const loaded = loadAiIrbistechReleaseReadinessEnvFile(envFile);
+    return {
+      ...acc,
+      ...loaded.values,
+    };
+  }, {});
+
+  return {
+    ...envFromFiles,
+    ...baseEnv,
+  };
+}
+
 function resolveCombinedStatus(
   statuses: AiIrbistechReleaseReadinessOverallStatus[],
 ): AiIrbistechReleaseReadinessOverallStatus {
@@ -323,6 +345,7 @@ export async function runAiIrbistechReleaseGate(
   const outputDir = path.resolve(cwd, options.outputDir ?? DEFAULT_OUTPUT_DIR);
   fs.mkdirSync(outputDir, { recursive: true });
   const resolvedInputs = resolveAiIrbistechReleaseGateInputs(cwd, options);
+  const suiteEnv = buildReleaseGateSuiteEnv(options.env ?? process.env, resolvedInputs);
 
   const suiteRunner = options.acceptanceSuiteRunner ?? runAiIrbistechAcceptanceSuite;
   const liveReleaseReadinessBuilder =
@@ -352,7 +375,7 @@ export async function runAiIrbistechReleaseGate(
     uiQaMode: options.uiQaMode,
     requireReleaseReady: false,
     requireClean: false,
-    env: options.env,
+    env: suiteEnv,
     now: options.now,
   });
 
