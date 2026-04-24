@@ -1498,6 +1498,10 @@ export default function AiCompanyAnalysisTab() {
     if (Number.isFinite(activeSummary.total)) return Math.max(0, Math.floor(activeSummary.total));
     return Math.max(0, Math.floor((activeSummary.running ?? 0) + (activeSummary.queued ?? 0)));
   }, [activeSummary]);
+  const queuedTotal = useMemo(() => {
+    const value = activeSummary?.queued ?? queueSummary?.queued ?? 0;
+    return Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  }, [activeSummary?.queued, queueSummary?.queued]);
 
   const activeCount = useMemo(
     () =>
@@ -1624,6 +1628,7 @@ export default function AiCompanyAnalysisTab() {
     () => integrationHealth != null && !integrationHealth.available,
     [integrationHealth],
   );
+  const integrationAddressTitle = integrationHealth?.base ?? integrationHealth?.detail ?? integrationHost ?? undefined;
 
   const isRefreshing = loading || isPending;
   const okvedSelectValue = okvedCode ?? '__all__';
@@ -3631,12 +3636,38 @@ export default function AiCompanyAnalysisTab() {
     <TooltipProvider>
       <div className="space-y-4 py-4">
         <Card className="border border-border/60 shadow-sm">
-          <CardHeader className="space-y-4 border-b bg-muted/30 p-4">
-            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="space-y-1">
+          <CardHeader className="space-y-3 border-b bg-muted/30 p-4">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex min-w-0 flex-wrap items-center gap-3">
                 <CardTitle className="text-lg font-semibold tracking-tight">
                   AI-анализ компаний
                 </CardTitle>
+                <Tabs
+                  value={companyListMode}
+                  onValueChange={(value) => {
+                    const nextMode = value === 'analyzed' ? 'analyzed' : 'all';
+                    setCompanyListMode(nextMode);
+                    setPage(1);
+                  }}
+                  className="w-full max-w-2xl sm:min-w-[360px] sm:flex-1"
+                >
+                  <TabsList className="grid h-9 w-full grid-cols-2 rounded-lg bg-muted p-1">
+                    <TabsTrigger
+                      data-testid="ai-analysis-subtab-all"
+                      value="all"
+                      className="h-7 rounded-md px-3 text-sm"
+                    >
+                      Весь перечень компаний и управление
+                    </TabsTrigger>
+                    <TabsTrigger
+                      data-testid="ai-analysis-subtab-analyzed"
+                      value="analyzed"
+                      className="h-7 rounded-md px-3 text-sm"
+                    >
+                      Проанализированные компании
+                    </TabsTrigger>
+                  </TabsList>
+                </Tabs>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground lg:justify-end">
                 {stopSignalAt && (
@@ -3648,24 +3679,17 @@ export default function AiCompanyAnalysisTab() {
                   </Badge>
                 )}
                 <div className="flex flex-wrap items-center gap-2 text-sm text-foreground">
-                  <div className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
-                    <span className="text-muted-foreground">Всего компаний</span>
+                  <div className="flex h-9 items-center gap-1 rounded-md border bg-background px-2">
+                    <span className="text-muted-foreground">Компаний</span>
                     <span className="font-semibold">{total.toLocaleString('ru-RU')}</span>
                   </div>
-                  <div className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
-                    <span className="text-muted-foreground">Активных сейчас</span>
-                    <span className="flex items-center gap-1 font-semibold">
-                      {activeTotal.toLocaleString('ru-RU')}
-                      {activeTotal > 0 && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-1 rounded-md border bg-background px-2 py-1">
+                  <div className="flex h-9 items-center gap-1 rounded-md border bg-background px-2">
                     <span className="text-muted-foreground">API:</span>
                     <span className="font-semibold">{billingBalanceLabel}</span>
                   </div>
                 </div>
                 {(lastLoadedAt || integrationHost) && (
-                  <div className="flex items-center gap-2 rounded-md border bg-background px-3 py-1.5 text-sm text-foreground">
+                  <div className="flex h-9 items-center gap-2 rounded-md border bg-background px-3 text-sm text-foreground">
                     <span className="text-muted-foreground">Обновлено:</span>
                     <span className="font-semibold">
                       {lastLoadedAt
@@ -3682,68 +3706,26 @@ export default function AiCompanyAnalysisTab() {
                           'rounded-md px-2 py-1 text-xs font-semibold text-background',
                           integrationHealth?.available ? 'bg-emerald-500' : 'bg-destructive',
                         )}
-                        title={integrationHealth?.detail ?? undefined}
+                        title={integrationAddressTitle}
                       >
-                        IP {integrationHost}
+                        {integrationHost}
                       </span>
                     )}
                   </div>
                 )}
               </div>
             </div>
-            <Tabs
-              value={companyListMode}
-              onValueChange={(value) => {
-                const nextMode = value === 'analyzed' ? 'analyzed' : 'all';
-                setCompanyListMode(nextMode);
-                setPage(1);
-              }}
-              className="w-full"
-            >
-              <TabsList className="grid w-full max-w-2xl grid-cols-1 rounded-lg bg-muted p-1 sm:grid-cols-2">
-                <TabsTrigger
-                  data-testid="ai-analysis-subtab-all"
-                  value="all"
-                  className="rounded-md px-3 py-2 text-sm"
-                >
-                  Весь перечень компаний и управление
-                </TabsTrigger>
-                <TabsTrigger
-                  data-testid="ai-analysis-subtab-analyzed"
-                  value="analyzed"
-                  className="rounded-md px-3 py-2 text-sm"
-                >
-                  Проанализированные компании
-                </TabsTrigger>
-              </TabsList>
-            </Tabs>
-            <div className="grid gap-2 lg:grid-cols-[minmax(280px,420px),1fr] lg:items-end">
-              <div className="space-y-1">
-                <Label htmlFor="ai-analysis-company-search" className="text-[11px] uppercase text-muted-foreground">
-                  Поиск
-                </Label>
+            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
                 <Input
                   id="ai-analysis-company-search"
                   data-testid="ai-analysis-company-search"
-                  className="h-9 text-sm"
+                  aria-label="Поиск"
+                  className="h-9 w-full text-sm sm:w-[360px]"
                   placeholder="Поиск по названию компании или ИНН"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
                 />
-              </div>
-              {companyListMode === 'analyzed' && (
-                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
-                  <Badge variant="secondary" className="font-normal">
-                    Только проанализированные
-                  </Badge>
-                  <Badge variant="outline" className="font-normal">
-                    Сортировка: по последнему завершению
-                  </Badge>
-                </div>
-              )}
-            </div>
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex flex-wrap items-center gap-2">
                 <Button
                   data-testid="ai-analysis-filters-button"
                   type="button"
@@ -3764,7 +3746,7 @@ export default function AiCompanyAnalysisTab() {
                     Сбросить
                   </Button>
                 )}
-                <div className="flex items-center gap-2 rounded-lg border bg-background px-3 py-1.5">
+                <div className="flex h-9 items-center gap-2 rounded-lg border bg-background px-3">
                   <span className="text-xs text-muted-foreground">Сортировка</span>
                   <Select
                     value={companyListMode === 'analyzed' ? 'analysis_finished_desc' : sortBy}
@@ -3775,7 +3757,7 @@ export default function AiCompanyAnalysisTab() {
                     }}
                   >
                     <SelectTrigger
-                      className="h-8 w-[260px] border-0 bg-transparent px-0 text-sm shadow-none focus:ring-0"
+                      className="h-9 w-[260px] border-0 bg-transparent px-0 text-sm shadow-none focus:ring-0"
                       disabled={companyListMode === 'analyzed'}
                     >
                       <SelectValue />
@@ -3795,11 +3777,13 @@ export default function AiCompanyAnalysisTab() {
                 <TooltipTrigger asChild>
                     <Button
                       type="button"
-                      className="h-9"
+                      size="icon"
+                      className="h-9 w-9"
                       onClick={handleRunSelected}
                       disabled={bulkLoading || selected.size === 0 || integrationOffline}
+                      aria-label="Запустить выбранные"
                     >
-                      {bulkLoading ? 'Запуск…' : 'Запустить выбранные'}
+                      {bulkLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
                     </Button>
                   </TooltipTrigger>
                 <TooltipContent side="bottom">
@@ -3844,7 +3828,8 @@ export default function AiCompanyAnalysisTab() {
                       className="h-9"
                       onClick={() => setQueueDialogOpen(true)}
                     >
-                      <ClipboardList className="mr-2 h-4 w-4" /> Очередь
+                      <ClipboardList className="mr-2 h-4 w-4" />
+                      Очередь{queuedTotal > 0 ? ` (${queuedTotal.toLocaleString('ru-RU')})` : ''}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom">Посмотреть и управлять очередью</TooltipContent>
@@ -3854,11 +3839,13 @@ export default function AiCompanyAnalysisTab() {
                   <Button
                     type="button"
                     variant="destructive"
-                      className="h-9"
+                      size="icon"
+                      className="h-9 w-9"
                       onClick={handleStop}
                       disabled={stopLoading || (!isAnyActive && !autoRefresh)}
+                      aria-label="Остановить анализ"
                     >
-                      {stopLoading ? 'Остановка…' : 'Остановить анализ'}
+                      {stopLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
                     </Button>
                   </TooltipTrigger>
                   <TooltipContent side="bottom">

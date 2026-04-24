@@ -16,6 +16,18 @@ test('AI analysis companies tab exposes nested list modes and visible search', (
   assert.match(componentSource, /id="ai-analysis-company-search"/);
 });
 
+test('AI analysis company header keeps controls compact', () => {
+  assert.doesNotMatch(componentSource, /Активных сейчас/);
+  assert.doesNotMatch(componentSource, /Всего компаний/);
+  assert.match(componentSource, />Компаний</);
+  assert.match(componentSource, /title=\{integrationAddressTitle\}/);
+  assert.match(componentSource, /Очередь\{queuedTotal > 0/);
+  assert.match(componentSource, /aria-label="Запустить выбранные"/);
+  assert.match(componentSource, /<Play className="h-4 w-4" \/>/);
+  assert.match(componentSource, /aria-label="Остановить анализ"/);
+  assert.match(componentSource, /<Square className="h-4 w-4" \/>/);
+});
+
 test('analyzed companies mode requests successful analyses sorted by finish history', () => {
   assert.match(
     componentSource,
