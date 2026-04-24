@@ -48,8 +48,7 @@ declare global {
 }
 
 const MAP_SCRIPT_ID = 'yandex-maps-2-1-api';
-const DEFAULT_YANDEX_MAPS_API_KEY = '4bcbdf72-b059-4f3e-af22-ebde00d7bdde';
-const YANDEX_MAPS_API_KEY = process.env.NEXT_PUBLIC_YANDEX_MAPS_API_KEY || DEFAULT_YANDEX_MAPS_API_KEY;
+const YANDEX_MAPS_API_KEY = process.env.NEXT_PUBLIC_YANDEX_MAPS_API_KEY || '';
 
 let ymapsPromise: Promise<YMapsApi> | null = null;
 
