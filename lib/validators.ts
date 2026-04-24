@@ -237,6 +237,7 @@ export type OkvedCompany = z.infer<typeof okvedCompanySchema>;
 // Query for okved companies
 export const okvedCompaniesQuerySchema = paginationSchema.extend({
   okved: z.string().optional().default(''),
+  responsible: z.string().optional().default(''),
 });
 export type OkvedCompaniesQuery = z.infer<typeof okvedCompaniesQuerySchema>;
 

@@ -4,6 +4,7 @@ import { dbBitrix } from '@/lib/db-bitrix';
 import { db } from '@/lib/db';
 import { okvedCompaniesQuerySchema, okvedCompanySchema } from '@/lib/validators';
 import { requireApiAuth } from '@/lib/api-auth';
+import { ensureCompanyMetaTable } from '@/lib/b24-meta';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -42,10 +43,12 @@ export async function GET(request: NextRequest) {
       okved: searchParams.get('okved') ?? '',
       page: searchParams.get('page') ?? undefined,
       pageSize: searchParams.get('pageSize') ?? undefined,
+      responsible: searchParams.get('responsible') ?? undefined,
       query: undefined,
     });
 
     const q = (searchParams.get('q') ?? '').trim();
+    const responsible = (base.responsible ?? '').trim();
     const sortParam = (searchParams.get('sort') ?? 'revenue_desc') as
       | 'revenue_desc'
       | 'revenue_asc';
@@ -145,6 +148,37 @@ export async function GET(request: NextRequest) {
     if (q) {
       where.push(`(d.short_name ILIKE $${i} OR d.inn ILIKE $${i})`);
       args.push(`%${q}%`);
+      i++;
+    }
+
+    // ---------- Фильтр по ответственному ----------
+    if (responsible) {
+      await ensureCompanyMetaTable();
+
+      const { rows: responsibleRows } = await db.query<{ inn: string }>(
+        `
+          SELECT inn
+          FROM b24_company_meta
+          WHERE COALESCE(assigned_name, '') ILIKE $1
+        `,
+        [`%${responsible}%`],
+      );
+
+      const responsibleInns = responsibleRows
+        .map((row) => String(row.inn ?? '').trim())
+        .filter(Boolean);
+
+      if (!responsibleInns.length) {
+        return NextResponse.json({
+          items: [],
+          total: 0,
+          page: base.page,
+          pageSize: base.pageSize,
+        });
+      }
+
+      where.push(`d.inn = ANY($${i}::text[])`);
+      args.push(responsibleInns);
       i++;
     }
 

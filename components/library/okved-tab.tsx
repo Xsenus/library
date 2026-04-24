@@ -15,6 +15,7 @@ type SortKey = 'revenue_desc' | 'revenue_asc';
 type IndustryItem = { id: number; industry: string };
 
 const RESPONSIBLE_MAX_AGE_MINUTES = 30;
+const CONTACTS_MAX_AGE_MINUTES = 24 * 60;
 
 const MIN_SIDEBAR = 480;
 const MAX_SIDEBAR = 1200;
@@ -143,6 +144,10 @@ type RespInfo = {
   colorXmlId?: string;
 };
 
+type ContactInfo = {
+  webSites?: string[];
+};
+
 export default function OkvedTab() {
   const sp = useSearchParams();
   const router = useRouter();
@@ -150,6 +155,7 @@ export default function OkvedTab() {
   const initialOkved = (sp.get('okved') ?? '').trim();
   const initialQ = sp.get('q') ?? '';
   const initialSort = ((sp.get('sort') as SortKey) ?? 'revenue_desc') as SortKey;
+  const initialResponsible = sp.get('responsible') ?? '';
   const initialExtra = (sp.get('extra') ?? '0') === '1'; // ЧБ №2
   const initialParent = (sp.get('parent') ?? '0') === '1'; // ЧБ №3
   const initialPage = Number(sp.get('page')) || 1;
@@ -181,10 +187,14 @@ export default function OkvedTab() {
   const [includeParentState, setIncludeParentState] = useState<boolean>(initialParent); // ЧБ №3
 
   const [searchName, setSearchName] = useState<string>(initialQ);
+  const [responsibleFilter, setResponsibleFilter] = useState<string>(initialResponsible);
   const [sortKey, setSortKey] = useState<SortKey>(initialSort);
 
   const [responsibles, setResponsibles] = useState<Record<string, RespInfo>>({});
   const [respLoading, setRespLoading] = useState(false);
+  const [companySites, setCompanySites] = useState<Record<string, string[]>>({});
+  const [sitesLoading, setSitesLoading] = useState(false);
+  const [expandedSites, setExpandedSites] = useState<Set<string>>(new Set());
 
   const [sidebarWidth, setSidebarWidth] = useState<number>(() => {
     if (typeof window === 'undefined') return DEFAULT_SIDEBAR;
@@ -309,6 +319,7 @@ export default function OkvedTab() {
     url.searchParams.set('page', String(page));
     url.searchParams.set('pageSize', String(pageSize));
     if (searchName.trim()) url.searchParams.set('q', searchName.trim());
+    if (responsibleFilter.trim()) url.searchParams.set('responsible', responsibleFilter.trim());
     url.searchParams.set('sort', sortKey);
     if (csOkvedEnabled && industryId !== 'all') {
       url.searchParams.set('industryId', industryId);
@@ -342,6 +353,9 @@ export default function OkvedTab() {
     if (searchName.trim()) qs.set('q', searchName.trim());
     else qs.delete('q');
 
+    if (responsibleFilter.trim()) qs.set('responsible', responsibleFilter.trim());
+    else qs.delete('responsible');
+
     qs.set('sort', sortKey);
     qs.set('extra', includeExtraState ? '1' : '0');
     qs.set('parent', includeParentState ? '1' : '0');
@@ -359,6 +373,7 @@ export default function OkvedTab() {
     okved,
     page,
     searchName,
+    responsibleFilter,
     includeExtraState,
     includeParentState,
     sortKey,
@@ -462,6 +477,7 @@ export default function OkvedTab() {
   }, [
     okved,
     searchName,
+    responsibleFilter,
     includeExtraState,
     includeParentState,
     sortKey,
@@ -517,6 +533,64 @@ export default function OkvedTab() {
       }
     })();
     return () => ac.abort();
+  }, [companies]);
+
+  useEffect(() => {
+    const inns = companies.map((c) => c.inn).filter(Boolean);
+    if (inns.length === 0) {
+      setCompanySites({});
+      setExpandedSites(new Set());
+      return;
+    }
+
+    const ac = new AbortController();
+    (async () => {
+      try {
+        setSitesLoading(true);
+        const r = await fetch(`/api/b24/contacts?maxAgeMinutes=${CONTACTS_MAX_AGE_MINUTES}`, {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ inns }),
+          signal: ac.signal,
+        });
+        const j = await r.json();
+        if (!j?.ok) throw new Error(j?.error || 'b24 contacts error');
+
+        const map: Record<string, string[]> = {};
+        for (const it of (j.items || []) as Array<ContactInfo & { inn?: string }>) {
+          const inn = String(it?.inn ?? '').trim();
+          if (!inn) continue;
+          map[inn] = normalizeSites(it.webSites);
+        }
+        setCompanySites(map);
+      } catch (e: any) {
+        if (e?.name !== 'AbortError') {
+          console.error('load company sites failed', e);
+          setCompanySites({});
+        }
+      } finally {
+        setSitesLoading(false);
+      }
+    })();
+
+    return () => ac.abort();
+  }, [companies]);
+
+  useEffect(() => {
+    setExpandedSites((prev) => {
+      if (prev.size === 0) return prev;
+      const currentInns = new Set(companies.map((c) => c.inn));
+      let changed = false;
+      const next = new Set<string>();
+      prev.forEach((inn) => {
+        if (currentInns.has(inn)) {
+          next.add(inn);
+        } else {
+          changed = true;
+        }
+      });
+      return changed ? next : prev;
+    });
   }, [companies]);
 
   const lastYear = new Date().getFullYear() - 1;
@@ -704,6 +778,17 @@ export default function OkvedTab() {
               </label>
             </div>
 
+            <div className="space-y-1">
+              <div className="text-[11px] uppercase text-muted-foreground">Ответственный</div>
+              <Input
+                data-testid="okved-companies-responsible-filter"
+                className="h-8 text-xs"
+                placeholder="Фильтр по ответственному..."
+                value={responsibleFilter}
+                onChange={(e) => setResponsibleFilter(e.target.value)}
+              />
+            </div>
+
             {/* Поиск в списке слева */}
             <Input
               className="h-8 text-xs"
@@ -889,6 +974,7 @@ export default function OkvedTab() {
                     <th className="py-1 pr-2 w-[35px]"></th>
                     <th className="py-1 pr-2">ИНН</th>
                     <th className="py-1 pr-2">Название</th>
+                    <th className="py-1 pr-2">Сайты</th>
                     <th
                       className="py-1 pr-3 cursor-pointer select-none"
                       title="Сортировать по выручке"
@@ -911,14 +997,14 @@ export default function OkvedTab() {
                 <tbody>
                   {loading && (
                     <tr>
-                      <td colSpan={9} className="py-6 text-center text-muted-foreground text-xs">
+                      <td colSpan={10} className="py-6 text-center text-muted-foreground text-xs">
                         Загрузка…
                       </td>
                     </tr>
                   )}
                   {!loading && companies.length === 0 && (
                     <tr>
-                      <td colSpan={9} className="py-6 text-center text-muted-foreground text-xs">
+                      <td colSpan={10} className="py-6 text-center text-muted-foreground text-xs">
                         Нет данных
                       </td>
                     </tr>
@@ -934,6 +1020,10 @@ export default function OkvedTab() {
                       const rowColorClass = colorRowClass(resp?.colorLabel, resp?.colorXmlId);
                       const rowBg = colorRowBg(resp?.colorLabel, resp?.colorXmlId);
                       const hasColor = !!rowBg;
+                      const sites = companySites[c.inn] ?? [];
+                      const sitesExpanded = expandedSites.has(c.inn);
+                      const visibleSites = sitesExpanded ? sites : sites.slice(0, 3);
+                      const showSitesToggle = sites.length > 3;
 
                       return (
                         <tr
@@ -967,6 +1057,42 @@ export default function OkvedTab() {
 
                           <td className="py-0.5 pr-2 whitespace-nowrap">{c.inn}</td>
                           <td className="py-0.5 pr-3">{c.short_name}</td>
+                          <td className="py-0.5 pr-3 align-middle text-xs min-w-[140px] max-w-[220px]">
+                            {visibleSites.length ? (
+                              <div className="flex flex-col gap-0.5">
+                                {visibleSites.map((site) => (
+                                  <a
+                                    key={site}
+                                    href={siteHref(site)}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="truncate text-blue-600 hover:underline"
+                                    title={site}>
+                                    {site}
+                                  </a>
+                                ))}
+                                {showSitesToggle && (
+                                  <button
+                                    type="button"
+                                    className="self-start text-[11px] font-medium text-primary hover:underline"
+                                    onClick={() =>
+                                      setExpandedSites((prev) => {
+                                        const next = new Set(prev);
+                                        if (next.has(c.inn)) next.delete(c.inn);
+                                        else next.add(c.inn);
+                                        return next;
+                                      })
+                                    }>
+                                    {sitesExpanded ? 'Скрыть' : `Показать все (${sites.length})`}
+                                  </button>
+                                )}
+                              </div>
+                            ) : (
+                              <span className="text-muted-foreground">
+                                {sitesLoading ? '…' : '—'}
+                              </span>
+                            )}
+                          </td>
 
                           {/* мини-график + цифра рядом */}
                           <td className="py-0.5 pr-3 align-middle">
@@ -1101,6 +1227,24 @@ function dedupeById<T extends { id: number }>(arr: T[]): T[] {
     }
   }
   return out;
+}
+function normalizeSites(values: unknown): string[] {
+  if (!Array.isArray(values)) return [];
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    if (value == null) continue;
+    const site = String(value).trim();
+    if (!site) continue;
+    const key = site.toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(site);
+  }
+  return out;
+}
+function siteHref(site: string): string {
+  return /^https?:\/\//i.test(site) ? site : `https://${site}`;
 }
 function getEmployeeCount(c: OkvedCompany): number | null {
   const anyC = c as any;
