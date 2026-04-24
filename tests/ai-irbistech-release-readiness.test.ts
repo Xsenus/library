@@ -120,9 +120,33 @@ test('buildAiIrbistechReleaseReadinessSnapshot fails when a required timer is in
     const libraryEnvFile = path.join(tmpDir, 'library.env');
     const aiSiteAnalyzerEnvFile = path.join(tmpDir, 'ai-site-analyzer.env');
 
-    writeFile(aiIntegrationEnvFile, 'ANALYSIS_SCORE_SYNC_ALERT_WEBHOOK_URL=https://alerts.example.test/sync\n');
-    writeFile(libraryEnvFile, 'LIBRARY_SYSTEM_HEALTH_ALERT_WEBHOOK_URL=https://alerts.example.test/library\n');
-    writeFile(aiSiteAnalyzerEnvFile, 'AI_SITE_ANALYZER_HEALTHCHECK_ALERT_WEBHOOK_URL=https://alerts.example.test/site\nOPENAI_ADMIN_KEY=sk-test\n');
+    writeFile(
+      aiIntegrationEnvFile,
+      [
+        'ANALYSIS_SCORE_SYNC_ARTIFACT_PATH=' + path.join(tmpDir, 'missing-ai-integration', 'analysis-score-sync-health'),
+        'ANALYSIS_SCORE_SQL_READINESS_ARTIFACT_PATH=' + path.join(tmpDir, 'missing-ai-integration', 'analysis-score-sql-readiness'),
+        'EQUIPMENT_SCORE_ACCEPTANCE_ARTIFACT_PATH=' + path.join(tmpDir, 'missing-ai-integration', 'equipment-score-acceptance'),
+        'ANALYSIS_SCORE_SYNC_ALERT_WEBHOOK_URL=https://alerts.example.test/sync',
+      ].join('\n'),
+    );
+    writeFile(
+      libraryEnvFile,
+      [
+        'LIBRARY_SYSTEM_HEALTH_ARTIFACT_DIR=' + path.join(tmpDir, 'missing-library', 'library-system-health'),
+        'AI_ANALYSIS_ACCEPTANCE_HEALTH_ARTIFACT_DIR=' + path.join(tmpDir, 'missing-library', 'ai-analysis-acceptance-health'),
+        'AI_ANALYSIS_UI_SMOKE_HEALTH_ARTIFACT_DIR=' + path.join(tmpDir, 'missing-library', 'ai-analysis-ui-smoke-health'),
+        'AI_ANALYSIS_UI_QA_HEALTH_ARTIFACT_DIR=' + path.join(tmpDir, 'missing-library', 'ai-analysis-ui-qa-health'),
+        'LIBRARY_SYSTEM_HEALTH_ALERT_WEBHOOK_URL=https://alerts.example.test/library',
+      ].join('\n'),
+    );
+    writeFile(
+      aiSiteAnalyzerEnvFile,
+      [
+        'AI_SITE_ANALYZER_HEALTHCHECK_ARTIFACT_DIR=' + path.join(tmpDir, 'missing-ai-site-analyzer', 'system-health'),
+        'AI_SITE_ANALYZER_HEALTHCHECK_ALERT_WEBHOOK_URL=https://alerts.example.test/site',
+        'OPENAI_ADMIN_KEY=sk-test',
+      ].join('\n'),
+    );
 
     const commandRunner = async (command: AiIrbistechReleaseReadinessCommand) => {
       const unit = command.args[1] ?? '';

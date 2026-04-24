@@ -15,6 +15,7 @@ export type AiIrbistechAcceptanceReportSourceOption = {
 };
 
 export type AiIrbistechAcceptanceReportDiscoveryRoots = {
+  includeSystemArtifactRoots?: boolean;
   libraryRoot: string;
   workspaceRoot: string;
 };
@@ -71,75 +72,75 @@ export const AI_IRBISTECH_ACCEPTANCE_REPORT_SOURCE_OPTIONS: AiIrbistechAcceptanc
 const SOURCE_DISCOVERY_DEFINITIONS: SourceDiscoveryDefinition[] = [
   {
     ...AI_IRBISTECH_ACCEPTANCE_REPORT_SOURCE_OPTIONS[0]!,
-    candidates: ({ workspaceRoot }) => [
-      path.join(workspaceRoot, 'ai-integration', 'artifacts', 'equipment-score-acceptance'),
-      '/var/lib/ai-integration/equipment-score-acceptance',
+    candidates: (roots) => [
+      path.join(roots.workspaceRoot, 'ai-integration', 'artifacts', 'equipment-score-acceptance'),
+      ...systemArtifactCandidates(roots, '/var/lib/ai-integration/equipment-score-acceptance'),
     ],
     fallbackRoots: ({ workspaceRoot }) => [path.join(workspaceRoot, 'ai-integration', 'artifacts')],
     fallbackPathSubstrings: ['equipment-score-acceptance'],
   },
   {
     ...AI_IRBISTECH_ACCEPTANCE_REPORT_SOURCE_OPTIONS[1]!,
-    candidates: ({ workspaceRoot }) => [
-      path.join(workspaceRoot, 'ai-integration', 'artifacts', 'analysis-score-sql-readiness'),
-      '/var/lib/ai-integration/analysis-score-sql-readiness',
+    candidates: (roots) => [
+      path.join(roots.workspaceRoot, 'ai-integration', 'artifacts', 'analysis-score-sql-readiness'),
+      ...systemArtifactCandidates(roots, '/var/lib/ai-integration/analysis-score-sql-readiness'),
     ],
     fallbackRoots: ({ workspaceRoot }) => [path.join(workspaceRoot, 'ai-integration', 'artifacts')],
     fallbackPathSubstrings: ['analysis-score-sql-readiness'],
   },
   {
     ...AI_IRBISTECH_ACCEPTANCE_REPORT_SOURCE_OPTIONS[2]!,
-    candidates: ({ workspaceRoot }) => [
-      path.join(workspaceRoot, 'ai-integration', 'artifacts', 'analysis-score-sync-health'),
-      '/var/lib/ai-integration/analysis-score-sync-health',
+    candidates: (roots) => [
+      path.join(roots.workspaceRoot, 'ai-integration', 'artifacts', 'analysis-score-sync-health'),
+      ...systemArtifactCandidates(roots, '/var/lib/ai-integration/analysis-score-sync-health'),
     ],
     fallbackRoots: ({ workspaceRoot }) => [path.join(workspaceRoot, 'ai-integration', 'artifacts')],
     fallbackPathSubstrings: ['analysis-score-sync-health'],
   },
   {
     ...AI_IRBISTECH_ACCEPTANCE_REPORT_SOURCE_OPTIONS[3]!,
-    candidates: ({ libraryRoot }) => [
-      path.join(libraryRoot, 'artifacts', 'library-system-health'),
-      '/var/lib/library/library-system-health',
+    candidates: (roots) => [
+      path.join(roots.libraryRoot, 'artifacts', 'library-system-health'),
+      ...systemArtifactCandidates(roots, '/var/lib/library/library-system-health'),
     ],
     fallbackRoots: ({ libraryRoot }) => [path.join(libraryRoot, 'artifacts')],
     fallbackPathSubstrings: ['library-system-health'],
   },
   {
     ...AI_IRBISTECH_ACCEPTANCE_REPORT_SOURCE_OPTIONS[4]!,
-    candidates: ({ libraryRoot }) => [
-      path.join(libraryRoot, 'artifacts', 'ai-analysis-acceptance-health'),
-      path.join(libraryRoot, 'artifacts', 'ai-analysis-acceptance-qa'),
-      '/var/lib/library/ai-analysis-acceptance-health',
+    candidates: (roots) => [
+      path.join(roots.libraryRoot, 'artifacts', 'ai-analysis-acceptance-health'),
+      path.join(roots.libraryRoot, 'artifacts', 'ai-analysis-acceptance-qa'),
+      ...systemArtifactCandidates(roots, '/var/lib/library/ai-analysis-acceptance-health'),
     ],
     fallbackRoots: ({ libraryRoot }) => [path.join(libraryRoot, 'artifacts')],
     fallbackPathSubstrings: ['ai-analysis-acceptance-health', 'ai-analysis-acceptance-qa'],
   },
   {
     ...AI_IRBISTECH_ACCEPTANCE_REPORT_SOURCE_OPTIONS[5]!,
-    candidates: ({ libraryRoot }) => [
-      path.join(libraryRoot, 'artifacts', 'ai-analysis-ui-smoke-health'),
-      path.join(libraryRoot, 'artifacts', 'ai-analysis-ui-smoke'),
-      '/var/lib/library/ai-analysis-ui-smoke-health',
+    candidates: (roots) => [
+      path.join(roots.libraryRoot, 'artifacts', 'ai-analysis-ui-smoke-health'),
+      path.join(roots.libraryRoot, 'artifacts', 'ai-analysis-ui-smoke'),
+      ...systemArtifactCandidates(roots, '/var/lib/library/ai-analysis-ui-smoke-health'),
     ],
     fallbackRoots: ({ libraryRoot }) => [path.join(libraryRoot, 'artifacts')],
     fallbackPathSubstrings: ['ai-analysis-ui-smoke-health', 'ai-analysis-ui-smoke'],
   },
   {
     ...AI_IRBISTECH_ACCEPTANCE_REPORT_SOURCE_OPTIONS[6]!,
-    candidates: ({ libraryRoot }) => [
-      path.join(libraryRoot, 'artifacts', 'ai-analysis-ui-qa-health'),
-      path.join(libraryRoot, 'artifacts', 'ai-analysis-ui-qa'),
-      '/var/lib/library/ai-analysis-ui-qa-health',
+    candidates: (roots) => [
+      path.join(roots.libraryRoot, 'artifacts', 'ai-analysis-ui-qa-health'),
+      path.join(roots.libraryRoot, 'artifacts', 'ai-analysis-ui-qa'),
+      ...systemArtifactCandidates(roots, '/var/lib/library/ai-analysis-ui-qa-health'),
     ],
     fallbackRoots: ({ libraryRoot }) => [path.join(libraryRoot, 'artifacts')],
     fallbackPathSubstrings: ['ai-analysis-ui-qa-health', 'ai-analysis-ui-qa'],
   },
   {
     ...AI_IRBISTECH_ACCEPTANCE_REPORT_SOURCE_OPTIONS[7]!,
-    candidates: ({ workspaceRoot }) => [
-      path.join(workspaceRoot, 'ai-site-analyzer', 'artifacts', 'system-health'),
-      '/var/lib/ai-site-analyzer/system-health',
+    candidates: (roots) => [
+      path.join(roots.workspaceRoot, 'ai-site-analyzer', 'artifacts', 'system-health'),
+      ...systemArtifactCandidates(roots, '/var/lib/ai-site-analyzer/system-health'),
     ],
     fallbackRoots: ({ workspaceRoot }) => [path.join(workspaceRoot, 'ai-site-analyzer', 'artifacts')],
     fallbackPathSubstrings: ['system-health'],
@@ -224,6 +225,13 @@ type FallbackCandidate = {
   mtimeMs: number;
   score: number;
 };
+
+function systemArtifactCandidates(
+  roots: AiIrbistechAcceptanceReportDiscoveryRoots,
+  ...candidates: string[]
+): string[] {
+  return roots.includeSystemArtifactRoots === false ? [] : candidates;
+}
 
 function collectFallbackJsonArtifactCandidates(
   rootDir: string,

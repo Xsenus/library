@@ -55,6 +55,7 @@ test('discoverAiIrbistechAcceptanceReportInputPaths finds standard workspace art
 
   try {
     const roots: AiIrbistechAcceptanceReportDiscoveryRoots = {
+      includeSystemArtifactRoots: false,
       workspaceRoot: tmpDir,
       libraryRoot: path.join(tmpDir, 'library'),
     };
@@ -136,6 +137,7 @@ test('discoverAiIrbistechAcceptanceReportInputPaths falls back to smoke-style ar
 
   try {
     const roots: AiIrbistechAcceptanceReportDiscoveryRoots = {
+      includeSystemArtifactRoots: false,
       workspaceRoot: tmpDir,
       libraryRoot: path.join(tmpDir, 'library'),
     };

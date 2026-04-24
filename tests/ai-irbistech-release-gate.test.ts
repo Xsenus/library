@@ -45,6 +45,9 @@ test('runAiIrbistechReleaseGate combines suite and live readiness into one ready
       suiteOutputDir,
       reportName: 'latest',
       requireReady: true,
+      liveAiIntegrationEnvFile: path.join(tmpDir, 'missing-ai-integration.env'),
+      liveLibraryEnvFile: path.join(tmpDir, 'missing-library.env'),
+      liveAiSiteAnalyzerEnvFile: path.join(tmpDir, 'missing-ai-site-analyzer.env'),
       acceptanceSuiteRunner: async () => ({
         startedAt: '2026-04-24T08:00:00.000Z',
         finishedAt: '2026-04-24T08:05:00.000Z',
