@@ -81,6 +81,7 @@
     "next": "^14.0.0",
     "next-themes": "^0.3.0",
     "pg": "^8.16.3",
+    "playwright": "^1.59.1",
     "postcss": "8.4.30",
     "react": "18.2.0",
     "react-day-picker": "^8.10.1",
@@ -99,7 +100,6 @@
   },
   "devDependencies": {
     "@types/bcryptjs": "^2.4.6",
-    "@types/pg": "^8.15.5",
-    "playwright": "^1.59.1"
+    "@types/pg": "^8.15.5"
   }
 }
