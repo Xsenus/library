@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ChevronUp,
+  CircleHelp,
   CircleDashed,
   Clock3,
   ClipboardList,
@@ -278,6 +279,144 @@ type EquipmentSelectionSettings = {
   is_default?: boolean;
 };
 
+type EquipmentSettingHelp = {
+  title: string;
+  summary: string;
+  formula?: string;
+  range?: string;
+  details: string[];
+  impact: string;
+};
+
+const equipmentSettingsHelp: Record<
+  'okved_threshold' |
+  'top_equipment_limit' |
+  'e1_direct_factor' |
+  'e1_fallback_factor' |
+  'e2_factor' |
+  'e3_factor' |
+  'min_equipment_score' |
+  'min_product_score',
+  EquipmentSettingHelp
+> = {
+  okved_threshold: {
+    title: 'Порог OKVED',
+    summary:
+      'Определяет, доверяем ли данным с сайта компании или переключаем подбор оборудования на fallback по основному ОКВЭД.',
+    range: 'От 0 до 1. Чем выше значение, тем строже проверка соответствия сайта ОКВЭД.',
+    details: [
+      'Система берёт лучший score соответствия сайта ОКВЭД: сначала description_okved_score, если он есть, иначе okved_score.',
+      'Если найден prodclass_by_okved и score ниже порога, считается, что сайт плохо соответствует заявленному ОКВЭД. Тогда включается OKVED-стратегия.',
+      'В OKVED-стратегии берётся производственный класс из ОКВЭД, SCORE_1 становится равным 1, а данные goods_types и site_equipment из сайта не участвуют в расчёте.',
+      'Если score равен порогу или выше, система использует site-стратегию: prodclass, продукция и оборудование берутся из результатов анализа сайта.',
+    ],
+    impact:
+      'Увеличение порога чаще переводит компании на подбор по ОКВЭД. Уменьшение порога чаще оставляет подбор по сайту даже при слабом совпадении с ОКВЭД.',
+  },
+  top_equipment_limit: {
+    title: 'Лимит TOP оборудования',
+    summary:
+      'Ограничивает количество лучших позиций оборудования, которые остаются после сортировки по рейтингу.',
+    range: 'От 1 до 100. Значение округляется до целого числа.',
+    details: [
+      'Лимит применяется после расчёта каждого пути SCORE_E1, SCORE_E2 и SCORE_E3.',
+      'После объединения всех путей лимит применяется ещё раз к итоговому списку оборудования.',
+      'Сортировка идёт по убыванию итогового score, при равенстве учитывается идентификатор оборудования.',
+      'Лимит не меняет сами оценки, он только обрезает список рекомендаций до нужной длины.',
+    ],
+    impact:
+      'Большее значение показывает больше вариантов, но список становится шумнее. Меньшее значение оставляет только самые сильные рекомендации.',
+  },
+  e1_direct_factor: {
+    title: 'K для SCORE_E1 direct',
+    summary:
+      'Вес прямого пути от найденного производственного класса к цехам и оборудованию справочника.',
+    formula: 'SCORE_E1 = SCORE_1 * K direct * clean_score оборудования',
+    range: '0 и выше. 1 означает без дополнительного усиления или ослабления.',
+    details: [
+      'SCORE_1 — средняя оценка prodclass_score по найденному производственному классу.',
+      'Direct используется, когда для prodclass есть прямые цеха в ib_workshops.',
+      'clean_score — базовый рейтинг оборудования из справочника ib_equipment.',
+      'Для одного оборудования может быть несколько кандидатов; сохраняется кандидат с максимальным SCORE_E1.',
+    ],
+    impact:
+      'Увеличение коэффициента усиливает рекомендации, найденные через прямой prodclass. Уменьшение делает этот путь менее влиятельным относительно SCORE_E2 и SCORE_E3.',
+  },
+  e1_fallback_factor: {
+    title: 'K для SCORE_E1 fallback',
+    summary:
+      'Вес запасного пути SCORE_E1, когда для найденного prodclass нет прямых цехов и система расширяет поиск до отрасли.',
+    formula: 'SCORE_E1 = SCORE_1 * K fallback * clean_score оборудования',
+    range: '0 и выше. По умолчанию 0,75, потому что отраслевой fallback менее точный, чем прямой путь.',
+    details: [
+      'Fallback включается, если у prodclass нет прямых записей ib_workshops.',
+      'Система находит industry_id этого prodclass, берёт другие prodclass той же отрасли и их цеха.',
+      'Такой подбор полезен, когда справочник неполный, но он шире и менее точный.',
+      'Коэффициент 0 полностью отключает влияние fallback-кандидатов, потому что итоговый SCORE_E1 станет нулевым.',
+    ],
+    impact:
+      'Увеличение коэффициента позволяет отраслевому fallback чаще попадать в итоговый топ. Уменьшение сильнее штрафует такие рекомендации.',
+  },
+  e2_factor: {
+    title: 'K для SCORE_E2',
+    summary:
+      'Вес пути от типов продукции, найденных на сайте, к связанному оборудованию.',
+    formula: 'SCORE_E2 = goods_types_score * K E2 * clean_score оборудования',
+    range: '0 и выше. 1 означает использовать оценку типа продукции как есть.',
+    details: [
+      'Для каждого goods_type_id берётся максимальный goods_types_score из результатов анализа сайта.',
+      'Затем система ищет оборудование, связанное с товарами этого типа через ib_equipment_goods и ib_goods.',
+      'Этот путь отвечает на вопрос: какое оборудование обычно нужно для продукции, которую компания производит или продаёт.',
+      'В OKVED-стратегии данные goods_types отключаются, поэтому SCORE_E2 не участвует в подборе.',
+    ],
+    impact:
+      'Увеличение коэффициента усиливает подбор через продукцию. Уменьшение снижает влияние найденных видов продукции на итоговый список оборудования.',
+  },
+  e3_factor: {
+    title: 'K для SCORE_E3',
+    summary:
+      'Вес пути от оборудования, напрямую найденного на сайте компании, к оборудованию справочника.',
+    formula: 'SCORE_E3 = equipment_score * K E3 * clean_score оборудования',
+    range: '0 и выше. 1 означает использовать оценку найденного оборудования без дополнительного множителя.',
+    details: [
+      'Для каждого equipment_id берётся максимальный equipment_score из ai_site_equipment.',
+      'Путь SCORE_E3 самый прямой: сайт уже упомянул конкретное оборудование, система только нормализует его через clean_score.',
+      'Если оборудование найдено на нескольких страницах, используется лучший score.',
+      'В OKVED-стратегии site_equipment отключается, поэтому SCORE_E3 не участвует в подборе.',
+    ],
+    impact:
+      'Увеличение коэффициента сильнее продвигает оборудование, явно найденное на сайте. Уменьшение делает прямые упоминания менее доминирующими.',
+  },
+  min_equipment_score: {
+    title: 'Минимальный рейтинг оборудования',
+    summary:
+      'Нижний порог итоговой оценки оборудования. Всё, что ниже порога, скрывается из рассчитанного топа.',
+    range: 'От 0 до 1. 0 означает не отбрасывать оборудование по рейтингу.',
+    details: [
+      'Порог применяется после расчёта SCORE_E1, SCORE_E2 и SCORE_E3.',
+      'После объединения путей порог применяется к итоговому списку ещё раз.',
+      'Оборудование с final_score ниже значения не попадает в отображаемый топ и snapshot.',
+      'Если у позиции нет числовой оценки в карточке, UI не отбрасывает её этим фильтром, чтобы не потерять неполные, но полезные данные.',
+    ],
+    impact:
+      'Увеличение порога очищает слабые рекомендации, но может скрыть редкое оборудование. Уменьшение показывает больше кандидатов.',
+  },
+  min_product_score: {
+    title: 'Минимальный рейтинг продукции',
+    summary:
+      'Нижний порог для списка найденной продукции и ТНВЭД в карточке компании.',
+    range: 'От 0 до 1. 0 означает показывать все найденные позиции продукции.',
+    details: [
+      'Порог применяется к score продукции из анализа сайта и трассировки goods_types.',
+      'Позиции продукции с score ниже порога скрываются в блоке «Виды найденной продукции на сайте и ТНВЭД».',
+      'Этот коэффициент не меняет формулы SCORE_E1, SCORE_E2 или SCORE_E3 напрямую.',
+      'Косвенно он помогает визуально отделять уверенно найденную продукцию от слабых совпадений.',
+    ],
+    impact:
+      'Увеличение порога делает список продукции короче и чище. Уменьшение полезно для диагностики, когда нужно увидеть слабые или спорные совпадения.',
+  },
+};
+
 type EquipmentTraceResponse = {
   items?: EquipmentScoreTrace[];
   selection_strategy?: string | null;
@@ -536,6 +675,64 @@ function createDefaultEquipmentSelectionSettings(): EquipmentSelectionSettings {
     updated_at: null,
     is_default: true,
   };
+}
+
+function EquipmentSettingLabel({
+  htmlFor,
+  label,
+  help,
+}: {
+  htmlFor: string;
+  label: string;
+  help: EquipmentSettingHelp;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Label htmlFor={htmlFor}>{label}</Label>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-label={`Описание показателя: ${label}`}
+          >
+            <CircleHelp className="h-4 w-4" />
+          </button>
+        </TooltipTrigger>
+        <TooltipContent
+          side="top"
+          align="start"
+          className="z-[60] max-w-[calc(100vw-2rem)] p-3 text-left text-xs leading-relaxed sm:max-w-[560px]"
+        >
+          <div className="space-y-2">
+            <div className="text-sm font-semibold text-popover-foreground">{help.title}</div>
+            <p>{help.summary}</p>
+            {help.formula && (
+              <p>
+                <span className="font-medium text-popover-foreground">Формула: </span>
+                <span className="font-mono">{help.formula}</span>
+              </p>
+            )}
+            {help.range && (
+              <p>
+                <span className="font-medium text-popover-foreground">Диапазон: </span>
+                {help.range}
+              </p>
+            )}
+            <ul className="list-disc space-y-1 pl-4">
+              {help.details.map((item) => (
+                <li key={item}>{item}</li>
+              ))}
+            </ul>
+            <p>
+              <span className="font-medium text-popover-foreground">Что меняется: </span>
+              {help.impact}
+            </p>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </div>
+  );
 }
 
 function formatBillingValue(value: number | null | undefined, fallback = '—'): string {
@@ -4699,7 +4896,11 @@ export default function AiCompanyAnalysisTab() {
               ) : (
                 <div className="grid gap-4 md:grid-cols-2">
                   <div className="space-y-2">
-                    <Label htmlFor="okved-threshold">Порог OKVED</Label>
+                    <EquipmentSettingLabel
+                      htmlFor="okved-threshold"
+                      label="Порог OKVED"
+                      help={equipmentSettingsHelp.okved_threshold}
+                    />
                     <Input
                       id="okved-threshold"
                       type="number"
@@ -4711,7 +4912,11 @@ export default function AiCompanyAnalysisTab() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="top-equipment-limit">Лимит TOP оборудования</Label>
+                    <EquipmentSettingLabel
+                      htmlFor="top-equipment-limit"
+                      label="Лимит TOP оборудования"
+                      help={equipmentSettingsHelp.top_equipment_limit}
+                    />
                     <Input
                       id="top-equipment-limit"
                       type="number"
@@ -4723,7 +4928,11 @@ export default function AiCompanyAnalysisTab() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="e1-direct-factor">K для SCORE_E1 direct</Label>
+                    <EquipmentSettingLabel
+                      htmlFor="e1-direct-factor"
+                      label="K для SCORE_E1 direct"
+                      help={equipmentSettingsHelp.e1_direct_factor}
+                    />
                     <Input
                       id="e1-direct-factor"
                       type="number"
@@ -4734,7 +4943,11 @@ export default function AiCompanyAnalysisTab() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="e1-fallback-factor">K для SCORE_E1 fallback</Label>
+                    <EquipmentSettingLabel
+                      htmlFor="e1-fallback-factor"
+                      label="K для SCORE_E1 fallback"
+                      help={equipmentSettingsHelp.e1_fallback_factor}
+                    />
                     <Input
                       id="e1-fallback-factor"
                       type="number"
@@ -4745,7 +4958,11 @@ export default function AiCompanyAnalysisTab() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="e2-factor">K для SCORE_E2</Label>
+                    <EquipmentSettingLabel
+                      htmlFor="e2-factor"
+                      label="K для SCORE_E2"
+                      help={equipmentSettingsHelp.e2_factor}
+                    />
                     <Input
                       id="e2-factor"
                       type="number"
@@ -4756,7 +4973,11 @@ export default function AiCompanyAnalysisTab() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="e3-factor">K для SCORE_E3</Label>
+                    <EquipmentSettingLabel
+                      htmlFor="e3-factor"
+                      label="K для SCORE_E3"
+                      help={equipmentSettingsHelp.e3_factor}
+                    />
                     <Input
                       id="e3-factor"
                       type="number"
@@ -4767,7 +4988,11 @@ export default function AiCompanyAnalysisTab() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="min-equipment-score">Минимальный рейтинг оборудования</Label>
+                    <EquipmentSettingLabel
+                      htmlFor="min-equipment-score"
+                      label="Минимальный рейтинг оборудования"
+                      help={equipmentSettingsHelp.min_equipment_score}
+                    />
                     <Input
                       id="min-equipment-score"
                       type="number"
@@ -4779,7 +5004,11 @@ export default function AiCompanyAnalysisTab() {
                     />
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="min-product-score">Минимальный рейтинг продукции</Label>
+                    <EquipmentSettingLabel
+                      htmlFor="min-product-score"
+                      label="Минимальный рейтинг продукции"
+                      help={equipmentSettingsHelp.min_product_score}
+                    />
                     <Input
                       id="min-product-score"
                       type="number"

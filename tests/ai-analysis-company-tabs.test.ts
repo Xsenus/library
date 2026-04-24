@@ -28,6 +28,20 @@ test('AI analysis company header keeps controls compact', () => {
   assert.match(componentSource, /<Square className="h-4 w-4" \/>/);
 });
 
+test('equipment settings dialog explains every calculation coefficient', () => {
+  assert.match(componentSource, /type EquipmentSettingHelp/);
+  assert.match(componentSource, /const equipmentSettingsHelp/);
+  assert.match(componentSource, /CircleHelp/);
+  assert.equal((componentSource.match(/<EquipmentSettingLabel/g) ?? []).length, 8);
+  assert.match(componentSource, /description_okved_score/);
+  assert.match(componentSource, /prodclass_by_okved/);
+  assert.match(componentSource, /SCORE_E1 = SCORE_1 \* K direct \* clean_score/);
+  assert.match(componentSource, /SCORE_E1 = SCORE_1 \* K fallback \* clean_score/);
+  assert.match(componentSource, /SCORE_E2 = goods_types_score \* K E2 \* clean_score/);
+  assert.match(componentSource, /SCORE_E3 = equipment_score \* K E3 \* clean_score/);
+  assert.match(componentSource, /min_product_score/);
+});
+
 test('analyzed companies mode requests successful analyses sorted by finish history', () => {
   assert.match(
     componentSource,
