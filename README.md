@@ -266,7 +266,13 @@ executes a separate live release-readiness audit against the configured monitori
 explicit base URLs are not passed, the gate now auto-resolves `library`, `ai-integration`, and
 `ai-site-analyzer` base URLs from the standard monitoring env files, so a configured host can run
 the full gate with one command and get one combined markdown/json verdict under
-`docs/ai-irbistech-release-gate/`.
+`docs/ai-irbistech-release-gate/`. For split production deployments, pass
+`--ai-integration-root`, `--ai-integration-python`, and `--ai-site-analyzer-base-url`; if the
+`ai-site-analyzer` root is not present locally, the suite falls back to an HTTP healthcheck through
+`npm run ai-site-analyzer:remote-healthcheck`. When `ai-site-analyzer` runs on a different VPS, use
+`--skip-live-readiness` and keep the analyzer's own `ai-site-analyzer-healthcheck.timer` active on
+that host, because the live readiness audit checks local systemd units and local `/var/lib`
+artifacts.
 
 `npm run release:readiness` builds a separate release-readiness audit from monitoring env files,
 systemd timers, webhook destinations, optional browser prerequisites, and the latest monitoring
@@ -391,7 +397,7 @@ docker compose up --build
 - `npm run test:acceptance:qa` — acceptance QA для live trace-семантики `1way/2way/3way/okved` с JSON-артефактом.
 - `npm run acceptance:report` — сборка сводного markdown/json acceptance report из JSON-артефактов `ai-integration`, `library` и `ai-site-analyzer`, включая `analysis-score-sql-readiness`, с auto-discovery стандартных artifact-путей и gating-флагами `--require-release-ready` / `--require-clean`.
 - `npm run acceptance:suite` — единый orchestration-прогон smoke/acceptance задач с per-run artifacts/logs, preflight по Playwright Chromium и UI QA credentials, прямым ai-integration SQL readiness-check, автоматической сборкой итогового acceptance report и companion release-readiness report, по умолчанию со строгой проверкой `release-ready`.
-- `npm run release:gate` — единый итоговый gate поверх acceptance suite и отдельного live release-readiness audit с export в `docs/ai-irbistech-release-gate/`, общим verdict по readiness, и автоподхватом base URL из стандартных monitoring env-файлов, если явные `--*-base-url` не переданы.
+- `npm run release:gate` — единый итоговый gate поверх acceptance suite и отдельного live release-readiness audit с export в `docs/ai-irbistech-release-gate/`, общим verdict по readiness, автоподхватом base URL из стандартных monitoring env-файлов, split-root флагами для production (`--ai-integration-root`, `--ai-integration-python`, `--ai-site-analyzer-base-url`) и remote HTTP fallback для `ai-site-analyzer`; в multi-host схеме используйте `--skip-live-readiness`, а live healthcheck analyzer держите на его VPS.
 - `npm run release:readiness` — сводный release-readiness audit по monitoring env-файлам, systemd timers, webhook destinations, browser prerequisites и latest monitoring artifacts с export в `docs/ai-irbistech-release-readiness/` и gating-флагами `--require-ready` / `--require-clean`.
 - `npm run release:readiness:require-ready` — server-side strict запуск release-readiness audit без дополнительной передачи CLI-флагов через `npm run -- ...`.
 - `npm run healthcheck` — standalone healthcheck `GET /api/health` с exit code, state-file, `latest.json`/timestamped JSON-артефактами и optional webhook alert.
