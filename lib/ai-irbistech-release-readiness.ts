@@ -276,6 +276,13 @@ async function runCommand(
 function resolveArtifactLatestPath(value: string): string {
   const normalized = value.trim();
   const absolute = path.isAbsolute(normalized) ? normalized : path.resolve(normalized);
+  try {
+    if (fs.statSync(absolute).isFile()) {
+      return normalizePath(absolute);
+    }
+  } catch {
+    // Fall through to the conventional latest.json path for directories or not-yet-created paths.
+  }
   if (absolute.toLowerCase().endsWith('.json')) {
     return normalizePath(absolute);
   }

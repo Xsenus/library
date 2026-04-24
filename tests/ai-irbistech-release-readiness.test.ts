@@ -255,6 +255,81 @@ test('buildAiIrbistechReleaseReadinessSnapshot marks missing required monitoring
   }
 });
 
+test('buildAiIrbistechReleaseReadinessSnapshot accepts exact artifact files without json suffix', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-readiness-extensionless-artifacts-'));
+  const checkedAt = '2026-04-24T08:09:00.000Z';
+
+  try {
+    const aiIntegrationEnvFile = path.join(tmpDir, 'ai-integration.env');
+    const libraryEnvFile = path.join(tmpDir, 'library.env');
+    const aiSiteAnalyzerEnvFile = path.join(tmpDir, 'ai-site-analyzer.env');
+    const aiIntegrationRoot = path.join(tmpDir, 'ai-integration');
+    const libraryRoot = path.join(tmpDir, 'library');
+    const aiSiteAnalyzerRoot = path.join(tmpDir, 'ai-site-analyzer');
+
+    writeFile(
+      aiIntegrationEnvFile,
+      [
+        'ANALYSIS_SCORE_SYNC_ARTIFACT_PATH=' + path.join(aiIntegrationRoot, 'sync-health'),
+        'ANALYSIS_SCORE_SQL_READINESS_ARTIFACT_PATH=' + path.join(aiIntegrationRoot, 'sql-readiness'),
+        'EQUIPMENT_SCORE_ACCEPTANCE_ARTIFACT_PATH=' + path.join(aiIntegrationRoot, 'acceptance'),
+      ].join('\n'),
+    );
+    writeFile(
+      libraryEnvFile,
+      [
+        'LIBRARY_SYSTEM_HEALTH_ARTIFACT_DIR=' + path.join(libraryRoot, 'system-health'),
+        'AI_ANALYSIS_ACCEPTANCE_HEALTH_ARTIFACT_DIR=' + path.join(libraryRoot, 'acceptance-health'),
+      ].join('\n'),
+    );
+    writeFile(
+      aiSiteAnalyzerEnvFile,
+      [
+        'AI_SITE_ANALYZER_HEALTHCHECK_ARTIFACT_DIR=' + path.join(aiSiteAnalyzerRoot, 'system-health'),
+        'OPENAI_ADMIN_KEY=sk-test',
+      ].join('\n'),
+    );
+
+    for (const filePath of [
+      path.join(aiIntegrationRoot, 'sync-health'),
+      path.join(aiIntegrationRoot, 'sql-readiness'),
+      path.join(aiIntegrationRoot, 'acceptance'),
+      path.join(libraryRoot, 'system-health', 'latest.json'),
+      path.join(libraryRoot, 'acceptance-health', 'latest.json'),
+      path.join(aiSiteAnalyzerRoot, 'system-health', 'latest.json'),
+    ]) {
+      writeJson(filePath, {
+        checked_at: checkedAt,
+        checkedAt,
+        ok: true,
+        reason: 'ok',
+      });
+    }
+
+    const summary = await buildAiIrbistechReleaseReadinessSnapshot({
+      cwd: tmpDir,
+      generatedAt: '2026-04-24T08:10:00.000Z',
+      aiIntegrationEnvFile,
+      libraryEnvFile,
+      aiSiteAnalyzerEnvFile,
+      useSystemctl: false,
+      libraryUiSmokeRequired: false,
+      libraryUiQaRequired: false,
+      playwrightChromiumStatus: {
+        ok: false,
+        reason: 'browser checks disabled in this test',
+      },
+    });
+
+    const check = summary.checks.find((item) => item.id === 'aiIntegrationArtifacts');
+    assert.equal(check?.status, 'pass');
+    assert.match(check?.summary ?? '', /required_missing=0/);
+    assert.match(check?.details.join('\n') ?? '', /path=.*sync-health/);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});
+
 test('buildAiIrbistechReleaseReadinessSnapshot fails when a required monitoring artifact is unhealthy', async () => {
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'release-readiness-artifacts-fail-'));
 
