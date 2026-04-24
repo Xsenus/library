@@ -83,6 +83,7 @@ const PAGE_SIZE_STORAGE_KEY = 'ai-analysis-page-size';
 const PAGE_SIZE_OPTIONS = [10, 20, 30, 50, 75, 100];
 const SCORE_VALUE_CLASS = 'text-foreground text-xl leading-none font-semibold tabular-nums';
 type CompanySortKey = (typeof companySortOptions)[number]['key'];
+type CompanyListMode = 'all' | 'analyzed';
 
 type ColumnWidthKey = 'company' | 'metrics' | 'sites' | 'emails' | 'status' | 'actions';
 
@@ -1348,6 +1349,7 @@ export default function AiCompanyAnalysisTab() {
     return 20;
   });
   const [total, setTotal] = useState(0);
+  const [companyListMode, setCompanyListMode] = useState<CompanyListMode>('all');
   const [search, setSearch] = useState('');
   const [statusFilters, setStatusFilters] = useState<string[]>([]);
   const [responsibleFilter, setResponsibleFilter] = useState('');
@@ -1474,10 +1476,10 @@ export default function AiCompanyAnalysisTab() {
     if (industryId !== 'all') count += 1;
     if (responsibleFilter.trim()) count += 1;
     if (okvedCode) count += 1;
-    if (sortBy !== 'revenue_desc') count += 1;
-    count += statusFilters.length;
+    if (companyListMode === 'all' && sortBy !== 'revenue_desc') count += 1;
+    if (companyListMode === 'all') count += statusFilters.length;
     return count;
-  }, [industryId, okvedCode, responsibleFilter, search, sortBy, statusFilters]);
+  }, [companyListMode, industryId, okvedCode, responsibleFilter, search, sortBy, statusFilters]);
 
   const hasFilters = activeFilterCount > 0;
 
@@ -1965,8 +1967,10 @@ export default function AiCompanyAnalysisTab() {
         if (okvedCode) params.set('okved', okvedCode);
         if (industryId !== 'all') params.set('industryId', industryId);
         if (responsibleFilter.trim()) params.set('responsible', responsibleFilter.trim());
-        if (sortBy) params.set('sort', sortBy);
-        statusFilters.forEach((status) => params.append('status', status));
+        const requestSortBy = companyListMode === 'analyzed' ? 'analysis_finished_desc' : sortBy;
+        const requestStatusFilters = companyListMode === 'analyzed' ? ['success'] : statusFilters;
+        if (requestSortBy) params.set('sort', requestSortBy);
+        requestStatusFilters.forEach((status) => params.append('status', status));
 
         const res = await fetch(`/api/ai-analysis/companies?${params.toString()}`, { cache: 'no-store' });
         if (!res.ok) throw new Error(`Request failed with ${res.status}`);
@@ -2053,7 +2057,17 @@ export default function AiCompanyAnalysisTab() {
         setLoading(false);
       }
     },
-    [debouncedSearch, okvedCode, industryId, responsibleFilter, sortBy, statusFilters, toast, startTransition],
+    [
+      companyListMode,
+      debouncedSearch,
+      okvedCode,
+      industryId,
+      responsibleFilter,
+      sortBy,
+      statusFilters,
+      toast,
+      startTransition,
+    ],
   );
 
   useEffect(() => {
@@ -2178,7 +2192,7 @@ export default function AiCompanyAnalysisTab() {
 
   useEffect(() => {
     setPage(1);
-  }, [debouncedSearch, okvedCode, industryId, statusFilters]);
+  }, [companyListMode, debouncedSearch, okvedCode, industryId, responsibleFilter, sortBy, statusFilters]);
 
   useEffect(() => {
     async function loadIndustries() {
@@ -3677,6 +3691,57 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
+            <Tabs
+              value={companyListMode}
+              onValueChange={(value) => {
+                const nextMode = value === 'analyzed' ? 'analyzed' : 'all';
+                setCompanyListMode(nextMode);
+                setPage(1);
+              }}
+              className="w-full"
+            >
+              <TabsList className="grid w-full max-w-2xl grid-cols-1 rounded-lg bg-muted p-1 sm:grid-cols-2">
+                <TabsTrigger
+                  data-testid="ai-analysis-subtab-all"
+                  value="all"
+                  className="rounded-md px-3 py-2 text-sm"
+                >
+                  Весь перечень компаний и управление
+                </TabsTrigger>
+                <TabsTrigger
+                  data-testid="ai-analysis-subtab-analyzed"
+                  value="analyzed"
+                  className="rounded-md px-3 py-2 text-sm"
+                >
+                  Проанализированные компании
+                </TabsTrigger>
+              </TabsList>
+            </Tabs>
+            <div className="grid gap-2 lg:grid-cols-[minmax(280px,420px),1fr] lg:items-end">
+              <div className="space-y-1">
+                <Label htmlFor="ai-analysis-company-search" className="text-[11px] uppercase text-muted-foreground">
+                  Поиск
+                </Label>
+                <Input
+                  id="ai-analysis-company-search"
+                  data-testid="ai-analysis-company-search"
+                  className="h-9 text-sm"
+                  placeholder="Поиск по названию компании или ИНН"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                />
+              </div>
+              {companyListMode === 'analyzed' && (
+                <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                  <Badge variant="secondary" className="font-normal">
+                    Только проанализированные
+                  </Badge>
+                  <Badge variant="outline" className="font-normal">
+                    Сортировка: по последнему завершению
+                  </Badge>
+                </div>
+              )}
+            </div>
             <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
               <div className="flex flex-wrap items-center gap-2">
                 <Button
@@ -3702,13 +3767,17 @@ export default function AiCompanyAnalysisTab() {
                 <div className="flex items-center gap-2 rounded-lg border bg-background px-3 py-1.5">
                   <span className="text-xs text-muted-foreground">Сортировка</span>
                   <Select
-                    value={sortBy}
+                    value={companyListMode === 'analyzed' ? 'analysis_finished_desc' : sortBy}
                     onValueChange={(value) => {
+                      if (companyListMode === 'analyzed') return;
                       setSortBy(value as CompanySortKey);
                       setPage(1);
                     }}
                   >
-                    <SelectTrigger className="h-8 w-[260px] border-0 bg-transparent px-0 text-sm shadow-none focus:ring-0">
+                    <SelectTrigger
+                      className="h-8 w-[260px] border-0 bg-transparent px-0 text-sm shadow-none focus:ring-0"
+                      disabled={companyListMode === 'analyzed'}
+                    >
                       <SelectValue />
                     </SelectTrigger>
                     <SelectContent>
@@ -3803,7 +3872,13 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
-            {(search.trim() || industryId !== 'all' || okvedCode || sortBy !== 'revenue_desc') && (
+            {(
+              search.trim() ||
+              industryId !== 'all' ||
+              responsibleFilter.trim() ||
+              okvedCode ||
+              (companyListMode === 'all' && sortBy !== 'revenue_desc')
+            ) && (
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 {search.trim() && (
                   <Badge variant="secondary" className="max-w-full whitespace-normal">
@@ -3820,7 +3895,12 @@ export default function AiCompanyAnalysisTab() {
                     ОКВЭД: {okvedCode}
                   </Badge>
                 )}
-                {sortBy !== 'revenue_desc' && (
+                {responsibleFilter.trim() && (
+                  <Badge variant="secondary" className="max-w-full whitespace-normal">
+                    Ответственный: {responsibleFilter.trim()}
+                  </Badge>
+                )}
+                {companyListMode === 'all' && sortBy !== 'revenue_desc' && (
                   <Badge variant="secondary" className="max-w-full whitespace-normal">
                     Сортировка: {formatCompanySortLabel(sortBy)}
                   </Badge>
@@ -3856,7 +3936,7 @@ export default function AiCompanyAnalysisTab() {
                 </div>
               )}
             </div>
-            {statusFilters.length > 0 && (
+            {companyListMode === 'all' && statusFilters.length > 0 && (
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 {statusFilters.map((key) => {
                   const option = statusOptions.find((item) => item.key === key);
