@@ -1,7 +1,10 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 
-import { DEFAULT_ARTIFACT_RETENTION } from './artifact-retention';
+import {
+  DEFAULT_ARTIFACT_RETENTION,
+  pruneArtifactEntries,
+} from './artifact-retention';
 import { runAiAnalysisUiSmoke, type AiAnalysisUiSmokeSummary } from './ai-analysis-ui-smoke';
 
 export type AiAnalysisUiSmokeHealthState = 'healthy' | 'unhealthy';
@@ -38,6 +41,10 @@ async function loadState(stateFile: string): Promise<Record<string, unknown>> {
 async function saveState(stateFile: string, state: Record<string, unknown>): Promise<void> {
   await mkdir(path.dirname(stateFile), { recursive: true });
   await writeFile(stateFile, JSON.stringify(state, null, 2), 'utf8');
+}
+
+function sanitizeSegment(value: string): string {
+  return value.replace(/[^a-z0-9._-]+/gi, '-').replace(/-+/g, '-').replace(/^-|-$/g, '');
 }
 
 export function currentAiAnalysisUiSmokeState(ok: boolean): AiAnalysisUiSmokeHealthState {
@@ -100,6 +107,31 @@ export function summaryToJson(summary: AiAnalysisUiSmokeSummary): Record<string,
   };
 }
 
+export async function writeAiAnalysisUiSmokeHealthArtifact(
+  artifactDir: string,
+  summary: AiAnalysisUiSmokeSummary,
+): Promise<string> {
+  const runDir = path.resolve(artifactDir);
+  await mkdir(runDir, { recursive: true });
+  const fileName = `ai-analysis-ui-smoke-health-${sanitizeSegment(summary.checkedAt.replace(/[:.]/g, '-'))}.json`;
+  const artifactPath = path.join(runDir, fileName);
+  const payload = JSON.stringify(summaryToJson(summary), null, 2);
+  await writeFile(artifactPath, `${payload}\n`, 'utf8');
+  await writeFile(path.join(runDir, 'latest.json'), `${payload}\n`, 'utf8');
+  return artifactPath;
+}
+
+const UI_SMOKE_HEALTH_ARTIFACT_PATTERN = /^ai-analysis-ui-smoke-health-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.json$/i;
+
+async function pruneHealthArtifacts(artifactDir: string, artifactRetentionCount: number): Promise<void> {
+  await pruneArtifactEntries({
+    rootDir: path.resolve(artifactDir),
+    keepLatest: artifactRetentionCount,
+    preserveNames: ['latest.json'],
+    matchEntry: (entry) => !entry.isDirectory && UI_SMOKE_HEALTH_ARTIFACT_PATTERN.test(entry.name),
+  });
+}
+
 async function sendWebhook(webhookUrl: string, summary: AiAnalysisUiSmokeSummary): Promise<void> {
   const response = await fetch(webhookUrl, {
     method: 'POST',
@@ -143,6 +175,8 @@ export async function runAiAnalysisUiSmokeHealthcheck({
     artifactDir,
     artifactRetentionCount,
   });
+  const healthArtifactPath = await writeAiAnalysisUiSmokeHealthArtifact(artifactDir, summary);
+  await pruneHealthArtifacts(artifactDir, artifactRetentionCount).catch(() => undefined);
   const previousState = await loadState(stateFile);
   const previousStatus = typeof previousState.status === 'string' ? previousState.status : null;
   const currentStatus = currentAiAnalysisUiSmokeState(summary.ok);
@@ -171,6 +205,7 @@ export async function runAiAnalysisUiSmokeHealthcheck({
     authenticated: summary.authenticated,
     requireAuth: summary.requireAuth,
     artifactPath: summary.artifactPath,
+    healthArtifactPath,
     error: summary.error,
     webhookError,
   });
