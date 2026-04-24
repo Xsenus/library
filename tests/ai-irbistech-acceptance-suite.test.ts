@@ -519,3 +519,62 @@ test('runAiIrbistechAcceptanceSuite forwards strict postgres SQL requirement to 
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 });
+
+test('runAiIrbistechAcceptanceSuite supports split production roots and remote ai-site-analyzer health', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-irbistech-suite-split-roots-'));
+  const libraryRoot = path.join(tmpDir, 'library-app');
+  const aiIntegrationRoot = path.join(tmpDir, 'opt-ai-integration');
+  const missingAiSiteAnalyzerRoot = path.join(tmpDir, 'missing-ai-site-analyzer');
+  fs.mkdirSync(libraryRoot, { recursive: true });
+  fs.mkdirSync(aiIntegrationRoot, { recursive: true });
+
+  try {
+    let sqlCommand: AiIrbistechAcceptanceSuiteRunCommand | null = null;
+    let aiSiteCommand: AiIrbistechAcceptanceSuiteRunCommand | null = null;
+
+    const summary = await runAiIrbistechAcceptanceSuite({
+      cwd: libraryRoot,
+      roots: {
+        libraryRoot,
+        aiIntegrationRoot,
+        aiSiteAnalyzerRoot: missingAiSiteAnalyzerRoot,
+      },
+      env: {},
+      aiIntegrationPythonExecutable: '/opt/ai-integration/.venv/bin/python',
+      aiSiteAnalyzerBaseUrl: 'http://37.221.125.221:8123',
+      playwrightChromiumStatus: {
+        ok: false,
+        reason: 'Playwright Chromium is not available',
+      },
+      requireReleaseReady: false,
+      commandRunner: async (command) => {
+        if (command.taskId === 'aiIntegrationSqlReadiness') {
+          sqlCommand = command;
+        }
+        if (command.taskId === 'aiSiteAnalyzerHealth') {
+          aiSiteCommand = command;
+        }
+        const artifactDir = resolveArtifactInputPath(command);
+        writeJson(path.join(artifactDir, 'latest.json'), makePassingPayload(command.taskId));
+        return {
+          exitCode: 0,
+          stdout: `ok:${command.taskId}\n`,
+          stderr: '',
+          error: null,
+        };
+      },
+    });
+
+    assert.equal(summary.counts.failed, 0);
+    assert.ok(sqlCommand);
+    assert.equal(sqlCommand?.executable, '/opt/ai-integration/.venv/bin/python');
+    assert.ok(aiSiteCommand);
+    assert.equal(aiSiteCommand?.executable.endsWith('npm') || aiSiteCommand?.executable.endsWith('npm.cmd'), true);
+    assert.equal(aiSiteCommand?.cwd, libraryRoot);
+    assert.deepEqual(aiSiteCommand?.args.slice(0, 4), ['run', 'ai-site-analyzer:remote-healthcheck', '--', '--json']);
+    assert.equal(aiSiteCommand?.args.includes('--base-url'), true);
+    assert.equal(aiSiteCommand?.args.includes('http://37.221.125.221:8123'), true);
+  } finally {
+    fs.rmSync(tmpDir, { recursive: true, force: true });
+  }
+});

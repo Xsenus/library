@@ -55,8 +55,14 @@ Options:
   --artifact-root-dir <path>       Directory for per-run artifacts/logs. Defaults to ${DEFAULT_ARTIFACT_ROOT_DIR}
   --name <value>                   Output file prefix. Defaults to ${DEFAULT_REPORT_NAME}
   --run-id <value>                 Optional suite run id. Defaults to a sanitized UTC timestamp.
-  --python <path>                  Python executable for ai-integration and ai-site-analyzer jobs.
+  --python <path>                  Fallback Python executable for Python jobs.
+  --ai-integration-python <path>   Python executable for ai-integration jobs.
+  --ai-site-analyzer-python <path> Python executable for local ai-site-analyzer jobs.
   --npm <path>                     npm executable for library jobs.
+  --workspace-root <path>          Workspace root for split deployments.
+  --library-root <path>            Library root. Defaults to the current package root.
+  --ai-integration-root <path>     ai-integration root. Useful when it is outside the library parent dir.
+  --ai-site-analyzer-root <path>   ai-site-analyzer root. If missing and base URL is set, suite uses remote HTTP healthcheck.
   --library-base-url <url>         Base URL for library acceptance and UI checks.
   --ai-integration-base-url <url>  Base URL for ai-integration health/acceptance jobs.
   --ai-site-analyzer-base-url <url> Base URL for ai-site-analyzer health job.
@@ -125,9 +131,29 @@ async function main(): Promise<void> {
     pythonExecutable:
       readOption(args, '--python') ??
       process.env.AI_IRBISTECH_ACCEPTANCE_SUITE_PYTHON_BIN,
+    aiIntegrationPythonExecutable:
+      readOption(args, '--ai-integration-python') ??
+      process.env.AI_IRBISTECH_ACCEPTANCE_SUITE_AI_INTEGRATION_PYTHON_BIN,
+    aiSiteAnalyzerPythonExecutable:
+      readOption(args, '--ai-site-analyzer-python') ??
+      process.env.AI_IRBISTECH_ACCEPTANCE_SUITE_AI_SITE_ANALYZER_PYTHON_BIN,
     npmExecutable:
       readOption(args, '--npm') ??
       process.env.AI_IRBISTECH_ACCEPTANCE_SUITE_NPM_BIN,
+    roots: {
+      workspaceRoot:
+        readOption(args, '--workspace-root') ??
+        process.env.AI_IRBISTECH_ACCEPTANCE_SUITE_WORKSPACE_ROOT,
+      libraryRoot:
+        readOption(args, '--library-root') ??
+        process.env.AI_IRBISTECH_ACCEPTANCE_SUITE_LIBRARY_ROOT,
+      aiIntegrationRoot:
+        readOption(args, '--ai-integration-root') ??
+        process.env.AI_IRBISTECH_ACCEPTANCE_SUITE_AI_INTEGRATION_ROOT,
+      aiSiteAnalyzerRoot:
+        readOption(args, '--ai-site-analyzer-root') ??
+        process.env.AI_IRBISTECH_ACCEPTANCE_SUITE_AI_SITE_ANALYZER_ROOT,
+    },
     libraryBaseUrl:
       readOption(args, '--library-base-url') ??
       process.env.AI_IRBISTECH_ACCEPTANCE_SUITE_LIBRARY_BASE_URL ??

@@ -24,6 +24,7 @@
     "release:gate": "tsx scripts/run-ai-irbistech-release-gate.ts",
     "release:readiness": "tsx scripts/export-ai-irbistech-release-readiness.ts",
     "release:readiness:require-ready": "tsx scripts/export-ai-irbistech-release-readiness.ts --require-ready",
+    "ai-site-analyzer:remote-healthcheck": "tsx scripts/ai-site-analyzer-remote-healthcheck.ts",
     "ui:qa:baseline": "tsx scripts/export-ai-analysis-ui-qa-baseline.ts",
     "healthcheck": "tsx scripts/library-system-healthcheck.ts",
     "ui:qa:healthcheck": "tsx scripts/ai-analysis-ui-qa-healthcheck.ts",

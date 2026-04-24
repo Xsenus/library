@@ -67,7 +67,13 @@ export type AiIrbistechReleaseGateOptions = {
   reportName?: string;
   runId?: string;
   pythonExecutable?: string;
+  aiIntegrationPythonExecutable?: string;
+  aiSiteAnalyzerPythonExecutable?: string;
   npmExecutable?: string;
+  workspaceRoot?: string;
+  libraryRoot?: string;
+  aiIntegrationRoot?: string;
+  aiSiteAnalyzerRoot?: string;
   libraryBaseUrl?: string | null;
   aiIntegrationBaseUrl?: string | null;
   aiSiteAnalyzerBaseUrl?: string | null;
@@ -329,7 +335,15 @@ export async function runAiIrbistechReleaseGate(
     reportName,
     runId: options.runId,
     pythonExecutable: options.pythonExecutable,
+    aiIntegrationPythonExecutable: options.aiIntegrationPythonExecutable,
+    aiSiteAnalyzerPythonExecutable: options.aiSiteAnalyzerPythonExecutable,
     npmExecutable: options.npmExecutable,
+    roots: {
+      workspaceRoot: options.workspaceRoot,
+      libraryRoot: options.libraryRoot,
+      aiIntegrationRoot: options.aiIntegrationRoot,
+      aiSiteAnalyzerRoot: options.aiSiteAnalyzerRoot,
+    },
     libraryBaseUrl: resolvedInputs.libraryBaseUrl,
     aiIntegrationBaseUrl: resolvedInputs.aiIntegrationBaseUrl,
     aiSiteAnalyzerBaseUrl: resolvedInputs.aiSiteAnalyzerBaseUrl,

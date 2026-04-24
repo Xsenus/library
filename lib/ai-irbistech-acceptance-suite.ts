@@ -124,6 +124,8 @@ export type AiIrbistechAcceptanceSuiteOptions = {
   reportName?: string;
   runId?: string;
   pythonExecutable?: string;
+  aiIntegrationPythonExecutable?: string;
+  aiSiteAnalyzerPythonExecutable?: string;
   npmExecutable?: string;
   libraryBaseUrl?: string | null;
   aiIntegrationBaseUrl?: string | null;
@@ -154,6 +156,8 @@ type SuiteBuildContext = {
   artifactRunRoot: string;
   stateRoot: string;
   pythonExecutable: string;
+  aiIntegrationPythonExecutable: string;
+  aiSiteAnalyzerPythonExecutable: string;
   npmExecutable: string;
   env: NodeJS.ProcessEnv;
   libraryBaseUrl: string | null;
@@ -368,7 +372,7 @@ const SUITE_TASK_DEFINITIONS: SuiteTaskDefinition[] = [
       return {
         taskId: 'aiIntegrationSqlReadiness',
         title: 'ai-integration: SQL readiness analysis_score',
-        executable: context.pythonExecutable,
+        executable: context.aiIntegrationPythonExecutable,
         args,
         cwd: context.roots.aiIntegrationRoot,
         env: context.env,
@@ -403,7 +407,7 @@ const SUITE_TASK_DEFINITIONS: SuiteTaskDefinition[] = [
       return {
         taskId: 'aiIntegrationSyncHealth',
         title: 'ai-integration: health sync analysis_score',
-        executable: context.pythonExecutable,
+        executable: context.aiIntegrationPythonExecutable,
         args,
         cwd: context.roots.aiIntegrationRoot,
         env: context.env,
@@ -435,7 +439,7 @@ const SUITE_TASK_DEFINITIONS: SuiteTaskDefinition[] = [
       return {
         taskId: 'aiIntegrationAcceptance',
         title: 'ai-integration: acceptance проверки формулы',
-        executable: context.pythonExecutable,
+        executable: context.aiIntegrationPythonExecutable,
         args,
         cwd: context.roots.aiIntegrationRoot,
         env: context.env,
@@ -599,10 +603,41 @@ const SUITE_TASK_DEFINITIONS: SuiteTaskDefinition[] = [
     title: 'ai-site-analyzer: system health',
     artifactDirName: 'ai-site-analyzer-health',
     stateFileName: 'ai-site-analyzer-health.json',
-    shouldSkip: () => null,
+    shouldSkip: (context) => {
+      if (fs.existsSync(context.roots.aiSiteAnalyzerRoot)) {
+        return null;
+      }
+      return context.aiSiteAnalyzerBaseUrl
+        ? null
+        : 'ai-site-analyzer root is missing and ai-site-analyzer base URL is not configured';
+    },
     buildCommand: (context) => {
       const artifactDir = path.join(context.artifactRunRoot, 'ai-site-analyzer-health');
       const stateFile = path.join(context.stateRoot, 'ai-site-analyzer-health.json');
+      if (!fs.existsSync(context.roots.aiSiteAnalyzerRoot)) {
+        const args = [
+          'run',
+          'ai-site-analyzer:remote-healthcheck',
+          '--',
+          '--json',
+          '--artifact-dir',
+          artifactDir,
+          '--state-file',
+          stateFile,
+        ];
+        if (context.aiSiteAnalyzerBaseUrl) {
+          args.push('--base-url', context.aiSiteAnalyzerBaseUrl);
+        }
+        return {
+          taskId: 'aiSiteAnalyzerHealth',
+          title: 'ai-site-analyzer: system health',
+          executable: context.npmExecutable,
+          args,
+          cwd: context.roots.libraryRoot,
+          env: context.env,
+        };
+      }
+
       const args = [
         '-m',
         'app.jobs.system_healthcheck',
@@ -618,7 +653,7 @@ const SUITE_TASK_DEFINITIONS: SuiteTaskDefinition[] = [
       return {
         taskId: 'aiSiteAnalyzerHealth',
         title: 'ai-site-analyzer: system health',
-        executable: context.pythonExecutable,
+        executable: context.aiSiteAnalyzerPythonExecutable,
         args,
         cwd: context.roots.aiSiteAnalyzerRoot,
         env: context.env,
@@ -669,6 +704,10 @@ function buildSuiteContext(options: AiIrbistechAcceptanceSuiteOptions): {
       artifactRunRoot,
       stateRoot,
       pythonExecutable: options.pythonExecutable ?? 'python',
+      aiIntegrationPythonExecutable:
+        options.aiIntegrationPythonExecutable ?? options.pythonExecutable ?? 'python',
+      aiSiteAnalyzerPythonExecutable:
+        options.aiSiteAnalyzerPythonExecutable ?? options.pythonExecutable ?? 'python',
       npmExecutable:
         options.npmExecutable ?? (process.platform === 'win32' ? 'npm.cmd' : 'npm'),
       env: options.env ?? process.env,
