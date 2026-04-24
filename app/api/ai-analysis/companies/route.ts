@@ -1341,6 +1341,68 @@ function buildActivitySql(optionalSelect: SelectBuild, queueAvailable: boolean, 
   `;
 }
 
+function isNotProcessedFilterAvailable(optionalSelect: SelectBuild): boolean {
+  return [
+    'analysis_status',
+    'analysis_outcome',
+    'analysis_progress',
+    'analysis_started_at',
+    'analysis_finished_at',
+    'analysis_ok',
+    'server_error',
+    'no_valid_site',
+  ].some((alias) => optionalSelect.selected.get(alias));
+}
+
+function buildNotProcessedCondition(optionalSelect: SelectBuild): string | null {
+  const statusCol = optionalSelect.selected.get('analysis_status');
+  const outcomeCol = optionalSelect.selected.get('analysis_outcome');
+  const progressCol = optionalSelect.selected.get('analysis_progress');
+  const startedCol = optionalSelect.selected.get('analysis_started_at');
+  const finishedCol = optionalSelect.selected.get('analysis_finished_at');
+  const analysisOkCol = optionalSelect.selected.get('analysis_ok');
+  const serverErrorCol = optionalSelect.selected.get('server_error');
+  const noValidSiteCol = optionalSelect.selected.get('no_valid_site');
+
+  const conditions: string[] = [];
+
+  if (startedCol) {
+    conditions.push(`d.${startedCol} IS NULL`);
+  }
+
+  if (finishedCol) {
+    conditions.push(`d.${finishedCol} IS NULL`);
+  }
+
+  if (progressCol) {
+    conditions.push(`COALESCE(d.${progressCol}, 0) = 0`);
+  }
+
+  if (analysisOkCol) {
+    conditions.push(`COALESCE(d.${analysisOkCol}, 0) = 0`);
+  }
+
+  if (serverErrorCol) {
+    conditions.push(`COALESCE(d.${serverErrorCol}, 0) = 0`);
+  }
+
+  if (noValidSiteCol) {
+    conditions.push(`COALESCE(d.${noValidSiteCol}, 0) = 0`);
+  }
+
+  if (outcomeCol) {
+    conditions.push(`LOWER(COALESCE(d.${outcomeCol}, '')) IN ('', 'not_started', 'pending')`);
+  }
+
+  if (statusCol) {
+    conditions.push(
+      `NOT (LOWER(COALESCE(d.${statusCol}, '')) SIMILAR TO '%(failed|error|partial|complete|completed|done|finish|success|running|processing|in_progress|starting|stopped|cancel)%')`,
+    );
+  }
+
+  return conditions.length ? `(${conditions.join(' AND ')})` : null;
+}
+
 function normalizeDomain(value: any): string | null {
   const str = parseString(value);
   if (!str) return null;
@@ -1850,6 +1912,12 @@ export async function GET(request: NextRequest) {
 
     if (statusFilters.length) {
       const conditions: string[] = [];
+      if (statusFilters.includes('not_started')) {
+        const notProcessedCondition = buildNotProcessedCondition(optionalSelect);
+        if (notProcessedCondition) {
+          conditions.push(notProcessedCondition);
+        }
+      }
       if (statusFilters.includes('success') && optionalSelect.selected.get('analysis_ok')) {
         conditions.push('COALESCE(d.analysis_ok, 0) = 1');
       }
@@ -2330,6 +2398,7 @@ export async function GET(request: NextRequest) {
       : null;
 
     const available = {
+      not_processed: isNotProcessedFilterAvailable(optionalSelect),
       analysis_ok: optionalSelect.selected.get('analysis_ok') !== null,
       server_error: optionalSelect.selected.get('server_error') !== null,
       no_valid_site: optionalSelect.selected.get('no_valid_site') !== null,

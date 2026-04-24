@@ -48,10 +48,18 @@ import type { AiDebugEventRecord } from '@/lib/ai-debug';
 import { getDefaultSteps, getForcedLaunchMode, getForcedSteps, isLaunchModeLocked } from '@/lib/ai-analysis-config';
 import type { StepKey } from '@/lib/ai-analysis-types';
 
+type StatusAvailabilityKey =
+  | 'not_processed'
+  | 'analysis_ok'
+  | 'server_error'
+  | 'no_valid_site'
+  | 'analysis_progress';
+
 const statusOptions = [
-  { key: 'success', label: 'Успешные анализы', field: 'analysis_ok' as const },
-  { key: 'server_error', label: 'Сервер был недоступен', field: 'server_error' as const },
-  { key: 'no_valid_site', label: 'Не было доступных доменов', field: 'no_valid_site' as const },
+  { key: 'not_started', label: 'Не обработанные', availability: 'not_processed' as const },
+  { key: 'success', label: 'Успешные анализы', availability: 'analysis_ok' as const },
+  { key: 'server_error', label: 'Сервер был недоступен', availability: 'server_error' as const },
+  { key: 'no_valid_site', label: 'Не было доступных доменов', availability: 'no_valid_site' as const },
 ];
 
 const companySortOptions = [
@@ -201,7 +209,7 @@ type FetchResponse = {
   total: number;
   page: number;
   pageSize: number;
-  available?: Partial<Record<'analysis_ok' | 'server_error' | 'no_valid_site' | 'analysis_progress', boolean>>;
+  available?: Partial<Record<StatusAvailabilityKey, boolean>>;
   active?: { running: number; queued: number; total: number } | null;
   integration?: AiIntegrationHealth | null;
 };
@@ -4548,12 +4556,12 @@ export default function AiCompanyAnalysisTab() {
                       key={option.key}
                       className={cn(
                         'flex items-center gap-3 rounded-md border bg-muted/50 px-3 py-2 text-sm',
-                        available?.[option.field] === false && 'opacity-60',
+                        available?.[option.availability] === false && 'opacity-60',
                       )}
                     >
                       <Checkbox
                         checked={statusFilters.includes(option.key)}
-                        disabled={available?.[option.field] === false}
+                        disabled={available?.[option.availability] === false}
                         onCheckedChange={(checked) => {
                           setStatusFilters((prev) => {
                             if (checked) {
