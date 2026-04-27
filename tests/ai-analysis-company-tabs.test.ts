@@ -28,6 +28,14 @@ test('AI analysis company header keeps controls compact', () => {
   assert.match(componentSource, /<Square className="h-4 w-4" \/>/);
 });
 
+test('AI analysis company toolbar keeps filter state from shifting controls', () => {
+  assert.match(componentSource, /2xl:grid-cols-\[minmax\(0,1fr\)_auto\]/);
+  assert.match(componentSource, /lg:grid-cols-\[minmax\(220px,1fr\)_auto_auto_minmax\(220px,320px\)\]/);
+  assert.match(componentSource, /!hasFilters && 'invisible pointer-events-none'/);
+  assert.match(componentSource, /tabIndex=\{hasFilters \? 0 : -1\}/);
+  assert.match(componentSource, /className="h-9 w-full min-w-0 text-sm"/);
+});
+
 test('equipment settings dialog explains every calculation coefficient', () => {
   assert.match(componentSource, /type EquipmentSettingHelp/);
   assert.match(componentSource, /const equipmentSettingsHelp/);
