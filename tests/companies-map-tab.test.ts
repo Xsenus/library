@@ -59,25 +59,34 @@ test('companies map keeps success filter in the top controls and reuses map laye
 
 test('companies map auto-scales heatmap intensity by maximum local density', () => {
   assert.match(componentSource, /function buildAutoScaledHeatmapFeatureCollection/);
-  assert.match(componentSource, /HEATMAP_DENSITY_RADIUS_KM = 45/);
-  assert.match(componentSource, /HEATMAP_REGIONAL_RADIUS_KM = 140/);
+  assert.match(componentSource, /HEATMAP_CLUSTER_CELL_KM = 22/);
+  assert.match(componentSource, /HEATMAP_DENSITY_RADIUS_KM = 38/);
+  assert.match(componentSource, /HEATMAP_REGIONAL_RADIUS_KM = 180/);
   assert.match(componentSource, /HEATMAP_GRID_CELL_DEGREES/);
-  assert.match(componentSource, /countNearbyCompanies/);
+  assert.match(componentSource, /buildHeatmapDensityCells/);
+  assert.match(componentSource, /buildHeatmapCellIndex/);
+  assert.match(componentSource, /countNearbyHeatmapCells/);
   assert.match(componentSource, /getApproxDistanceKmSq/);
+  assert.match(componentSource, /maxCellCount/);
   assert.match(componentSource, /maxLocalDensity/);
   assert.match(componentSource, /maxRegionalDensity/);
+  assert.match(componentSource, /company_count: cell\.count/);
   assert.match(componentSource, /local_density: densities\[index\]\.local/);
   assert.match(componentSource, /regional_density: densities\[index\]\.regional/);
+  assert.match(componentSource, /max_cell_count: maxCellCount/);
   assert.match(componentSource, /max_local_density: maxLocalDensity/);
   assert.match(componentSource, /max_regional_density: maxRegionalDensity/);
-  assert.match(componentSource, /HEATMAP_LOCAL_DENSITY_POWER = 2\.2/);
-  assert.match(componentSource, /HEATMAP_REGIONAL_DENSITY_POWER = 1\.4/);
-  assert.match(componentSource, /Math\.max\(0\.005/);
+  assert.match(componentSource, /HEATMAP_LOCAL_DENSITY_POWER = 2\.8/);
+  assert.match(componentSource, /HEATMAP_REGIONAL_DENSITY_POWER = 1\.5/);
+  assert.match(componentSource, /HEATMAP_CELL_COUNT_POWER = 0\.6/);
+  assert.match(componentSource, /Math\.max\(0\.0001/);
+  assert.match(componentSource, /Math\.pow\(normalizedCellCount, HEATMAP_CELL_COUNT_POWER\)/);
   assert.match(componentSource, /Math\.pow\(normalizedLocalDensity, HEATMAP_LOCAL_DENSITY_POWER\)/);
   assert.match(componentSource, /Math\.pow\(normalizedRegionalDensity, HEATMAP_REGIONAL_DENSITY_POWER\)/);
   assert.match(componentSource, /dissipating: true/);
-  assert.match(componentSource, /intensityOfMidpoint: 0\.86/);
-  assert.match(componentSource, /0\.96: 'rgba\(249, 115, 22, 0\.88\)'/);
+  assert.match(componentSource, /radius: 28/);
+  assert.match(componentSource, /intensityOfMidpoint: 0\.94/);
+  assert.match(componentSource, /0\.96: 'rgba\(249, 115, 22, 0\.78\)'/);
 });
 
 test('companies map balloon includes company website as external link', () => {

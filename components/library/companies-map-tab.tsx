@@ -47,6 +47,13 @@ type CompaniesMapResponse = {
   };
 };
 
+type HeatmapCell = {
+  key: string;
+  lat: number;
+  lon: number;
+  count: number;
+};
+
 type YMapsApi = any;
 
 declare global {
@@ -58,11 +65,13 @@ declare global {
 const MAP_SCRIPT_ID = 'yandex-maps-2-1-api';
 const HEATMAP_SCRIPT_ID = 'yandex-maps-heatmap-module';
 const YANDEX_MAPS_API_KEY = process.env.NEXT_PUBLIC_YANDEX_MAPS_API_KEY || '';
-const HEATMAP_DENSITY_RADIUS_KM = 45;
-const HEATMAP_REGIONAL_RADIUS_KM = 140;
-const HEATMAP_GRID_CELL_DEGREES = HEATMAP_DENSITY_RADIUS_KM / 111;
-const HEATMAP_LOCAL_DENSITY_POWER = 2.2;
-const HEATMAP_REGIONAL_DENSITY_POWER = 1.4;
+const HEATMAP_CLUSTER_CELL_KM = 22;
+const HEATMAP_DENSITY_RADIUS_KM = 38;
+const HEATMAP_REGIONAL_RADIUS_KM = 180;
+const HEATMAP_GRID_CELL_DEGREES = HEATMAP_CLUSTER_CELL_KM / 111;
+const HEATMAP_LOCAL_DENSITY_POWER = 2.8;
+const HEATMAP_REGIONAL_DENSITY_POWER = 1.5;
+const HEATMAP_CELL_COUNT_POWER = 0.6;
 const ENTERPRISE_TYPES = [
   { value: 'MICRO', label: 'Микро' },
   { value: 'SMALL', label: 'Малое' },
@@ -237,58 +246,86 @@ function buildFeatureCollection(companies: MapCompany[]) {
 }
 
 function buildAutoScaledHeatmapFeatureCollection(companies: MapCompany[]) {
-  const grid = new Map<string, number[]>();
+  const cells = buildHeatmapDensityCells(companies);
+  const grid = buildHeatmapCellIndex(cells);
+  const densities = cells.map((cell) => countNearbyHeatmapCells(cell, grid));
 
-  companies.forEach((company, index) => {
-    const latCell = Math.floor(company.geo_lat / HEATMAP_GRID_CELL_DEGREES);
-    const lonCell = Math.floor(company.geo_lon / HEATMAP_GRID_CELL_DEGREES);
-    const key = `${latCell}:${lonCell}`;
-    const bucket = grid.get(key) ?? [];
-    bucket.push(index);
-    grid.set(key, bucket);
-  });
-
-  const densities = companies.map((company) => countNearbyCompanies(company, companies, grid));
-
+  const maxCellCount = Math.max(1, ...cells.map((cell) => cell.count));
   const maxLocalDensity = Math.max(1, ...densities.map((item) => item.local));
   const maxRegionalDensity = Math.max(1, ...densities.map((item) => item.regional));
 
   return {
     type: 'FeatureCollection',
-    features: companies.map((company, index) => {
+    features: cells.map((cell, index) => {
+      const normalizedCellCount = Math.log1p(cell.count) / Math.log1p(maxCellCount);
       const normalizedLocalDensity = densities[index].local / maxLocalDensity;
       const normalizedRegionalDensity = densities[index].regional / maxRegionalDensity;
       const weight =
+        Math.pow(normalizedCellCount, HEATMAP_CELL_COUNT_POWER) *
         Math.pow(normalizedLocalDensity, HEATMAP_LOCAL_DENSITY_POWER) *
         Math.pow(normalizedRegionalDensity, HEATMAP_REGIONAL_DENSITY_POWER);
 
       return {
         type: 'Feature',
-        id: `${company.inn}:${index}`,
+        id: cell.key,
         geometry: {
           type: 'Point',
-          coordinates: [company.geo_lat, company.geo_lon],
+          coordinates: [cell.lat, cell.lon],
         },
         properties: {
-          company_count: 1,
+          company_count: cell.count,
           local_density: densities[index].local,
           regional_density: densities[index].regional,
+          max_cell_count: maxCellCount,
           max_local_density: maxLocalDensity,
           max_regional_density: maxRegionalDensity,
-          weight: Math.max(0.005, weight),
+          weight: Math.max(0.0001, weight),
         },
       };
     }),
   };
 }
 
-function countNearbyCompanies(
-  company: MapCompany,
-  companies: MapCompany[],
-  grid: Map<string, number[]>,
-) {
-  const latCell = Math.floor(company.geo_lat / HEATMAP_GRID_CELL_DEGREES);
-  const lonCell = Math.floor(company.geo_lon / HEATMAP_GRID_CELL_DEGREES);
+function buildHeatmapDensityCells(companies: MapCompany[]): HeatmapCell[] {
+  const cells = new Map<string, { latSum: number; lonSum: number; count: number }>();
+
+  for (const company of companies) {
+    const latCell = Math.floor(company.geo_lat / HEATMAP_GRID_CELL_DEGREES);
+    const lonCell = Math.floor(company.geo_lon / HEATMAP_GRID_CELL_DEGREES);
+    const key = `${latCell}:${lonCell}`;
+    const cell = cells.get(key) ?? { latSum: 0, lonSum: 0, count: 0 };
+    cell.latSum += company.geo_lat;
+    cell.lonSum += company.geo_lon;
+    cell.count += 1;
+    cells.set(key, cell);
+  }
+
+  return Array.from(cells.entries()).map(([key, cell]) => ({
+    key,
+    lat: cell.latSum / cell.count,
+    lon: cell.lonSum / cell.count,
+    count: cell.count,
+  }));
+}
+
+function buildHeatmapCellIndex(cells: HeatmapCell[]) {
+  const grid = new Map<string, HeatmapCell[]>();
+
+  for (const cell of cells) {
+    const latCell = Math.floor(cell.lat / HEATMAP_GRID_CELL_DEGREES);
+    const lonCell = Math.floor(cell.lon / HEATMAP_GRID_CELL_DEGREES);
+    const key = `${latCell}:${lonCell}`;
+    const bucket = grid.get(key) ?? [];
+    bucket.push(cell);
+    grid.set(key, bucket);
+  }
+
+  return grid;
+}
+
+function countNearbyHeatmapCells(cell: HeatmapCell, grid: Map<string, HeatmapCell[]>) {
+  const latCell = Math.floor(cell.lat / HEATMAP_GRID_CELL_DEGREES);
+  const lonCell = Math.floor(cell.lon / HEATMAP_GRID_CELL_DEGREES);
   const cellRange = Math.ceil(HEATMAP_REGIONAL_RADIUS_KM / 111 / HEATMAP_GRID_CELL_DEGREES);
   const localRadiusSq = HEATMAP_DENSITY_RADIUS_KM * HEATMAP_DENSITY_RADIUS_KM;
   const regionalRadiusSq = HEATMAP_REGIONAL_RADIUS_KM * HEATMAP_REGIONAL_RADIUS_KM;
@@ -300,11 +337,10 @@ function countNearbyCompanies(
       const bucket = grid.get(`${latCell + latOffset}:${lonCell + lonOffset}`);
       if (!bucket) continue;
 
-      for (const candidateIndex of bucket) {
-        const candidate = companies[candidateIndex];
-        const distanceSq = getApproxDistanceKmSq(company.geo_lat, company.geo_lon, candidate.geo_lat, candidate.geo_lon);
-        if (distanceSq <= localRadiusSq) local += 1;
-        if (distanceSq <= regionalRadiusSq) regional += 1;
+      for (const candidate of bucket) {
+        const distanceSq = getApproxDistanceKmSq(cell.lat, cell.lon, candidate.lat, candidate.lon);
+        if (distanceSq <= localRadiusSq) local += candidate.count;
+        if (distanceSq <= regionalRadiusSq) regional += candidate.count;
       }
     }
   }
@@ -899,15 +935,15 @@ export default function CompaniesMapTab() {
       .then((Heatmap) => {
         if (heatmapBuildIdRef.current !== buildId || mapMode !== 'heatmap' || !mapRef.current) return;
         const heatmap = new Heatmap(heatmapFeatureCollection, {
-          radius: 20,
-          opacity: 0.78,
+          radius: 28,
+          opacity: 0.72,
           dissipating: true,
-          intensityOfMidpoint: 0.86,
+          intensityOfMidpoint: 0.94,
           gradient: {
-            0.12: 'rgba(82, 196, 26, 0.34)',
-            0.58: 'rgba(190, 242, 100, 0.54)',
-            0.86: 'rgba(250, 204, 21, 0.76)',
-            0.96: 'rgba(249, 115, 22, 0.88)',
+            0.16: 'rgba(34, 197, 94, 0.2)',
+            0.62: 'rgba(190, 242, 100, 0.4)',
+            0.86: 'rgba(250, 204, 21, 0.62)',
+            0.96: 'rgba(249, 115, 22, 0.78)',
             1.0: 'rgba(220, 38, 38, 0.98)',
           },
         });
