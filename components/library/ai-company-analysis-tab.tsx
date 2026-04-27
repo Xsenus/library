@@ -5333,10 +5333,9 @@ export default function AiCompanyAnalysisTab() {
                     const itemCompanyLabel = formatCompanyDisplayName(item.short_name, item.company_id);
                     const queuedTime = formatTime(item.queued_at ?? null);
                     const statusLabel = formatStatusLabel(item.analysis_status ?? 'queued');
+                    const showStatusLabel = statusLabel !== '—' && statusLabel.trim() !== badge.label.trim();
                     const attemptsValue = toFiniteNumber(item.analysis_attempts);
                     const attempts = attemptsValue != null ? Math.max(0, Math.floor(attemptsValue)) : '—';
-                    const scoreValue = resolveAnalysisScoreValue(item);
-                    const score = formatAnalysisScore(scoreValue);
                     const queuePriorityLabel = formatQueuePriorityLabel(item.queue_priority);
                     const queueSourceLabel = formatQueueSourceLabel(item.queue_source);
                     const queueRetryKindLabel = formatQueueRetryKind(item.queue_last_error_kind);
@@ -5358,26 +5357,27 @@ export default function AiCompanyAnalysisTab() {
                     return (
                       <div
                         key={`queue-${item.inn}`}
-                        className="rounded-2xl border bg-background/95 p-4 shadow-sm transition-colors hover:border-foreground/20"
+                        className={cn(
+                          'rounded-2xl border bg-background/95 p-4 shadow-sm transition-colors hover:border-foreground/20',
+                          queueSelected.has(item.inn) && 'border-zinc-400 bg-zinc-50 ring-1 ring-zinc-300',
+                        )}
                       >
                         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
-                          <label
-                            className="flex shrink-0 items-center gap-2 rounded-md border bg-muted/30 px-2 py-1 text-xs text-muted-foreground xl:mt-1"
-                            onClick={(event) => event.stopPropagation()}
-                          >
+                          <div className="flex shrink-0 items-center xl:mt-2">
                             <Checkbox
+                              aria-label={`Выбрать ${itemCompanyLabel}`}
                               checked={queueSelected.has(item.inn)}
+                              onClick={(event) => event.stopPropagation()}
                               onCheckedChange={(checked) => {
                                 setQueueSelected((prev) => {
                                   const next = new Set(prev);
-                                  if (checked) next.add(item.inn);
+                                  if (checked === true) next.add(item.inn);
                                   else next.delete(item.inn);
                                   return next;
                                 });
                               }}
                             />
-                            Выбрать
-                          </label>
+                          </div>
                           <button
                             type="button"
                             className="min-w-0 flex-1 rounded-xl text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -5389,9 +5389,11 @@ export default function AiCompanyAnalysisTab() {
                                   {itemCompanyLabel}
                                 </span>
                                 <Badge variant={badge.variant}>{badge.label}</Badge>
-                                <Badge variant="outline" className="whitespace-nowrap text-foreground">
-                                  {statusLabel}
-                                </Badge>
+                                {showStatusLabel && (
+                                  <Badge variant="outline" className="whitespace-nowrap text-foreground">
+                                    {statusLabel}
+                                  </Badge>
+                                )}
                               </div>
 
                               <div className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
@@ -5472,19 +5474,7 @@ export default function AiCompanyAnalysisTab() {
                             </div>
                           </button>
 
-                          <div className="flex shrink-0 flex-col gap-3 xl:min-w-[210px]">
-                            <div className="rounded-2xl border bg-muted/20 px-4 py-3 text-right">
-                              <div className="text-[11px] uppercase tracking-[0.12em] text-muted-foreground">
-                                Оценка
-                              </div>
-                              <div className="mt-2 text-3xl font-semibold tabular-nums text-foreground">
-                                {score}
-                              </div>
-                              <div className="mt-1 text-xs text-muted-foreground">
-                                {scoreValue != null ? 'Доступна для перехода в карточку' : 'Появится после расчёта'}
-                              </div>
-                            </div>
-
+                          <div className="flex shrink-0 flex-col gap-3 xl:min-w-[190px]">
                             <div className="flex flex-col gap-2 sm:flex-row xl:flex-col">
                               <Button
                                 type="button"

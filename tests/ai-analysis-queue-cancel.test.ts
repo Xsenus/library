@@ -35,6 +35,21 @@ test('AI analysis queue modal supports selected and all cancellation actions', (
   assert.match(componentSource, /all:\s*source === 'all'/);
 });
 
+test('AI analysis queue rows keep selection compact and avoid duplicate status badges', () => {
+  const queueRowsSource = componentSource.slice(
+    componentSource.indexOf('queueItems.map((item) => {'),
+    componentSource.indexOf('<AlertDialog', componentSource.indexOf('queueItems.map((item) => {')),
+  );
+
+  assert.match(queueRowsSource, /queueSelected\.has\(item\.inn\) && 'border-zinc-400 bg-zinc-50 ring-1 ring-zinc-300'/);
+  assert.match(queueRowsSource, /aria-label=\{`Выбрать \$\{itemCompanyLabel\}`\}/);
+  assert.match(queueRowsSource, /const showStatusLabel = statusLabel !== '—' && statusLabel\.trim\(\) !== badge\.label\.trim\(\)/);
+  assert.match(queueRowsSource, /\{showStatusLabel && \(/);
+  assert.doesNotMatch(queueRowsSource, />\s*Выбрать\s*</);
+  assert.doesNotMatch(queueRowsSource, />\s*Оценка\s*</);
+  assert.doesNotMatch(queueRowsSource, /Появится после расч/);
+});
+
 test('AI analysis stop API can resolve every queued or running company for cancel all', () => {
   assert.match(stopRouteSource, /all\?:\s*unknown/);
   assert.match(stopRouteSource, /body\?\.all === true/);
