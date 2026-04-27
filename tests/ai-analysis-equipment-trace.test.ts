@@ -45,6 +45,41 @@ test('normalizeEquipmentTracePayload keeps only winner-path data for 3way equipm
   ]);
 });
 
+test('normalizeEquipmentTracePayload does not mix 1way fields into 3way winners', () => {
+  const items = normalizeEquipmentTracePayload({
+    selection_strategy: 'site',
+    equipment_all: [{ id: 12, equipment_name: 'Filling machine', score: 0.48, source: '3way' }],
+    equipment_1way_details: [
+      {
+        id: 12,
+        db_score: 0.11,
+        gen_score: 0.11,
+        vector_score: 0.22,
+        final_score: 0.0242,
+        factor: 0.33,
+        path: 'direct',
+      },
+    ],
+    equipment_3way_details: [
+      {
+        equipment_id: 12,
+        equipment_score: 0.6,
+        db_score: 0.8,
+        gen_score: 0.8,
+        final_score: 0.48,
+        factor: 1,
+      },
+    ],
+  });
+
+  assert.equal(items[0]?.final_source, '3way');
+  assert.equal(items[0]?.calculation_path, '3way');
+  assert.equal(items[0]?.vector_score, 0.6);
+  assert.equal(items[0]?.gen_score, 0.8);
+  assert.equal(items[0]?.factor, 1);
+  assert.equal(items[0]?.bd_score, 0.8);
+});
+
 test('normalizeEquipmentTracePayload does not borrow site trace for 1way winners', () => {
   const items = normalizeEquipmentTracePayload({
     selection_strategy: 'site',
