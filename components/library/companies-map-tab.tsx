@@ -59,8 +59,10 @@ const MAP_SCRIPT_ID = 'yandex-maps-2-1-api';
 const HEATMAP_SCRIPT_ID = 'yandex-maps-heatmap-module';
 const YANDEX_MAPS_API_KEY = process.env.NEXT_PUBLIC_YANDEX_MAPS_API_KEY || '';
 const HEATMAP_DENSITY_RADIUS_KM = 45;
+const HEATMAP_REGIONAL_RADIUS_KM = 140;
 const HEATMAP_GRID_CELL_DEGREES = HEATMAP_DENSITY_RADIUS_KM / 111;
-const HEATMAP_DENSITY_POWER = 3.4;
+const HEATMAP_LOCAL_DENSITY_POWER = 2.2;
+const HEATMAP_REGIONAL_DENSITY_POWER = 1.4;
 const ENTERPRISE_TYPES = [
   { value: 'MICRO', label: 'Микро' },
   { value: 'SMALL', label: 'Малое' },
@@ -246,34 +248,19 @@ function buildAutoScaledHeatmapFeatureCollection(companies: MapCompany[]) {
     grid.set(key, bucket);
   });
 
-  const densities = companies.map((company) => {
-    const latCell = Math.floor(company.geo_lat / HEATMAP_GRID_CELL_DEGREES);
-    const lonCell = Math.floor(company.geo_lon / HEATMAP_GRID_CELL_DEGREES);
-    let density = 0;
+  const densities = companies.map((company) => countNearbyCompanies(company, companies, grid));
 
-    for (let latOffset = -1; latOffset <= 1; latOffset += 1) {
-      for (let lonOffset = -1; lonOffset <= 1; lonOffset += 1) {
-        const bucket = grid.get(`${latCell + latOffset}:${lonCell + lonOffset}`);
-        if (!bucket) continue;
-
-        for (const candidateIndex of bucket) {
-          const candidate = companies[candidateIndex];
-          if (getDistanceKm(company.geo_lat, company.geo_lon, candidate.geo_lat, candidate.geo_lon) <= HEATMAP_DENSITY_RADIUS_KM) {
-            density += 1;
-          }
-        }
-      }
-    }
-
-    return density;
-  });
-
-  const maxLocalDensity = Math.max(1, ...densities);
+  const maxLocalDensity = Math.max(1, ...densities.map((item) => item.local));
+  const maxRegionalDensity = Math.max(1, ...densities.map((item) => item.regional));
 
   return {
     type: 'FeatureCollection',
     features: companies.map((company, index) => {
-      const normalizedDensity = densities[index] / maxLocalDensity;
+      const normalizedLocalDensity = densities[index].local / maxLocalDensity;
+      const normalizedRegionalDensity = densities[index].regional / maxRegionalDensity;
+      const weight =
+        Math.pow(normalizedLocalDensity, HEATMAP_LOCAL_DENSITY_POWER) *
+        Math.pow(normalizedRegionalDensity, HEATMAP_REGIONAL_DENSITY_POWER);
 
       return {
         type: 'Feature',
@@ -284,26 +271,51 @@ function buildAutoScaledHeatmapFeatureCollection(companies: MapCompany[]) {
         },
         properties: {
           company_count: 1,
-          local_density: densities[index],
+          local_density: densities[index].local,
+          regional_density: densities[index].regional,
           max_local_density: maxLocalDensity,
-          weight: Math.max(0.01, Math.pow(normalizedDensity, HEATMAP_DENSITY_POWER)),
+          max_regional_density: maxRegionalDensity,
+          weight: Math.max(0.005, weight),
         },
       };
     }),
   };
 }
 
-function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
-  const earthRadiusKm = 6371;
-  const toRadians = Math.PI / 180;
-  const dLat = (lat2 - lat1) * toRadians;
-  const dLon = (lon2 - lon1) * toRadians;
-  const rLat1 = lat1 * toRadians;
-  const rLat2 = lat2 * toRadians;
-  const a =
-    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
-    Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
-  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+function countNearbyCompanies(
+  company: MapCompany,
+  companies: MapCompany[],
+  grid: Map<string, number[]>,
+) {
+  const latCell = Math.floor(company.geo_lat / HEATMAP_GRID_CELL_DEGREES);
+  const lonCell = Math.floor(company.geo_lon / HEATMAP_GRID_CELL_DEGREES);
+  const cellRange = Math.ceil(HEATMAP_REGIONAL_RADIUS_KM / 111 / HEATMAP_GRID_CELL_DEGREES);
+  const localRadiusSq = HEATMAP_DENSITY_RADIUS_KM * HEATMAP_DENSITY_RADIUS_KM;
+  const regionalRadiusSq = HEATMAP_REGIONAL_RADIUS_KM * HEATMAP_REGIONAL_RADIUS_KM;
+  let local = 0;
+  let regional = 0;
+
+  for (let latOffset = -cellRange; latOffset <= cellRange; latOffset += 1) {
+    for (let lonOffset = -cellRange; lonOffset <= cellRange; lonOffset += 1) {
+      const bucket = grid.get(`${latCell + latOffset}:${lonCell + lonOffset}`);
+      if (!bucket) continue;
+
+      for (const candidateIndex of bucket) {
+        const candidate = companies[candidateIndex];
+        const distanceSq = getApproxDistanceKmSq(company.geo_lat, company.geo_lon, candidate.geo_lat, candidate.geo_lon);
+        if (distanceSq <= localRadiusSq) local += 1;
+        if (distanceSq <= regionalRadiusSq) regional += 1;
+      }
+    }
+  }
+
+  return { local, regional };
+}
+
+function getApproxDistanceKmSq(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const latKm = (lat2 - lat1) * 111;
+  const lonKm = (lon2 - lon1) * 111 * Math.cos(((lat1 + lat2) / 2) * (Math.PI / 180));
+  return latKm * latKm + lonKm * lonKm;
 }
 
 function dedupeOkvedOptions(items: OkvedOption[]): OkvedOption[] {
