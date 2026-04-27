@@ -271,7 +271,7 @@ export default function OkvedTab() {
     async function loadProdclasses() {
       try {
         setProdclassesLoading(true);
-        const res = await fetch(`/api/industries/${encodeURIComponent(industryId)}/prodclasses?page=1&pageSize=200&scope=okved`, {
+        const res = await fetch(`/api/industries/${encodeURIComponent(industryId)}/prodclasses?page=1&pageSize=100&scope=okved`, {
           cache: 'no-store',
           signal: ac.signal,
         });

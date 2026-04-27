@@ -76,7 +76,7 @@ test('companies map API supports enterprise type main OKVED and revenue growth f
 
 test('companies map uses industry to type to okved cascade', () => {
   assert.match(componentSource, /type ProdclassItem/);
-  assert.match(componentSource, /scope=okved/);
+  assert.match(componentSource, /pageSize=100&scope=okved/);
   assert.match(componentSource, /setProdclassId\('all'\)/);
   assert.match(componentSource, /params\.set\('prodclassId', prodclassId\)/);
   assert.match(componentSource, /disabled=\{industryId === 'all'/);

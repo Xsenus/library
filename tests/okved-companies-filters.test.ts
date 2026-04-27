@@ -53,7 +53,7 @@ test('okved companies UI exposes responsible filter and company sites column', (
 test('okved companies UI exposes three step industry type okved filter', () => {
   assert.match(componentSource, /type ProdclassItem/);
   assert.match(componentSource, /initialProdclassId/);
-  assert.match(componentSource, /scope=okved/);
+  assert.match(componentSource, /pageSize=100&scope=okved/);
   assert.match(componentSource, /url\.searchParams\.set\('prodclassId', prodclassId\)/);
   assert.match(componentSource, /qs\.set\('prodclassId', prodclassId\)/);
   assert.match(componentSource, /Все типы предприятий/);
