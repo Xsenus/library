@@ -13,6 +13,7 @@ import { useDebounce } from '@/hooks/use-debounce';
 import { cn } from '@/lib/utils';
 
 type IndustryItem = { id: number; industry: string };
+type ProdclassItem = { id: number; prodclass: string; industry_id: number };
 type OkvedOption = { id: number; okved_code: string; okved_main: string };
 type MapMode = 'points' | 'heatmap';
 
@@ -480,10 +481,13 @@ export default function CompaniesMapTab() {
 
   const [industries, setIndustries] = useState<IndustryItem[]>([]);
   const [industriesLoading, setIndustriesLoading] = useState(false);
+  const [prodclasses, setProdclasses] = useState<ProdclassItem[]>([]);
+  const [prodclassesLoading, setProdclassesLoading] = useState(false);
   const [okvedOptions, setOkvedOptions] = useState<OkvedOption[]>([]);
   const [okvedLoading, setOkvedLoading] = useState(false);
 
   const [industryId, setIndustryId] = useState('all');
+  const [prodclassId, setProdclassId] = useState('all');
   const [okvedCode, setOkvedCode] = useState('all');
   const [enterpriseType, setEnterpriseType] = useState('all');
   const [mainOkvedOnly, setMainOkvedOnly] = useState(true);
@@ -521,6 +525,7 @@ export default function CompaniesMapTab() {
   const activeFilterCount = useMemo(() => {
     let count = 0;
     if (industryId !== 'all') count += 1;
+    if (prodclassId !== 'all') count += 1;
     if (enterpriseType !== 'all') count += 1;
     if (okvedCode !== 'all') count += 1;
     if (!mainOkvedOnly) count += 1;
@@ -540,12 +545,14 @@ export default function CompaniesMapTab() {
     industryId,
     mainOkvedOnly,
     okvedCode,
+    prodclassId,
     revenueGrowing,
     successOnly,
   ]);
 
   const resetFilters = useCallback(() => {
     setIndustryId('all');
+    setProdclassId('all');
     setEnterpriseType('all');
     setOkvedCode('all');
     setMainOkvedOnly(true);
@@ -579,6 +586,7 @@ export default function CompaniesMapTab() {
 
         const params = new URLSearchParams();
         if (industryId !== 'all') params.set('industryId', industryId);
+        if (prodclassId !== 'all') params.set('prodclassId', prodclassId);
         if (enterpriseType !== 'all') params.set('enterpriseType', enterpriseType);
         if (okvedCode !== 'all') params.set('okved', okvedCode);
         params.set('mainOkvedOnly', mainOkvedOnly ? '1' : '0');
@@ -621,6 +629,7 @@ export default function CompaniesMapTab() {
       industryId,
       mainOkvedOnly,
       okvedCode,
+      prodclassId,
       revenueGrowing,
       successOnly,
     ],
@@ -654,10 +663,45 @@ export default function CompaniesMapTab() {
   useEffect(() => {
     const ac = new AbortController();
 
+    if (industryId === 'all') {
+      setProdclasses([]);
+      setProdclassId('all');
+      return () => ac.abort();
+    }
+
+    async function loadProdclasses() {
+      try {
+        setProdclassesLoading(true);
+        const res = await fetch(`/api/industries/${encodeURIComponent(industryId)}/prodclasses?page=1&pageSize=200&scope=okved`, {
+          cache: 'no-store',
+          signal: ac.signal,
+        });
+        if (!res.ok) throw new Error(`Failed with ${res.status}`);
+        const data = await res.json();
+        setProdclasses(Array.isArray(data.items) ? data.items : []);
+      } catch (err: any) {
+        if (err?.name === 'AbortError') return;
+        console.error('Failed to load prodclasses for map:', err);
+        setProdclasses([]);
+      } finally {
+        setProdclassesLoading(false);
+      }
+    }
+
+    setProdclassId('all');
+    loadProdclasses();
+
+    return () => ac.abort();
+  }, [industryId]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+
     async function loadOkveds() {
       try {
         setOkvedLoading(true);
         const params = new URLSearchParams();
+        if (prodclassId !== 'all') params.set('prodclassId', prodclassId);
         if (industryId !== 'all') params.set('industryId', industryId);
         const res = await fetch(`/api/okved?${params.toString()}`, { cache: 'no-store', signal: ac.signal });
         if (!res.ok) throw new Error(`Failed with ${res.status}`);
@@ -677,7 +721,7 @@ export default function CompaniesMapTab() {
     loadOkveds();
 
     return () => ac.abort();
-  }, [industryId, enterpriseType]);
+  }, [industryId, prodclassId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -842,6 +886,10 @@ export default function CompaniesMapTab() {
     () => industries.find((item) => String(item.id) === industryId)?.industry ?? null,
     [industries, industryId],
   );
+  const selectedProdclassLabel = useMemo(
+    () => prodclasses.find((item) => String(item.id) === prodclassId)?.prodclass ?? null,
+    [prodclasses, prodclassId],
+  );
   const selectedEnterpriseTypeLabel = useMemo(
     () => ENTERPRISE_TYPES.find((item) => item.value === enterpriseType)?.label ?? null,
     [enterpriseType],
@@ -944,15 +992,15 @@ export default function CompaniesMapTab() {
               </FilterField>
 
               <FilterField label="Тип предприятия" className="xl:col-span-2">
-                <Select value={enterpriseType} onValueChange={setEnterpriseType}>
-                  <SelectTrigger className={CONTROL_CLASS}>
-                    <SelectValue placeholder="Все типы" />
+                <Select value={prodclassId} onValueChange={setProdclassId} disabled={industryId === 'all'}>
+                  <SelectTrigger className={CONTROL_CLASS} disabled={industryId === 'all' || (prodclassesLoading && !prodclasses.length)}>
+                    <SelectValue placeholder={industryId === 'all' ? 'Сначала отрасль' : 'Все типы'} />
                   </SelectTrigger>
-                  <SelectContent>
+                  <SelectContent className="min-w-full sm:min-w-[460px]">
                     <SelectItem value="all">Все типы</SelectItem>
-                    {ENTERPRISE_TYPES.map((item) => (
-                      <SelectItem key={item.value} value={item.value}>
-                        {item.label}
+                    {prodclasses.map((item) => (
+                      <SelectItem key={item.id} value={String(item.id)} title={item.prodclass}>
+                        {item.prodclass}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1056,13 +1104,30 @@ export default function CompaniesMapTab() {
                   Выручка в рост
                 </CompactCheckbox>
               </FilterField>
+
+              <FilterField label="Размер бизнеса" className="xl:col-span-2">
+                <Select value={enterpriseType} onValueChange={setEnterpriseType}>
+                  <SelectTrigger className={CONTROL_CLASS}>
+                    <SelectValue placeholder="Все размеры" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Все размеры</SelectItem>
+                    {ENTERPRISE_TYPES.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FilterField>
             </div>
 
-            {(selectedIndustryLabel || selectedEnterpriseTypeLabel || okvedCode !== 'all' || revenueGrowing || error) && (
+            {(selectedIndustryLabel || selectedProdclassLabel || selectedEnterpriseTypeLabel || okvedCode !== 'all' || revenueGrowing || error) && (
             <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-wrap items-center gap-2">
                 {selectedIndustryLabel && <ActiveFilterBadge>Отрасль: {selectedIndustryLabel}</ActiveFilterBadge>}
-                {selectedEnterpriseTypeLabel && <ActiveFilterBadge>Тип: {selectedEnterpriseTypeLabel}</ActiveFilterBadge>}
+                {selectedProdclassLabel && <ActiveFilterBadge>Тип: {selectedProdclassLabel}</ActiveFilterBadge>}
+                {selectedEnterpriseTypeLabel && <ActiveFilterBadge>Размер: {selectedEnterpriseTypeLabel}</ActiveFilterBadge>}
                 {okvedCode !== 'all' && <ActiveFilterBadge>ОКВЭД: {okvedCode}</ActiveFilterBadge>}
                 {revenueGrowing && <ActiveFilterBadge>Выручка в рост</ActiveFilterBadge>}
               </div>

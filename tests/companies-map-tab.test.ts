@@ -16,7 +16,9 @@ const routeSource = fs.readFileSync(
 test('companies map exposes requested filter controls and heatmap mode', () => {
   assert.match(componentSource, /Popover open=\{responsibleOpen\}/);
   assert.match(componentSource, /CommandInput placeholder="Найти ФИО"/);
+  assert.match(componentSource, /Select value=\{prodclassId\}/);
   assert.match(componentSource, /Select value=\{enterpriseType\}/);
+  assert.match(componentSource, /Размер бизнеса/);
   assert.match(componentSource, /Искать по основному ОКВЭД/);
   assert.match(componentSource, /Выручка в рост/);
   assert.match(componentSource, /Точки/);
@@ -61,6 +63,8 @@ test('companies map balloon includes company website as external link', () => {
 });
 
 test('companies map API supports enterprise type main OKVED and revenue growth filters', () => {
+  assert.match(routeSource, /searchParams\.get\('prodclassId'\)/);
+  assert.match(routeSource, /getOkvedCodesForProdclass\(prodclassId\)/);
   assert.match(routeSource, /searchParams\.get\('enterpriseType'\)/);
   assert.match(routeSource, /searchParams\.get\('mainOkvedOnly'\) !== '0'/);
   assert.match(routeSource, /searchParams\.get\('revenueGrowing'\) === '1'/);
@@ -68,4 +72,12 @@ test('companies map API supports enterprise type main OKVED and revenue growth f
   assert.match(routeSource, /TRIM\(d\.main_okved\) = \$\$\{param\}/);
   assert.match(routeSource, /d\.revenue > d\."revenue-1"/);
   assert.match(routeSource, /d\.web_sites/);
+});
+
+test('companies map uses industry to type to okved cascade', () => {
+  assert.match(componentSource, /type ProdclassItem/);
+  assert.match(componentSource, /scope=okved/);
+  assert.match(componentSource, /setProdclassId\('all'\)/);
+  assert.match(componentSource, /params\.set\('prodclassId', prodclassId\)/);
+  assert.match(componentSource, /disabled=\{industryId === 'all'/);
 });

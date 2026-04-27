@@ -35,6 +35,12 @@ test('okved companies API filters by cached Bitrix responsible', () => {
   assert.match(routeSource, /d\.inn\s*=\s*ANY\(\$\$\{i\}::text\[\]\)/);
 });
 
+test('okved companies API supports prodclass filter between industry and okved', () => {
+  assert.match(routeSource, /searchParams\.get\('prodclassId'\)/);
+  assert.match(routeSource, /getOkvedCodesForProdclass\(prodclassId\)/);
+  assert.match(routeSource, /TRIM\(d\.main_okved\) = ANY\(\$\$\{i\}::text\[\]\)/);
+});
+
 test('okved companies UI exposes responsible filter and company sites column', () => {
   assert.match(componentSource, /data-testid="okved-companies-responsible-filter"/);
   assert.match(componentSource, /url\.searchParams\.set\('responsible',\s*responsibleFilter\.trim\(\)\)/);
@@ -42,4 +48,13 @@ test('okved companies UI exposes responsible filter and company sites column', (
   assert.match(componentSource, /companySites\[c\.inn\]\s*\?\?/);
   assert.match(componentSource, /showSitesToggle/);
   assert.match(componentSource, /href=\{siteHref\(site\)\}/);
+});
+
+test('okved companies UI exposes three step industry type okved filter', () => {
+  assert.match(componentSource, /type ProdclassItem/);
+  assert.match(componentSource, /initialProdclassId/);
+  assert.match(componentSource, /scope=okved/);
+  assert.match(componentSource, /url\.searchParams\.set\('prodclassId', prodclassId\)/);
+  assert.match(componentSource, /qs\.set\('prodclassId', prodclassId\)/);
+  assert.match(componentSource, /Все типы предприятий/);
 });

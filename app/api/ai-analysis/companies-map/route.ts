@@ -96,6 +96,24 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
   }
 }
 
+async function getOkvedCodesForProdclass(prodclassId: number): Promise<string[]> {
+  try {
+    const { rows } = await db.query<{ code: string }>(
+      `
+        SELECT DISTINCT regexp_replace(btrim(o.okved_code), '[\\s\\u00A0]+', '', 'g') AS code
+        FROM ib_okved o
+        WHERE o.prodclass_id = $1
+        ORDER BY code
+      `,
+      [prodclassId],
+    );
+    return rows.map((row) => row.code).filter(Boolean);
+  } catch (error) {
+    console.warn('companies-map: failed to load okved codes for prodclass', error);
+    return [];
+  }
+}
+
 async function resolveResponsibleInns(responsible: string): Promise<string[] | null> {
   const normalized = responsible.trim();
   if (!normalized) return null;
@@ -172,6 +190,7 @@ export async function GET(request: NextRequest) {
   try {
     const { searchParams } = request.nextUrl;
     const industryId = parsePositiveInt(searchParams.get('industryId'));
+    const prodclassId = parsePositiveInt(searchParams.get('prodclassId'));
     const okved = (searchParams.get('okved') ?? '').trim();
     const enterpriseType = (searchParams.get('enterpriseType') ?? '').trim();
     const mainOkvedOnly = searchParams.get('mainOkvedOnly') !== '0';
@@ -200,6 +219,42 @@ export async function GET(request: NextRequest) {
       }
       args.push(roots);
       where.push(`split_part(d.main_okved, '.', 1) = ANY($${args.length}::text[])`);
+    }
+
+    if (prodclassId) {
+      const codes = await getOkvedCodesForProdclass(prodclassId);
+      if (!codes.length) {
+        const responsibles = await loadResponsibleOptions();
+        return NextResponse.json({
+          items: [],
+          total: 0,
+          withGeo: 0,
+          skippedNoGeo: 0,
+          filterOptions: { responsibles },
+        });
+      }
+
+      args.push(codes);
+      const param = args.length;
+      if (mainOkvedOnly) {
+        where.push(`TRIM(d.main_okved) = ANY($${param}::text[])`);
+      } else {
+        where.push(`
+          (
+            TRIM(d.main_okved) = ANY($${param}::text[])
+            OR EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(COALESCE(d.okveds, '[]'::jsonb)) AS elem(val)
+              WHERE
+                (jsonb_typeof(elem.val) = 'string' AND TRIM(BOTH '"' FROM elem.val::text) = ANY($${param}::text[]))
+                OR (
+                  jsonb_typeof(elem.val) = 'object'
+                  AND COALESCE(elem.val->>'okved', elem.val->>'code', elem.val->>'okved_code', '') = ANY($${param}::text[])
+                )
+            )
+          )
+        `);
+      }
     }
 
     if (okved) {

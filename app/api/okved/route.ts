@@ -24,9 +24,31 @@ const SQL_ALL = `
 const SQL_BY_INDUSTRY = `
   SELECT DISTINCT o.id, o.okved_code, o.okved_main
   FROM ib_okved_main o
-  JOIN ib_okved_industry_map m ON m.okved_id = o.id
-  WHERE m.industry_id = $1
+  WHERE o.industry_id = $1
   ORDER BY o.okved_code
+  LIMIT 1000
+`;
+
+const SQL_BY_PRODCLASS = `
+  SELECT DISTINCT ON (regexp_replace(btrim(o.okved_code), '[\\s\\u00A0]+', '', 'g'))
+    o.id,
+    regexp_replace(btrim(o.okved_code), '[\\s\\u00A0]+', '', 'g') AS okved_code,
+    o.okved_main
+  FROM ib_okved o
+  WHERE o.prodclass_id = $1
+  ORDER BY regexp_replace(btrim(o.okved_code), '[\\s\\u00A0]+', '', 'g'), o.okved_main DESC, o.id
+  LIMIT 1000
+`;
+
+const SQL_BY_INDUSTRY_PRODCLASSES = `
+  SELECT DISTINCT ON (regexp_replace(btrim(o.okved_code), '[\\s\\u00A0]+', '', 'g'))
+    o.id,
+    regexp_replace(btrim(o.okved_code), '[\\s\\u00A0]+', '', 'g') AS okved_code,
+    o.okved_main
+  FROM ib_okved o
+  JOIN ib_prodclass p ON p.id = o.prodclass_id
+  WHERE p.industry_id = $1
+  ORDER BY regexp_replace(btrim(o.okved_code), '[\\s\\u00A0]+', '', 'g'), o.okved_main DESC, o.id
   LIMIT 1000
 `;
 
@@ -38,10 +60,16 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const industryId = Number(searchParams.get('industryId') || '');
+    const prodclassId = Number(searchParams.get('prodclassId') || '');
 
     let rows: OkvedItem[] = [];
-    if (Number.isFinite(industryId) && industryId > 0) {
-      const res = await db.query<OkvedItem>(SQL_BY_INDUSTRY, [industryId]);
+    if (Number.isFinite(prodclassId) && prodclassId > 0) {
+      const res = await db.query<OkvedItem>(SQL_BY_PRODCLASS, [prodclassId]);
+      rows = res.rows;
+    } else if (Number.isFinite(industryId) && industryId > 0) {
+      const res = await db.query<OkvedItem>(SQL_BY_INDUSTRY_PRODCLASSES, [industryId]).catch(() =>
+        db.query<OkvedItem>(SQL_BY_INDUSTRY, [industryId]),
+      );
       rows = res.rows;
     } else {
       const res = await db.query<OkvedItem>(SQL_ALL);

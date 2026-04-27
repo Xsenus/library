@@ -32,6 +32,19 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
   return roots;
 }
 
+async function getOkvedCodesForProdclass(prodclassId: number): Promise<string[]> {
+  const { rows } = await db.query<{ code: string }>(
+    `
+      SELECT DISTINCT regexp_replace(btrim(o.okved_code), '[\\s\\u00A0]+', '', 'g') AS code
+      FROM ib_okved o
+      WHERE o.prodclass_id = $1
+      ORDER BY code
+    `,
+    [prodclassId],
+  );
+  return rows.map((row) => row.code).filter(Boolean);
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireApiAuth();
@@ -57,6 +70,8 @@ export async function GET(request: NextRequest) {
 
     const industryIdRaw = searchParams.get('industryId');
     const industryId = industryIdRaw && /^\d+$/.test(industryIdRaw) ? Number(industryIdRaw) : null;
+    const prodclassIdRaw = searchParams.get('prodclassId');
+    const prodclassId = prodclassIdRaw && /^\d+$/.test(prodclassIdRaw) ? Number(prodclassIdRaw) : null;
 
     const offset = (base.page - 1) * base.pageSize;
 
@@ -139,6 +154,36 @@ export async function GET(request: NextRequest) {
         where.push(`split_part(d.main_okved, '.', 1) = ANY($${i}::text[])`);
         args.push(roots);
         i++;
+      } else {
+        return NextResponse.json({ items: [], total: 0, page: base.page, pageSize: base.pageSize });
+      }
+    }
+
+    // ---------- Фильтр по классу предприятия ----------
+    if (prodclassId != null) {
+      const codes = await getOkvedCodesForProdclass(prodclassId);
+      if (codes.length > 0) {
+        let cond = `TRIM(d.main_okved) = ANY($${i}::text[])`;
+        args.push(codes);
+        i++;
+
+        if (includeExtra) {
+          cond += `
+            OR EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(COALESCE(d.okveds, '[]'::jsonb)) AS elem(val)
+              WHERE
+                (jsonb_typeof(elem.val) = 'string' AND TRIM(BOTH '"' FROM elem.val::text) = ANY($${i}::text[]))
+                OR (
+                  jsonb_typeof(elem.val) = 'object'
+                  AND COALESCE(elem.val->>'okved', elem.val->>'code', elem.val->>'okved_code', '') = ANY($${i}::text[])
+                )
+            )`;
+          args.push(codes);
+          i++;
+        }
+
+        where.push(`(${cond})`);
       } else {
         return NextResponse.json({ items: [], total: 0, page: base.page, pageSize: base.pageSize });
       }

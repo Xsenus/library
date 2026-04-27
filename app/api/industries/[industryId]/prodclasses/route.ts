@@ -21,15 +21,23 @@ export async function GET(request: NextRequest, { params }: { params: { industry
       pageSize: searchParams.get('pageSize'),
       query: searchParams.get('query'),
     });
+    const scope = searchParams.get('scope') === 'okved' ? 'okved' : 'equipment';
 
     const { industryId, page, pageSize, query } = queryParams;
     const offset = (page - 1) * pageSize;
 
     // --- WHERE блок по новому принципу
     // p: prodclass, w: workshop, e: equipment
-    const where = `
-      p.industry_id = $1
-      AND ($2::text IS NULL OR p.prodclass ILIKE '%'||$2||'%')
+    const relationExists =
+      scope === 'okved'
+        ? `
+      AND EXISTS (
+        SELECT 1
+        FROM ib_okved o
+        WHERE o.prodclass_id = p.id
+      )
+    `
+        : `
       AND EXISTS (
         SELECT 1
         FROM ib_workshops w
@@ -40,6 +48,12 @@ export async function GET(request: NextRequest, { params }: { params: { industry
             WHERE e.workshop_id = w.id
           )
       )
+    `;
+
+    const where = `
+      p.industry_id = $1
+      AND ($2::text IS NULL OR p.prodclass ILIKE '%'||$2||'%')
+      ${relationExists}
     `;
 
     // total

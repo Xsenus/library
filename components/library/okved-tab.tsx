@@ -13,6 +13,7 @@ import SquareImgButton from './square-img-button';
 type OkvedMain = ReturnType<typeof okvedMainSchema.parse>;
 type SortKey = 'revenue_desc' | 'revenue_asc';
 type IndustryItem = { id: number; industry: string };
+type ProdclassItem = { id: number; prodclass: string; industry_id: number };
 
 const RESPONSIBLE_MAX_AGE_MINUTES = 30;
 const CONTACTS_MAX_AGE_MINUTES = 24 * 60;
@@ -159,6 +160,8 @@ export default function OkvedTab() {
   const initialExtra = (sp.get('extra') ?? '0') === '1'; // ЧБ №2
   const initialParent = (sp.get('parent') ?? '0') === '1'; // ЧБ №3
   const initialPage = Number(sp.get('page')) || 1;
+  const initialIndustryId = sp.get('industryId') ?? 'all';
+  const initialProdclassId = sp.get('prodclassId') ?? 'all';
 
   const [okveds, setOkveds] = useState<OkvedMain[]>([]);
   const [okved, setOkved] = useState<string>(initialOkved);
@@ -174,9 +177,12 @@ export default function OkvedTab() {
 
   const [industryList, setIndustryList] = useState<IndustryItem[]>([]);
   const [industriesLoading, setIndustriesLoading] = useState<boolean>(true);
+  const [prodclassList, setProdclassList] = useState<ProdclassItem[]>([]);
+  const [prodclassesLoading, setProdclassesLoading] = useState<boolean>(false);
 
-  const [csOkvedEnabled, setCsOkvedEnabled] = useState<boolean>(false);
-  const [industryId, setIndustryId] = useState<string>('all');
+  const [csOkvedEnabled, setCsOkvedEnabled] = useState<boolean>(initialIndustryId !== 'all');
+  const [industryId, setIndustryId] = useState<string>(initialIndustryId);
+  const [prodclassId, setProdclassId] = useState<string>(initialProdclassId);
 
   const [includeExtra, setIncludeParent] = [
     useState<boolean>(initialExtra)[0],
@@ -203,6 +209,7 @@ export default function OkvedTab() {
   });
   const draggingRef = useRef(false);
   const layoutRef = useRef<HTMLDivElement | null>(null);
+  const initialProdclassAppliedRef = useRef(false);
 
   useEffect(() => {
     function ensureBounds() {
@@ -230,6 +237,9 @@ export default function OkvedTab() {
         if (csOkvedEnabled && industryId !== 'all') {
           url.searchParams.set('industryId', industryId);
         }
+        if (csOkvedEnabled && prodclassId !== 'all') {
+          url.searchParams.set('prodclassId', prodclassId);
+        }
 
         const res = await fetch(url.toString(), { cache: 'no-store', signal: ac.signal });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -247,7 +257,47 @@ export default function OkvedTab() {
     })();
 
     return () => ac.abort();
-  }, [csOkvedEnabled, industryId]);
+  }, [csOkvedEnabled, industryId, prodclassId]);
+
+  useEffect(() => {
+    const ac = new AbortController();
+
+    if (!csOkvedEnabled || industryId === 'all') {
+      setProdclassList([]);
+      setProdclassId('all');
+      return () => ac.abort();
+    }
+
+    async function loadProdclasses() {
+      try {
+        setProdclassesLoading(true);
+        const res = await fetch(`/api/industries/${encodeURIComponent(industryId)}/prodclasses?page=1&pageSize=200&scope=okved`, {
+          cache: 'no-store',
+          signal: ac.signal,
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (!ac.signal.aborted) {
+          setProdclassList(Array.isArray(data.items) ? data.items : []);
+        }
+      } catch (err: any) {
+        if (err?.name !== 'AbortError') {
+          console.error('Failed to load prodclasses:', err);
+          setProdclassList([]);
+        }
+      } finally {
+        if (!ac.signal.aborted) setProdclassesLoading(false);
+      }
+    }
+
+    if (initialProdclassId !== 'all' && !initialProdclassAppliedRef.current) {
+      initialProdclassAppliedRef.current = true;
+    } else {
+      setProdclassId('all');
+    }
+    loadProdclasses();
+    return () => ac.abort();
+  }, [csOkvedEnabled, industryId, initialProdclassId]);
 
   useEffect(() => {
     const ac = new AbortController();
@@ -324,6 +374,9 @@ export default function OkvedTab() {
     if (csOkvedEnabled && industryId !== 'all') {
       url.searchParams.set('industryId', industryId);
     }
+    if (csOkvedEnabled && prodclassId !== 'all') {
+      url.searchParams.set('prodclassId', prodclassId);
+    }
 
     (async () => {
       try {
@@ -362,6 +415,8 @@ export default function OkvedTab() {
 
     if (csOkvedEnabled && industryId !== 'all') qs.set('industryId', industryId);
     else qs.delete('industryId');
+    if (csOkvedEnabled && prodclassId !== 'all') qs.set('prodclassId', prodclassId);
+    else qs.delete('prodclassId');
 
     qs.set('page', String(page));
     qs.set('pageSize', String(pageSize));
@@ -379,6 +434,7 @@ export default function OkvedTab() {
     sortKey,
     csOkvedEnabled,
     industryId,
+    prodclassId,
     pageSize,
   ]);
 
@@ -704,6 +760,8 @@ export default function OkvedTab() {
                     setCsOkvedEnabled(checked);
                     if (!checked) {
                       setIndustryId('all');
+                      setProdclassId('all');
+                      setOkved('');
                       setPage(1);
                     }
                   }}
@@ -716,6 +774,8 @@ export default function OkvedTab() {
                 value={industryId}
                 onChange={(e) => {
                   setIndustryId(e.target.value);
+                  setProdclassId('all');
+                  setOkved('');
                   setPage(1);
                 }}
                 className="h-8 w-[260px] max-w-[260px] truncate border rounded-md px-2 text-xs"
@@ -734,6 +794,37 @@ export default function OkvedTab() {
                   industryList.map((it) => (
                     <option key={it.id} value={String(it.id)}>
                       {it.industry}
+                    </option>
+                  ))}
+              </select>
+            </div>
+
+            <div className="flex items-center gap-2">
+              <span className="w-[78px] text-xs text-muted-foreground">Тип</span>
+              <select
+                disabled={!csOkvedEnabled || industryId === 'all'}
+                value={prodclassId}
+                onChange={(e) => {
+                  setProdclassId(e.target.value);
+                  setOkved('');
+                  setPage(1);
+                }}
+                className="h-8 w-[360px] max-w-[360px] truncate border rounded-md px-2 text-xs"
+                title={
+                  prodclassId !== 'all'
+                    ? prodclassList.find((i) => String(i.id) === prodclassId)?.prodclass
+                    : '— Все типы предприятий —'
+                }>
+                <option value="all">— Все типы предприятий —</option>
+                {prodclassesLoading && (
+                  <option value="" disabled>
+                    (загрузка…)
+                  </option>
+                )}
+                {!prodclassesLoading &&
+                  prodclassList.map((it) => (
+                    <option key={it.id} value={String(it.id)}>
+                      {it.prodclass}
                     </option>
                   ))}
               </select>
