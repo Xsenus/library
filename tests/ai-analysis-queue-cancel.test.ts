@@ -13,6 +13,11 @@ const stopRouteSource = fs.readFileSync(
   'utf8',
 );
 
+const queueRouteSource = fs.readFileSync(
+  path.join(process.cwd(), 'app/api/ai-analysis/queue/route.ts'),
+  'utf8',
+);
+
 test('AI analysis filter enqueue requires confirmation before POSTing the real queue request', () => {
   assert.match(componentSource, /handleRequestFilterEnqueue/);
   assert.match(componentSource, /dryRun:\s*true/);
@@ -36,4 +41,12 @@ test('AI analysis stop API can resolve every queued or running company for cance
   assert.match(stopRouteSource, /findAllQueuedOrRunningInns/);
   assert.match(stopRouteSource, /SELECT inn FROM ai_analysis_queue WHERE state IN \('queued', 'running'\)/);
   assert.match(stopRouteSource, /findAllRunningInns/);
+});
+
+test('AI analysis queue filter POST uses discovered dadata status columns', () => {
+  assert.match(queueRouteSource, /const columns = await getDadataColumns\(\)/);
+  assert.match(queueRouteSource, /buildStatusConditions\(requestedStatuses,\s*columns,\s*existingColumns\)/);
+  assert.match(queueRouteSource, /columns\.startedAt \? `d\.\$\{quoteIdent\(columns\.startedAt\)\}` : 'NULL::timestamptz'/);
+  assert.doesNotMatch(queueRouteSource, /d\.analysis_started_at > now\(\) - interval/);
+  assert.doesNotMatch(queueRouteSource, /ORDER BY COALESCE\(q\.queued_at, d\.analysis_started_at\)/);
 });

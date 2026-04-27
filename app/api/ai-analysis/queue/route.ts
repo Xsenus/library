@@ -6,6 +6,7 @@ import { syncAiAnalysisQueueWatchdog, triggerAiAnalysisQueueProcessing } from '@
 import { resolveAiAnalysisQueuePriority } from '@/lib/ai-analysis-queue-priority';
 import { buildAiAnalysisQueueSummary } from '@/lib/ai-analysis-queue-summary';
 import { getDadataColumns } from '@/lib/dadata-columns';
+import type { DadataColumns } from '@/lib/dadata-columns';
 import type { StepKey } from '@/lib/ai-analysis-types';
 
 export const dynamic = 'force-dynamic';
@@ -174,6 +175,10 @@ function normalizeString(raw: unknown): string | null {
   return value.length ? value : null;
 }
 
+function quoteIdent(name: string): string {
+  return `"${name.replace(/"/g, '""')}"`;
+}
+
 function normalizeLimit(raw: unknown, fallback = 200): number {
   const num = Number(raw);
   if (!Number.isFinite(num) || num <= 0) return fallback;
@@ -224,28 +229,34 @@ async function markQueuedMany(inns: string[]) {
   await dbBitrix.query(sql, [inns]).catch((error) => console.warn('mark queued failed', error));
 }
 
-function buildStatusConditions(statuses: string[]): string[] {
+function buildStatusConditions(statuses: string[], columns: DadataColumns, existingColumns: Set<string>): string[] {
   const requested = new Set(statuses);
   const conditions: string[] = [];
+  const startedExpr = columns.startedAt ? `d.${quoteIdent(columns.startedAt)}` : 'NULL::timestamptz';
+  const finishedExpr = columns.finishedAt ? `d.${quoteIdent(columns.finishedAt)}` : 'NULL::timestamptz';
+  const outcomeExpr = columns.outcome ? `LOWER(COALESCE(d.${quoteIdent(columns.outcome)}, ''))` : "''";
+  const okFlagExpr = columns.okFlag ? `COALESCE(d.${quoteIdent(columns.okFlag)}, 0)` : '0';
+  const serverErrorExpr = columns.serverError ? `COALESCE(d.${quoteIdent(columns.serverError)}, 0)` : '0';
+  const noValidSiteExpr = existingColumns.has('no_valid_site') ? 'COALESCE(d.no_valid_site, 0)' : '0';
 
   if (requested.has('not_started')) {
-    conditions.push(`(d.analysis_started_at IS NULL AND d.analysis_finished_at IS NULL)`);
+    conditions.push(`(${startedExpr} IS NULL AND ${finishedExpr} IS NULL)`);
   }
 
   if (requested.has('failed')) {
     conditions.push(
-      `((COALESCE(d.server_error, 0) = 1) OR (COALESCE(d.no_valid_site, 0) = 1) OR LOWER(COALESCE(d.analysis_outcome, '')) = 'failed')`,
+      `(${serverErrorExpr} = 1 OR ${noValidSiteExpr} = 1 OR ${outcomeExpr} = 'failed')`,
     );
   }
 
   if (requested.has('partial')) {
     conditions.push(
-      `(LOWER(COALESCE(d.analysis_outcome, '')) = 'partial' OR (d.analysis_finished_at IS NOT NULL AND COALESCE(d.analysis_ok, 0) = 0))`,
+      `(${outcomeExpr} = 'partial' OR (${finishedExpr} IS NOT NULL AND ${okFlagExpr} = 0))`,
     );
   }
 
   if (requested.has('completed')) {
-    conditions.push(`(COALESCE(d.analysis_ok, 0) = 1 OR LOWER(COALESCE(d.analysis_outcome, '')) = 'completed')`);
+    conditions.push(`(${okFlagExpr} = 1 OR ${outcomeExpr} = 'completed')`);
   }
 
   return conditions;
@@ -403,6 +414,12 @@ export async function POST(request: NextRequest) {
     const mode: 'full' | 'steps' = body?.mode === 'full' || body?.mode === 'steps' ? body.mode : forcedMode;
     const forcedSteps = getForcedSteps();
     const steps = mode === 'steps' ? normalizeSteps(body?.steps).filter(Boolean) : [];
+    const columns = await getDadataColumns();
+    const existingColumns = await getExistingColumns();
+    const statusExpr = columns.status ? `LOWER(COALESCE(d.${quoteIdent(columns.status)}, ''))` : "''";
+    const progressExpr = columns.progress ? `COALESCE(d.${quoteIdent(columns.progress)}, 0)` : '0';
+    const startedExpr = columns.startedAt ? `d.${quoteIdent(columns.startedAt)}` : 'NULL::timestamptz';
+    const finishedExpr = columns.finishedAt ? `d.${quoteIdent(columns.finishedAt)}` : 'NULL::timestamptz';
 
     const where: string[] = ["(d.status = 'ACTIVE' OR d.status = 'REORGANIZING')"];
     const args: any[] = [];
@@ -438,11 +455,11 @@ export async function POST(request: NextRequest) {
 
     if (!includeRunning) {
       where.push(
-        `NOT (LOWER(COALESCE(d.analysis_status, '')) SIMILAR TO '%(running|processing|in_progress|starting)%' OR (COALESCE(d.analysis_progress, 0) > 0 AND COALESCE(d.analysis_progress, 0) < 0.999) OR (d.analysis_started_at IS NOT NULL AND d.analysis_finished_at IS NULL AND d.analysis_started_at > now() - interval '${QUEUE_STALE_INTERVAL}'))`,
+        `NOT (${statusExpr} SIMILAR TO '%(running|processing|in_progress|starting)%' OR (${progressExpr} > 0 AND ${progressExpr} < 0.999) OR (${startedExpr} IS NOT NULL AND ${finishedExpr} IS NULL AND ${startedExpr} > now() - interval '${QUEUE_STALE_INTERVAL}'))`,
       );
     }
 
-    const statusConditions = buildStatusConditions(requestedStatuses);
+    const statusConditions = buildStatusConditions(requestedStatuses, columns, existingColumns);
     if (statusConditions.length) {
       where.push(`(${statusConditions.join(' OR ')})`);
     }
@@ -463,7 +480,7 @@ export async function POST(request: NextRequest) {
       FROM dadata_result d
       LEFT JOIN ai_analysis_queue q ON q.inn = d.inn AND q.state = 'queued'
       ${whereSql}
-      ORDER BY COALESCE(q.queued_at, d.analysis_started_at) NULLS LAST, d.inn
+      ORDER BY COALESCE(q.queued_at, ${startedExpr}) NULLS LAST, d.inn
       LIMIT $${idx}
     `;
 
