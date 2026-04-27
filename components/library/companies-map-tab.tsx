@@ -57,6 +57,8 @@ declare global {
 const MAP_SCRIPT_ID = 'yandex-maps-2-1-api';
 const HEATMAP_SCRIPT_ID = 'yandex-maps-heatmap-module';
 const YANDEX_MAPS_API_KEY = process.env.NEXT_PUBLIC_YANDEX_MAPS_API_KEY || '';
+const HEATMAP_LAT_CELL_DEGREES = 0.35;
+const HEATMAP_LON_CELL_DEGREES = 0.55;
 const ENTERPRISE_TYPES = [
   { value: 'MICRO', label: 'Микро' },
   { value: 'SMALL', label: 'Малое' },
@@ -224,6 +226,51 @@ function buildFeatureCollection(companies: MapCompany[]) {
         },
         options: {
           preset: 'islands#blueStretchyIcon',
+        },
+      };
+    }),
+  };
+}
+
+function buildAutoScaledHeatmapFeatureCollection(companies: MapCompany[]) {
+  const cells = new Map<
+    string,
+    {
+      count: number;
+      latSum: number;
+      lonSum: number;
+    }
+  >();
+
+  for (const company of companies) {
+    const latCell = Math.floor(company.geo_lat / HEATMAP_LAT_CELL_DEGREES);
+    const lonCell = Math.floor(company.geo_lon / HEATMAP_LON_CELL_DEGREES);
+    const key = `${latCell}:${lonCell}`;
+    const cell = cells.get(key) ?? { count: 0, latSum: 0, lonSum: 0 };
+    cell.count += 1;
+    cell.latSum += company.geo_lat;
+    cell.lonSum += company.geo_lon;
+    cells.set(key, cell);
+  }
+
+  const maxCellCount = Math.max(1, ...Array.from(cells.values(), (cell) => cell.count));
+
+  return {
+    type: 'FeatureCollection',
+    features: Array.from(cells.entries(), ([key, cell]) => {
+      const normalizedDensity = cell.count / maxCellCount;
+
+      return {
+        type: 'Feature',
+        id: key,
+        geometry: {
+          type: 'Point',
+          coordinates: [cell.latSum / cell.count, cell.lonSum / cell.count],
+        },
+        properties: {
+          company_count: cell.count,
+          max_company_count: maxCellCount,
+          weight: Math.max(0.03, Math.pow(normalizedDensity, 1.8)),
         },
       };
     }),
@@ -520,15 +567,7 @@ export default function CompaniesMapTab() {
   const pointFeatureCollection = useMemo(() => buildFeatureCollection(companies), [companies]);
 
   const heatmapFeatureCollection = useMemo(
-    () => ({
-      type: 'FeatureCollection',
-      features: companies.map((company) => ({
-        type: 'Feature',
-        id: company.inn,
-        geometry: { type: 'Point', coordinates: [company.geo_lat, company.geo_lon] },
-        properties: { weight: 1 },
-      })),
-    }),
+    () => buildAutoScaledHeatmapFeatureCollection(companies),
     [companies],
   );
 
@@ -772,7 +811,19 @@ export default function CompaniesMapTab() {
     loadYandexHeatmapModule(ymaps)
       .then((Heatmap) => {
         if (heatmapBuildIdRef.current !== buildId || mapMode !== 'heatmap' || !mapRef.current) return;
-        const heatmap = new Heatmap(heatmapFeatureCollection, { radius: 24, opacity: 0.8, dissipating: false });
+        const heatmap = new Heatmap(heatmapFeatureCollection, {
+          radius: 24,
+          opacity: 0.82,
+          dissipating: false,
+          intensityOfMidpoint: 0.72,
+          gradient: {
+            0.1: 'rgba(82, 196, 26, 0.45)',
+            0.45: 'rgba(190, 242, 100, 0.65)',
+            0.72: 'rgba(250, 204, 21, 0.78)',
+            0.9: 'rgba(249, 115, 22, 0.86)',
+            1.0: 'rgba(220, 38, 38, 0.94)',
+          },
+        });
         if (heatmapRef.current) heatmapRef.current.setMap(null);
         heatmapRef.current = heatmap;
         heatmapDataKeyRef.current = companiesDataKey;
