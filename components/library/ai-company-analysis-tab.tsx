@@ -4048,13 +4048,13 @@ export default function AiCompanyAnalysisTab() {
                 )}
               </div>
             </div>
-            <div className="flex flex-col gap-3 xl:flex-row xl:items-center xl:justify-between">
-              <div className="flex flex-wrap items-center gap-2">
+            <div className="grid gap-3 2xl:grid-cols-[minmax(0,1fr)_auto] 2xl:items-center">
+              <div className="grid min-w-0 gap-2 lg:grid-cols-[minmax(220px,1fr)_auto_auto_minmax(220px,320px)] lg:items-center">
                 <Input
                   id="ai-analysis-company-search"
                   data-testid="ai-analysis-company-search"
                   aria-label="Поиск"
-                  className="h-9 w-full text-sm sm:w-[360px]"
+                  className="h-9 w-full min-w-0 text-sm"
                   placeholder="Поиск по названию компании или ИНН"
                   value={search}
                   onChange={(e) => setSearch(e.target.value)}
@@ -4063,7 +4063,7 @@ export default function AiCompanyAnalysisTab() {
                   data-testid="ai-analysis-filters-button"
                   type="button"
                   variant={hasFilters ? 'secondary' : 'outline'}
-                  className="h-9 gap-2"
+                  className="h-9 justify-center gap-2 whitespace-nowrap"
                   onClick={() => setFiltersDialogOpen(true)}
                 >
                   <Filter className="h-4 w-4" />
@@ -4074,13 +4074,19 @@ export default function AiCompanyAnalysisTab() {
                     </Badge>
                   )}
                 </Button>
-                {hasFilters && (
-                  <Button type="button" variant="ghost" size="sm" className="h-9" onClick={resetFilters}>
-                    Сбросить
-                  </Button>
-                )}
-                <div className="flex h-9 items-center gap-2 rounded-lg border bg-background px-3">
-                  <span className="text-xs text-muted-foreground">Сортировка</span>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className={cn('h-9 whitespace-nowrap', !hasFilters && 'invisible pointer-events-none')}
+                  tabIndex={hasFilters ? 0 : -1}
+                  aria-hidden={!hasFilters}
+                  onClick={resetFilters}
+                >
+                  Сбросить
+                </Button>
+                <div className="flex h-9 min-w-0 items-center gap-2 rounded-lg border bg-background px-3">
+                  <span className="hidden text-xs text-muted-foreground lg:inline">Сортировка</span>
                   <Select
                     value={companyListMode === 'analyzed' ? 'analysis_finished_desc' : sortBy}
                     onValueChange={(value) => {
@@ -4090,7 +4096,7 @@ export default function AiCompanyAnalysisTab() {
                     }}
                   >
                     <SelectTrigger
-                      className="h-9 w-[260px] border-0 bg-transparent px-0 text-sm shadow-none focus:ring-0"
+                      className="h-9 min-w-0 flex-1 border-0 bg-transparent px-0 text-sm shadow-none focus:ring-0"
                       disabled={companyListMode === 'analyzed'}
                     >
                       <SelectValue />
@@ -4105,7 +4111,7 @@ export default function AiCompanyAnalysisTab() {
                   </Select>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
+              <div className="flex flex-wrap items-center gap-2 2xl:justify-end">
               <Tooltip>
                 <TooltipTrigger asChild>
                     <Button
