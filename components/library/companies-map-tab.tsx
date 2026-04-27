@@ -58,8 +58,8 @@ declare global {
 const MAP_SCRIPT_ID = 'yandex-maps-2-1-api';
 const HEATMAP_SCRIPT_ID = 'yandex-maps-heatmap-module';
 const YANDEX_MAPS_API_KEY = process.env.NEXT_PUBLIC_YANDEX_MAPS_API_KEY || '';
-const HEATMAP_LAT_CELL_DEGREES = 0.35;
-const HEATMAP_LON_CELL_DEGREES = 0.55;
+const HEATMAP_DENSITY_RADIUS_KM = 45;
+const HEATMAP_GRID_CELL_DEGREES = HEATMAP_DENSITY_RADIUS_KM / 111;
 const ENTERPRISE_TYPES = [
   { value: 'MICRO', label: 'Микро' },
   { value: 'SMALL', label: 'Малое' },
@@ -234,48 +234,75 @@ function buildFeatureCollection(companies: MapCompany[]) {
 }
 
 function buildAutoScaledHeatmapFeatureCollection(companies: MapCompany[]) {
-  const cells = new Map<
-    string,
-    {
-      count: number;
-      latSum: number;
-      lonSum: number;
-    }
-  >();
+  const grid = new Map<string, number[]>();
 
-  for (const company of companies) {
-    const latCell = Math.floor(company.geo_lat / HEATMAP_LAT_CELL_DEGREES);
-    const lonCell = Math.floor(company.geo_lon / HEATMAP_LON_CELL_DEGREES);
+  companies.forEach((company, index) => {
+    const latCell = Math.floor(company.geo_lat / HEATMAP_GRID_CELL_DEGREES);
+    const lonCell = Math.floor(company.geo_lon / HEATMAP_GRID_CELL_DEGREES);
     const key = `${latCell}:${lonCell}`;
-    const cell = cells.get(key) ?? { count: 0, latSum: 0, lonSum: 0 };
-    cell.count += 1;
-    cell.latSum += company.geo_lat;
-    cell.lonSum += company.geo_lon;
-    cells.set(key, cell);
-  }
+    const bucket = grid.get(key) ?? [];
+    bucket.push(index);
+    grid.set(key, bucket);
+  });
 
-  const maxCellCount = Math.max(1, ...Array.from(cells.values(), (cell) => cell.count));
+  const densities = companies.map((company) => {
+    const latCell = Math.floor(company.geo_lat / HEATMAP_GRID_CELL_DEGREES);
+    const lonCell = Math.floor(company.geo_lon / HEATMAP_GRID_CELL_DEGREES);
+    let density = 0;
+
+    for (let latOffset = -1; latOffset <= 1; latOffset += 1) {
+      for (let lonOffset = -1; lonOffset <= 1; lonOffset += 1) {
+        const bucket = grid.get(`${latCell + latOffset}:${lonCell + lonOffset}`);
+        if (!bucket) continue;
+
+        for (const candidateIndex of bucket) {
+          const candidate = companies[candidateIndex];
+          if (getDistanceKm(company.geo_lat, company.geo_lon, candidate.geo_lat, candidate.geo_lon) <= HEATMAP_DENSITY_RADIUS_KM) {
+            density += 1;
+          }
+        }
+      }
+    }
+
+    return density;
+  });
+
+  const maxLocalDensity = Math.max(1, ...densities);
 
   return {
     type: 'FeatureCollection',
-    features: Array.from(cells.entries(), ([key, cell]) => {
-      const normalizedDensity = cell.count / maxCellCount;
+    features: companies.map((company, index) => {
+      const normalizedDensity = densities[index] / maxLocalDensity;
 
       return {
         type: 'Feature',
-        id: key,
+        id: `${company.inn}:${index}`,
         geometry: {
           type: 'Point',
-          coordinates: [cell.latSum / cell.count, cell.lonSum / cell.count],
+          coordinates: [company.geo_lat, company.geo_lon],
         },
         properties: {
-          company_count: cell.count,
-          max_company_count: maxCellCount,
-          weight: Math.max(0.03, Math.pow(normalizedDensity, 1.8)),
+          company_count: 1,
+          local_density: densities[index],
+          max_local_density: maxLocalDensity,
+          weight: Math.max(0.02, Math.pow(normalizedDensity, 2.2)),
         },
       };
     }),
   };
+}
+
+function getDistanceKm(lat1: number, lon1: number, lat2: number, lon2: number) {
+  const earthRadiusKm = 6371;
+  const toRadians = Math.PI / 180;
+  const dLat = (lat2 - lat1) * toRadians;
+  const dLon = (lon2 - lon1) * toRadians;
+  const rLat1 = lat1 * toRadians;
+  const rLat2 = lat2 * toRadians;
+  const a =
+    Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+    Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) * Math.sin(dLon / 2);
+  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
 function dedupeOkvedOptions(items: OkvedOption[]): OkvedOption[] {
@@ -859,15 +886,15 @@ export default function CompaniesMapTab() {
       .then((Heatmap) => {
         if (heatmapBuildIdRef.current !== buildId || mapMode !== 'heatmap' || !mapRef.current) return;
         const heatmap = new Heatmap(heatmapFeatureCollection, {
-          radius: 24,
-          opacity: 0.82,
-          dissipating: false,
-          intensityOfMidpoint: 0.72,
+          radius: 20,
+          opacity: 0.78,
+          dissipating: true,
+          intensityOfMidpoint: 0.78,
           gradient: {
             0.1: 'rgba(82, 196, 26, 0.45)',
-            0.45: 'rgba(190, 242, 100, 0.65)',
-            0.72: 'rgba(250, 204, 21, 0.78)',
-            0.9: 'rgba(249, 115, 22, 0.86)',
+            0.5: 'rgba(190, 242, 100, 0.62)',
+            0.78: 'rgba(250, 204, 21, 0.76)',
+            0.93: 'rgba(249, 115, 22, 0.86)',
             1.0: 'rgba(220, 38, 38, 0.94)',
           },
         });

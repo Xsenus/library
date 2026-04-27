@@ -59,14 +59,16 @@ test('companies map keeps success filter in the top controls and reuses map laye
 
 test('companies map auto-scales heatmap intensity by maximum local density', () => {
   assert.match(componentSource, /function buildAutoScaledHeatmapFeatureCollection/);
-  assert.match(componentSource, /HEATMAP_LAT_CELL_DEGREES/);
-  assert.match(componentSource, /HEATMAP_LON_CELL_DEGREES/);
-  assert.match(componentSource, /maxCellCount/);
-  assert.match(componentSource, /company_count: cell\.count/);
-  assert.match(componentSource, /max_company_count: maxCellCount/);
-  assert.match(componentSource, /Math\.max\(0\.03/);
-  assert.match(componentSource, /Math\.pow\(normalizedDensity, 1\.8\)/);
-  assert.match(componentSource, /intensityOfMidpoint: 0\.72/);
+  assert.match(componentSource, /HEATMAP_DENSITY_RADIUS_KM = 45/);
+  assert.match(componentSource, /HEATMAP_GRID_CELL_DEGREES/);
+  assert.match(componentSource, /getDistanceKm/);
+  assert.match(componentSource, /maxLocalDensity/);
+  assert.match(componentSource, /local_density: densities\[index\]/);
+  assert.match(componentSource, /max_local_density: maxLocalDensity/);
+  assert.match(componentSource, /Math\.max\(0\.02/);
+  assert.match(componentSource, /Math\.pow\(normalizedDensity, 2\.2\)/);
+  assert.match(componentSource, /dissipating: true/);
+  assert.match(componentSource, /intensityOfMidpoint: 0\.78/);
 });
 
 test('companies map balloon includes company website as external link', () => {
