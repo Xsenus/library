@@ -467,7 +467,7 @@ function ActiveFilterBadge({ children }: { children: ReactNode }) {
 }
 
 const CONTROL_CLASS =
-  'h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm transition placeholder:text-slate-400 hover:border-slate-300 focus-visible:ring-blue-500 focus-visible:ring-offset-0';
+  'h-10 rounded-xl border-slate-200 bg-white text-left text-sm shadow-sm transition placeholder:text-slate-400 hover:border-slate-300 focus-visible:ring-blue-500 focus-visible:ring-offset-0 [&>span]:min-w-0 [&>span]:flex-1 [&>span]:truncate [&>span]:text-left';
 
 export default function CompaniesMapTab() {
   const [companies, setCompanies] = useState<MapCompany[]>([]);
