@@ -938,13 +938,14 @@ export default function CompaniesMapTab() {
           radius: 28,
           opacity: 0.72,
           dissipating: true,
-          intensityOfMidpoint: 0.94,
+          intensityOfMidpoint: 0.965,
           gradient: {
             0.16: 'rgba(34, 197, 94, 0.2)',
             0.62: 'rgba(190, 242, 100, 0.4)',
             0.86: 'rgba(250, 204, 21, 0.62)',
-            0.96: 'rgba(249, 115, 22, 0.78)',
-            1.0: 'rgba(220, 38, 38, 0.98)',
+            0.94: 'rgba(249, 115, 22, 0.78)',
+            0.985: 'rgba(220, 38, 38, 0.92)',
+            1.0: 'rgba(127, 29, 29, 0.98)',
           },
         });
         if (heatmapRef.current) heatmapRef.current.setMap(null);
