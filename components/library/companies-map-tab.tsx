@@ -703,6 +703,9 @@ export default function CompaniesMapTab() {
         const params = new URLSearchParams();
         if (prodclassId !== 'all') params.set('prodclassId', prodclassId);
         if (industryId !== 'all') params.set('industryId', industryId);
+        params.set('onlyWithCompanies', '1');
+        params.set('onlyWithGeo', '1');
+        params.set('mainOkvedOnly', mainOkvedOnly ? '1' : '0');
         const res = await fetch(`/api/okved?${params.toString()}`, { cache: 'no-store', signal: ac.signal });
         if (!res.ok) throw new Error(`Failed with ${res.status}`);
         const data = await res.json();
@@ -721,7 +724,7 @@ export default function CompaniesMapTab() {
     loadOkveds();
 
     return () => ac.abort();
-  }, [industryId, prodclassId]);
+  }, [industryId, mainOkvedOnly, prodclassId]);
 
   useEffect(() => {
     let cancelled = false;
