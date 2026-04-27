@@ -65,10 +65,12 @@ test('companies map auto-scales heatmap intensity by maximum local density', () 
   assert.match(componentSource, /maxLocalDensity/);
   assert.match(componentSource, /local_density: densities\[index\]/);
   assert.match(componentSource, /max_local_density: maxLocalDensity/);
-  assert.match(componentSource, /Math\.max\(0\.02/);
-  assert.match(componentSource, /Math\.pow\(normalizedDensity, 2\.2\)/);
+  assert.match(componentSource, /HEATMAP_DENSITY_POWER = 3\.4/);
+  assert.match(componentSource, /Math\.max\(0\.01/);
+  assert.match(componentSource, /Math\.pow\(normalizedDensity, HEATMAP_DENSITY_POWER\)/);
   assert.match(componentSource, /dissipating: true/);
-  assert.match(componentSource, /intensityOfMidpoint: 0\.78/);
+  assert.match(componentSource, /intensityOfMidpoint: 0\.86/);
+  assert.match(componentSource, /0\.96: 'rgba\(249, 115, 22, 0\.88\)'/);
 });
 
 test('companies map balloon includes company website as external link', () => {

@@ -60,6 +60,7 @@ const HEATMAP_SCRIPT_ID = 'yandex-maps-heatmap-module';
 const YANDEX_MAPS_API_KEY = process.env.NEXT_PUBLIC_YANDEX_MAPS_API_KEY || '';
 const HEATMAP_DENSITY_RADIUS_KM = 45;
 const HEATMAP_GRID_CELL_DEGREES = HEATMAP_DENSITY_RADIUS_KM / 111;
+const HEATMAP_DENSITY_POWER = 3.4;
 const ENTERPRISE_TYPES = [
   { value: 'MICRO', label: 'Микро' },
   { value: 'SMALL', label: 'Малое' },
@@ -285,7 +286,7 @@ function buildAutoScaledHeatmapFeatureCollection(companies: MapCompany[]) {
           company_count: 1,
           local_density: densities[index],
           max_local_density: maxLocalDensity,
-          weight: Math.max(0.02, Math.pow(normalizedDensity, 2.2)),
+          weight: Math.max(0.01, Math.pow(normalizedDensity, HEATMAP_DENSITY_POWER)),
         },
       };
     }),
@@ -889,13 +890,13 @@ export default function CompaniesMapTab() {
           radius: 20,
           opacity: 0.78,
           dissipating: true,
-          intensityOfMidpoint: 0.78,
+          intensityOfMidpoint: 0.86,
           gradient: {
-            0.1: 'rgba(82, 196, 26, 0.45)',
-            0.5: 'rgba(190, 242, 100, 0.62)',
-            0.78: 'rgba(250, 204, 21, 0.76)',
-            0.93: 'rgba(249, 115, 22, 0.86)',
-            1.0: 'rgba(220, 38, 38, 0.94)',
+            0.12: 'rgba(82, 196, 26, 0.34)',
+            0.58: 'rgba(190, 242, 100, 0.54)',
+            0.86: 'rgba(250, 204, 21, 0.76)',
+            0.96: 'rgba(249, 115, 22, 0.88)',
+            1.0: 'rgba(220, 38, 38, 0.98)',
           },
         });
         if (heatmapRef.current) heatmapRef.current.setMap(null);
