@@ -153,6 +153,40 @@ async function findRunningInns(inns: string[]): Promise<string[]> {
   return Array.from(new Set((rows ?? []).map((row) => row.inn).filter(Boolean)));
 }
 
+async function findAllRunningInns(): Promise<string[]> {
+  const columns = await getDadataColumns();
+  const statusExpr = columns.status ? `LOWER(COALESCE("${columns.status}", ''))` : "''";
+  const progressExpr = columns.progress ? `COALESCE("${columns.progress}", 0)` : '0';
+  const startedExpr = columns.startedAt ? `"${columns.startedAt}"` : 'NULL';
+  const finishedExpr = columns.finishedAt ? `"${columns.finishedAt}"` : 'NULL';
+
+  const { rows } = await dbBitrix.query<{ inn: string }>(
+    `
+      SELECT inn
+      FROM dadata_result
+      WHERE
+        ${statusExpr} SIMILAR TO '%(running|processing|in_progress|starting|stop_requested|stopping)%'
+        OR (${finishedExpr} IS NULL AND ${progressExpr} > 0 AND ${progressExpr} < 0.999)
+        OR (${startedExpr} IS NOT NULL AND ${finishedExpr} IS NULL AND ${startedExpr} > now() - interval '${QUEUE_STALE_INTERVAL}')
+    `,
+  );
+
+  return Array.from(new Set((rows ?? []).map((row) => row.inn).filter(Boolean)));
+}
+
+async function findAllQueuedOrRunningInns(): Promise<string[]> {
+  await ensureQueueTable();
+  const { rows } = await dbBitrix.query<{ inn: string }>(
+    "SELECT inn FROM ai_analysis_queue WHERE state IN ('queued', 'running')",
+  );
+  return Array.from(
+    new Set([
+      ...(rows ?? []).map((row) => row.inn).filter(Boolean),
+      ...(await findAllRunningInns()),
+    ]),
+  );
+}
+
 async function markStopRequested(inns: string[]) {
   if (!inns.length) return;
 
@@ -185,9 +219,10 @@ export async function POST(request: NextRequest) {
   try {
     const body = (await request.json().catch(() => null)) as {
       inns?: unknown;
+      all?: unknown;
       payload?: unknown;
     } | null;
-    const inns = normalizeInns(body?.inns);
+    const inns = body?.all === true ? await findAllQueuedOrRunningInns() : normalizeInns(body?.inns);
     await ensureCommandsTable();
 
     const session = await getSession();

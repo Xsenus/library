@@ -33,6 +33,16 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { Label } from '@/components/ui/label';
 import { Progress } from '@/components/ui/progress';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -1586,7 +1596,15 @@ export default function AiCompanyAnalysisTab() {
   const [queueError, setQueueError] = useState<string | null>(null);
   const [queueItems, setQueueItems] = useState<AiCompany[]>([]);
   const [queueSummary, setQueueSummary] = useState<QueueSummary | null>(null);
+  const [queueSelected, setQueueSelected] = useState<Set<string>>(new Set());
+  const [queueBulkLoading, setQueueBulkLoading] = useState(false);
+  const [queueCancelConfirm, setQueueCancelConfirm] = useState<{
+    open: boolean;
+    source: 'selected' | 'all';
+    inns: string[];
+  }>({ open: false, source: 'selected', inns: [] });
   const [filterDialogOpen, setFilterDialogOpen] = useState(false);
+  const [filterConfirmOpen, setFilterConfirmOpen] = useState(false);
   const [filterPreview, setFilterPreview] = useState<{ total: number; inns: string[] } | null>(null);
   const [filterLoading, setFilterLoading] = useState(false);
   const [filterError, setFilterError] = useState<string | null>(null);
@@ -2367,6 +2385,12 @@ export default function AiCompanyAnalysisTab() {
       const queueDataItems = data?.items;
       const queueItems = Array.isArray(queueDataItems) ? queueDataItems : [];
       setQueueItems(queueItems);
+      setQueueSelected((prev) => {
+        if (!prev.size) return prev;
+        const visible = new Set(queueItems.map((item) => item.inn));
+        const next = new Set(Array.from(prev).filter((inn) => visible.has(inn)));
+        return next.size === prev.size ? prev : next;
+      });
       setQueueSummary(data?.summary ?? null);
     } catch (error) {
       console.error('Failed to fetch queue', error);
@@ -3183,6 +3207,58 @@ export default function AiCompanyAnalysisTab() {
     [fetchCompanies, page, pageSize, toast],
   );
 
+  const handleStopQueueItems = useCallback(
+    async (inns: string[], source: 'selected' | 'all') => {
+      const uniqueInns = Array.from(new Set(inns.map((inn) => String(inn ?? '').trim()).filter(Boolean)));
+      if (!uniqueInns.length) return;
+
+      setQueueBulkLoading(true);
+      try {
+        const res = await fetch('/api/ai-analysis/stop', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            inns: uniqueInns,
+            all: source === 'all',
+            payload: { source: source === 'all' ? 'queue-cancel-all' : 'queue-cancel-selected' },
+          }),
+        });
+        if (!res.ok) throw new Error(`Request failed with ${res.status}`);
+        const data = (await res.json().catch(() => null)) as {
+          removed?: number;
+          running?: number;
+          removedInns?: string[];
+          runningInns?: string[];
+        } | null;
+        const removedInns = Array.isArray(data?.removedInns)
+          ? data?.removedInns?.map((value) => String(value ?? '').trim()).filter(Boolean) ?? []
+          : [];
+        const runningInns = Array.isArray(data?.runningInns)
+          ? data?.runningInns?.map((value) => String(value ?? '').trim()).filter(Boolean) ?? []
+          : [];
+        markStopped(removedInns);
+        markStopRequested(runningInns);
+        setQueueSelected(new Set());
+        toast({
+          title: source === 'all' ? 'Очередь отправлена на отмену' : 'Выбранные задачи отправлены на отмену',
+          description: `Снято из очереди: ${data?.removed ?? 0}. Уже выполняются: ${data?.running ?? 0}.`,
+        });
+        fetchQueue();
+        fetchCompanies(page, pageSize);
+      } catch (error) {
+        console.error('Failed to cancel queue items', error);
+        toast({
+          title: 'Не удалось отменить задачи',
+          description: 'Попробуйте повторить попытку позже.',
+          variant: 'destructive',
+        });
+      } finally {
+        setQueueBulkLoading(false);
+      }
+    },
+    [fetchCompanies, fetchQueue, markStopped, markStopRequested, page, pageSize, toast],
+  );
+
   const handleFilterPreview = useCallback(
     async (enqueue: boolean) => {
       setFilterLoading(true);
@@ -3255,6 +3331,67 @@ export default function AiCompanyAnalysisTab() {
       scheduleAutoRefresh,
     ],
   );
+
+  const handleRequestFilterEnqueue = useCallback(async () => {
+    setFilterLoading(true);
+    setFilterError(null);
+    try {
+      const res = await fetch('/api/ai-analysis/queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          query: filterQuery,
+          startsWith: filterStartsWith,
+          statuses: filterStatuses,
+          limit: filterLimit,
+          includeQueued: filterIncludeQueued,
+          includeRunning: filterIncludeRunning,
+          dryRun: true,
+        }),
+      });
+      const data = (await res.json().catch(() => null)) as
+        | { ok?: boolean; total?: number; inns?: string[]; error?: string }
+        | null;
+
+      if (!res.ok || data?.ok === false) {
+        throw new Error(data?.error || `Request failed with ${res.status}`);
+      }
+
+      const nextPreview = { total: data?.total ?? 0, inns: data?.inns ?? [] };
+      setFilterPreview(nextPreview);
+      if (nextPreview.total <= 0) {
+        toast({
+          title: 'Компании не найдены',
+          description: 'По текущим условиям нет компаний для постановки в очередь.',
+        });
+        return;
+      }
+      setFilterConfirmOpen(true);
+    } catch (error) {
+      console.error('Queue filter preview before confirmation failed', error);
+      setFilterError(
+        error instanceof Error && error.message ? error.message : 'Не удалось подготовить подтверждение запуска.',
+      );
+      toast({
+        title: 'Ошибка очереди',
+        description:
+          error instanceof Error && error.message
+            ? error.message
+            : 'Не удалось подготовить подтверждение запуска по фильтру.',
+        variant: 'destructive',
+      });
+    } finally {
+      setFilterLoading(false);
+    }
+  }, [
+    filterQuery,
+    filterStartsWith,
+    filterStatuses,
+    filterLimit,
+    filterIncludeQueued,
+    filterIncludeRunning,
+    toast,
+  ]);
 
   const headerCheckedState = useMemo(() => {
     if (!companies.length) return false;
@@ -5049,20 +5186,69 @@ export default function AiCompanyAnalysisTab() {
           </DialogContent>
         </Dialog>
 
-        <Dialog open={queueDialogOpen} onOpenChange={setQueueDialogOpen}>
+        <Dialog
+          open={queueDialogOpen}
+          onOpenChange={(open) => {
+            setQueueDialogOpen(open);
+            if (!open) setQueueSelected(new Set());
+          }}
+        >
           <DialogContent className="max-w-5xl">
             <DialogHeader>
               <DialogTitle>Очередь анализа</DialogTitle>
             </DialogHeader>
             <div className="space-y-3 text-sm">
-              <div className="flex items-center justify-between">
+              <div className="flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
                 <div className="text-muted-foreground">
                   {queueLoading
                     ? 'Загружаем очередь…'
                     : `В очереди и работе: ${(queueSummary?.total ?? queueItems.length).toLocaleString('ru-RU')}`}
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   {queueError && <span className="text-xs text-destructive">{queueError}</span>}
+                  {queueItems.length > 0 && (
+                    <label className="flex items-center gap-2 rounded-md border bg-muted/30 px-2 py-1 text-xs text-muted-foreground">
+                      <Checkbox
+                        checked={
+                          queueSelected.size === 0
+                            ? false
+                            : queueSelected.size >= queueItems.length
+                            ? true
+                            : 'indeterminate'
+                        }
+                        onCheckedChange={(checked) => {
+                          setQueueSelected(checked ? new Set(queueItems.map((item) => item.inn)) : new Set());
+                        }}
+                      />
+                      Выбрано: {queueSelected.size}
+                    </label>
+                  )}
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setQueueCancelConfirm({ open: true, source: 'selected', inns: Array.from(queueSelected) })
+                    }
+                    disabled={queueBulkLoading || queueSelected.size === 0}
+                    className="gap-2"
+                  >
+                    {queueBulkLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Square className="h-4 w-4" />}
+                    Отменить выбранные
+                  </Button>
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() =>
+                      setQueueCancelConfirm({ open: true, source: 'all', inns: queueItems.map((item) => item.inn) })
+                    }
+                    disabled={queueBulkLoading || queueItems.length === 0}
+                    className="gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  >
+                    {queueBulkLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <XCircle className="h-4 w-4" />}
+                    Отменить все
+                  </Button>
                   <Button
                     type="button"
                     variant="outline"
@@ -5175,6 +5361,23 @@ export default function AiCompanyAnalysisTab() {
                         className="rounded-2xl border bg-background/95 p-4 shadow-sm transition-colors hover:border-foreground/20"
                       >
                         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
+                          <label
+                            className="flex shrink-0 items-center gap-2 rounded-md border bg-muted/30 px-2 py-1 text-xs text-muted-foreground xl:mt-1"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <Checkbox
+                              checked={queueSelected.has(item.inn)}
+                              onCheckedChange={(checked) => {
+                                setQueueSelected((prev) => {
+                                  const next = new Set(prev);
+                                  if (checked) next.add(item.inn);
+                                  else next.delete(item.inn);
+                                  return next;
+                                });
+                              }}
+                            />
+                            Выбрать
+                          </label>
                           <button
                             type="button"
                             className="min-w-0 flex-1 rounded-xl text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
@@ -5299,14 +5502,18 @@ export default function AiCompanyAnalysisTab() {
                                 type="button"
                                 variant="ghost"
                                 className="justify-between gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                disabled={removeInn === item.inn}
+                                disabled={removeInn === item.inn || stopInn === item.inn}
                                 onClick={async () => {
-                                  await handleRemoveFromQueue(item.inn);
+                                  if (state.running) {
+                                    await handleStopSingle(item.inn);
+                                  } else {
+                                    await handleRemoveFromQueue(item.inn);
+                                  }
                                   fetchQueue();
                                 }}
                               >
                                 <span className="inline-flex items-center gap-2">
-                                  {removeInn === item.inn ? (
+                                  {removeInn === item.inn || stopInn === item.inn ? (
                                     <Loader2 className="h-4 w-4 animate-spin" />
                                   ) : (
                                     <Trash2 className="h-4 w-4" />
@@ -5326,12 +5533,53 @@ export default function AiCompanyAnalysisTab() {
           </DialogContent>
         </Dialog>
 
+        <AlertDialog
+          open={queueCancelConfirm.open}
+          onOpenChange={(open) => setQueueCancelConfirm((prev) => ({ ...prev, open }))}
+        >
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>
+                {queueCancelConfirm.source === 'all' ? 'Отменить все задачи очереди?' : 'Отменить выбранные задачи?'}
+              </AlertDialogTitle>
+              <AlertDialogDescription>
+                Будет отправлена отмена для {queueCancelConfirm.inns.length.toLocaleString('ru-RU')} компаний. Задачи в
+                очереди будут сняты, уже выполняющиеся получат сигнал остановки.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {queueCancelConfirm.inns.length ? (
+              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+                Пример ИНН: {queueCancelConfirm.inns.slice(0, 8).join(', ')}
+              </div>
+            ) : null}
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={queueBulkLoading}>Назад</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={queueBulkLoading || queueCancelConfirm.inns.length === 0}
+                className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                onClick={(event) => {
+                  event.preventDefault();
+                  handleStopQueueItems(queueCancelConfirm.inns, queueCancelConfirm.source).then(() =>
+                    setQueueCancelConfirm((prev) => ({ ...prev, open: false })),
+                  );
+                }}
+              >
+                {queueBulkLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Отменить задачи
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
+
         <Dialog
           open={filterDialogOpen}
           onOpenChange={(open) => {
             setFilterDialogOpen(open);
             setFilterError(null);
-            if (!open) setFilterPreview(null);
+            if (!open) {
+              setFilterPreview(null);
+              setFilterConfirmOpen(false);
+            }
           }}
         >
           <DialogContent className="max-w-3xl">
@@ -5427,7 +5675,7 @@ export default function AiCompanyAnalysisTab() {
                   {filterLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   Предпросмотр
                 </Button>
-                <Button type="button" onClick={() => handleFilterPreview(true)} disabled={filterLoading}>
+                <Button type="button" onClick={handleRequestFilterEnqueue} disabled={filterLoading}>
                   {filterLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
                   Поставить в очередь
                 </Button>
@@ -5435,6 +5683,36 @@ export default function AiCompanyAnalysisTab() {
             </div>
           </DialogContent>
         </Dialog>
+
+        <AlertDialog open={filterConfirmOpen} onOpenChange={setFilterConfirmOpen}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>Подтвердить массовый запуск</AlertDialogTitle>
+              <AlertDialogDescription>
+                Будет поставлено в очередь до {(filterPreview?.inns.length ?? filterPreview?.total ?? 0).toLocaleString('ru-RU')}{' '}
+                компаний по текущему фильтру. Проверьте подборку перед запуском.
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            {filterPreview?.inns?.length ? (
+              <div className="rounded-md border bg-muted/30 p-3 text-xs text-muted-foreground">
+                Пример ИНН: {filterPreview.inns.slice(0, 8).join(', ')}
+              </div>
+            ) : null}
+            <AlertDialogFooter>
+              <AlertDialogCancel disabled={filterLoading}>Отмена</AlertDialogCancel>
+              <AlertDialogAction
+                disabled={filterLoading}
+                onClick={(event) => {
+                  event.preventDefault();
+                  handleFilterPreview(true).then(() => setFilterConfirmOpen(false));
+                }}
+              >
+                {filterLoading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : null}
+                Поставить в очередь
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
 
         <Dialog open={!!infoCompany} onOpenChange={(open) => !open && setInfoCompany(null)}>
           <DialogContent
