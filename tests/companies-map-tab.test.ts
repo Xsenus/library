@@ -23,6 +23,16 @@ test('companies map exposes requested filter controls and heatmap mode', () => {
   assert.match(componentSource, /Тепловая карта/);
 });
 
+test('companies map uses the redesigned commercial filter layout', () => {
+  assert.match(componentSource, /function FilterField/);
+  assert.match(componentSource, /function ModernCheckbox/);
+  assert.match(componentSource, /function SegmentedControl/);
+  assert.match(componentSource, /function StatBadge/);
+  assert.match(componentSource, /rounded-2xl border border-slate-200 bg-white/);
+  assert.match(componentSource, /shadow-\[0_18px_50px_rgba\(15,23,42,0\.08\)\]/);
+  assert.match(componentSource, /aria-label="Режим отображения карты"/);
+});
+
 test('companies map balloon includes company website as external link', () => {
   assert.match(componentSource, /extractFirstSite\(company\.web_sites\)/);
   assert.match(componentSource, /siteHref\(site\)/);

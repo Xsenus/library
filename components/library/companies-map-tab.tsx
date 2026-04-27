@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Check, ChevronsUpDown, Loader2, MapPinned, RefreshCw, RotateCcw } from 'lucide-react';
+import { type ReactNode, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Check, ChevronsUpDown, Clock3, Filter, Loader2, MapPinned, RefreshCw, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -180,23 +180,25 @@ function buildBalloonContent(company: MapCompany): string {
   const bitrixHref = buildBitrixHref(company.inn);
   const site = extractFirstSite(company.web_sites);
   const siteLine = site
-    ? `<div><b>Сайт:</b> <a href="${escapeHtml(siteHref(site))}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:none;">${escapeHtml(site)}</a></div>`
+    ? `<div style="display:flex;justify-content:space-between;gap:16px;padding:3px 0;"><span style="color:#64748b;">Сайт</span><a href="${escapeHtml(siteHref(site))}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:none;font-weight:600;">${escapeHtml(site)}</a></div>`
     : '';
 
   return `
-    <div style="min-width:260px;max-width:360px;font-family:Arial,sans-serif;font-size:13px;line-height:1.45;color:#111827;">
-      <div style="font-weight:700;font-size:14px;margin-bottom:6px;">${escapeHtml(company.short_name)}</div>
-      <div><b>ИНН:</b> ${escapeHtml(company.inn)}</div>
-      <div><b>Выручка:</b> ${escapeHtml(revenue)} млн</div>
-      <div><b>ОКВЭД:</b> ${escapeHtml(company.main_okved || '—')}</div>
-      <div><b>Скор:</b> ${escapeHtml(score)}</div>
-      <div><b>Ответственный:</b> ${escapeHtml(company.responsible || '—')}</div>
-      <div><b>Сотрудников:</b> ${escapeHtml(formatInteger(company.employee_count))}</div>
-      <div><b>Филиалов:</b> ${escapeHtml(formatInteger(company.branch_count))}</div>
-      <div><b>Тип предприятия:</b> ${escapeHtml(formatEnterpriseType(company.smb_category || company.smb_type))}</div>
+    <div style="min-width:280px;max-width:380px;font-family:Inter,Arial,sans-serif;font-size:13px;line-height:1.45;color:#0f172a;padding:2px;">
+      <div style="font-weight:750;font-size:15px;line-height:1.3;margin-bottom:10px;color:#020617;">${escapeHtml(company.short_name)}</div>
+      <div style="display:grid;gap:4px;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;padding:8px 0;">
+        <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">ИНН</span><b>${escapeHtml(company.inn)}</b></div>
+        <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">Выручка</span><b>${escapeHtml(revenue)} млн</b></div>
+        <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">ОКВЭД</span><b>${escapeHtml(company.main_okved || '—')}</b></div>
+        <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">Скор</span><b>${escapeHtml(score)}</b></div>
+        <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">Ответственный</span><b>${escapeHtml(company.responsible || '—')}</b></div>
+        <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">Сотрудников</span><b>${escapeHtml(formatInteger(company.employee_count))}</b></div>
+        <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">Филиалов</span><b>${escapeHtml(formatInteger(company.branch_count))}</b></div>
+        <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">Тип</span><b>${escapeHtml(formatEnterpriseType(company.smb_category || company.smb_type))}</b></div>
+      </div>
       ${siteLine}
-      <div style="margin-top:6px;color:#4b5563;">${escapeHtml(company.address || 'Адрес не указан')}</div>
-      <a href="${escapeHtml(bitrixHref)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:10px;color:#2563eb;font-weight:700;text-decoration:none;">Открыть в Bitrix24</a>
+      <div style="margin-top:8px;color:#475569;">${escapeHtml(company.address || 'Адрес не указан')}</div>
+      <a href="${escapeHtml(bitrixHref)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;justify-content:center;margin-top:12px;border-radius:10px;background:#2563eb;color:white;font-weight:700;text-decoration:none;padding:8px 12px;">Открыть в Bitrix24</a>
     </div>
   `;
 }
@@ -242,6 +244,182 @@ function dedupeOkvedOptions(items: OkvedOption[]): OkvedOption[] {
   }
   return Array.from(map.values());
 }
+
+function FilterField({
+  label,
+  children,
+  className,
+}: {
+  label: string;
+  children: ReactNode;
+  className?: string;
+}) {
+  return (
+    <div className={cn('flex min-w-0 flex-col gap-1.5', className)}>
+      <span className="text-[12px] font-medium leading-none text-slate-500">{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function RangeInputs({
+  fromValue,
+  toValue,
+  onFromChange,
+  onToChange,
+  fromLabel,
+  toLabel,
+}: {
+  fromValue: string;
+  toValue: string;
+  onFromChange: (value: string) => void;
+  onToChange: (value: string) => void;
+  fromLabel: string;
+  toLabel: string;
+}) {
+  return (
+    <div className="grid grid-cols-2 gap-2">
+      <Input
+        aria-label={fromLabel}
+        className={CONTROL_CLASS}
+        inputMode="decimal"
+        placeholder="от"
+        value={fromValue}
+        onChange={(event) => onFromChange(event.target.value)}
+      />
+      <Input
+        aria-label={toLabel}
+        className={CONTROL_CLASS}
+        inputMode="decimal"
+        placeholder="до"
+        value={toValue}
+        onChange={(event) => onToChange(event.target.value)}
+      />
+    </div>
+  );
+}
+
+function ModernCheckbox({
+  checked,
+  onCheckedChange,
+  children,
+  className,
+  disabled,
+}: {
+  checked: boolean;
+  onCheckedChange: (value: boolean) => void;
+  children: ReactNode;
+  className?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <label
+      className={cn(
+        'group flex min-h-9 cursor-pointer items-center gap-2 rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm text-slate-700 shadow-sm transition',
+        'hover:border-blue-200 hover:bg-blue-50/40',
+        'has-[:focus-visible]:ring-2 has-[:focus-visible]:ring-blue-500 has-[:focus-visible]:ring-offset-2',
+        disabled && 'cursor-not-allowed opacity-60',
+        className,
+      )}
+    >
+      <Checkbox
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={(value) => onCheckedChange(Boolean(value))}
+        className={cn(
+          'h-4 w-4 rounded-[5px] border-slate-300 bg-white text-white transition',
+          'group-hover:border-blue-400',
+          'focus-visible:ring-blue-500 focus-visible:ring-offset-2',
+          'data-[state=checked]:border-blue-600 data-[state=checked]:bg-blue-600',
+        )}
+      />
+      <span className="leading-tight">{children}</span>
+    </label>
+  );
+}
+
+function CompactCheckbox({
+  checked,
+  onCheckedChange,
+  children,
+}: {
+  checked: boolean;
+  onCheckedChange: (value: boolean) => void;
+  children: ReactNode;
+}) {
+  return (
+    <label className="group inline-flex cursor-pointer items-center gap-2 text-[12px] leading-none text-slate-500">
+      <Checkbox
+        checked={checked}
+        onCheckedChange={(value) => onCheckedChange(Boolean(value))}
+        className={cn(
+          'h-4 w-4 rounded-[5px] border-slate-300 bg-white text-white transition',
+          'group-hover:border-blue-400 focus-visible:ring-blue-500',
+          'data-[state=checked]:border-blue-600 data-[state=checked]:bg-blue-600',
+        )}
+      />
+      <span>{children}</span>
+    </label>
+  );
+}
+
+function SegmentedControl({
+  value,
+  onChange,
+}: {
+  value: MapMode;
+  onChange: (value: MapMode) => void;
+}) {
+  return (
+    <div className="inline-flex rounded-xl border border-slate-200 bg-slate-100/80 p-1 shadow-inner" aria-label="Режим отображения карты">
+      {[
+        ['points', 'Точки'],
+        ['heatmap', 'Тепловая карта'],
+      ].map(([itemValue, label]) => (
+        <button
+          key={itemValue}
+          type="button"
+          aria-pressed={value === itemValue}
+          onClick={() => onChange(itemValue as MapMode)}
+          className={cn(
+            'h-8 rounded-lg px-3 text-sm font-medium text-slate-600 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2',
+            value === itemValue
+              ? 'bg-white text-slate-950 shadow-sm'
+              : 'hover:bg-white/70 hover:text-slate-900',
+          )}
+        >
+          {label}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function StatBadge({ children, tone = 'neutral' }: { children: ReactNode; tone?: 'neutral' | 'blue' | 'amber' }) {
+  return (
+    <span
+      className={cn(
+        'inline-flex h-8 items-center rounded-full border px-3 text-sm font-medium shadow-sm',
+        tone === 'blue' && 'border-blue-100 bg-blue-50 text-blue-700',
+        tone === 'amber' && 'border-amber-100 bg-amber-50 text-amber-700',
+        tone === 'neutral' && 'border-slate-200 bg-white text-slate-600',
+      )}
+    >
+      {children}
+    </span>
+  );
+}
+
+function ActiveFilterBadge({ children }: { children: ReactNode }) {
+  return (
+    <span className="inline-flex h-7 items-center rounded-full border border-blue-100 bg-blue-50 px-3 text-xs font-medium text-blue-700">
+      {children}
+    </span>
+  );
+}
+
+const CONTROL_CLASS =
+  'h-10 rounded-xl border-slate-200 bg-white text-sm shadow-sm transition placeholder:text-slate-400 hover:border-slate-300 focus-visible:ring-blue-500 focus-visible:ring-offset-0';
 
 export default function CompaniesMapTab() {
   const [companies, setCompanies] = useState<MapCompany[]>([]);
@@ -559,83 +737,87 @@ export default function CompaniesMapTab() {
     () => ENTERPRISE_TYPES.find((item) => item.value === enterpriseType)?.label ?? null,
     [enterpriseType],
   );
+  const lastLoadedTime = useMemo(
+    () =>
+      lastLoadedAt
+        ? new Date(lastLoadedAt).toLocaleTimeString('ru-RU', {
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+          })
+        : null,
+    [lastLoadedAt],
+  );
 
   return (
     <div className="py-4">
-      <div className="flex min-h-[calc(100vh-180px)] flex-col gap-3">
-        <div className="rounded-md border bg-background p-3 shadow-sm">
-          <div className="flex flex-col gap-3">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <div className="flex items-center gap-2">
-                <MapPinned className="h-5 w-5 text-muted-foreground" />
-                <div className="font-semibold">Компании на карте</div>
-                <Badge variant="secondary" className="font-normal">
-                  {companies.length.toLocaleString('ru-RU')} / {withGeo.toLocaleString('ru-RU')}
-                </Badge>
-                {skippedNoGeo > 0 && (
-                  <Badge variant="outline" className="font-normal">
-                    без координат: {skippedNoGeo.toLocaleString('ru-RU')}
-                  </Badge>
-                )}
-                <div className="ml-1 inline-flex rounded-md border bg-muted/30 p-0.5">
+      <div className="flex min-h-[calc(100vh-180px)] flex-col gap-4">
+        <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_18px_50px_rgba(15,23,42,0.08)]">
+          <div className="border-b border-slate-100 bg-gradient-to-b from-slate-50 to-white px-4 py-4 sm:px-5">
+            <div className="flex flex-col gap-4 xl:flex-row xl:items-center xl:justify-between">
+              <div className="flex min-w-0 flex-col gap-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-blue-50 text-blue-600 ring-1 ring-blue-100">
+                    <MapPinned className="h-5 w-5" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-semibold leading-tight text-slate-950">Компании на карте</h2>
+                    <p className="text-sm text-slate-500">География компаний, фильтры и режимы отображения</p>
+                  </div>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <StatBadge tone="blue">
+                    {companies.length.toLocaleString('ru-RU')} / {withGeo.toLocaleString('ru-RU')}
+                  </StatBadge>
+                  {skippedNoGeo > 0 && <StatBadge tone="amber">без координат: {skippedNoGeo.toLocaleString('ru-RU')}</StatBadge>}
+                  {activeFilterCount > 0 && (
+                    <StatBadge>
+                      <Filter className="mr-1.5 h-4 w-4" />
+                      фильтров: {activeFilterCount}
+                    </StatBadge>
+                  )}
+                </div>
+              </div>
+
+              <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
+                <SegmentedControl value={mapMode} onChange={setMapMode} />
+                <div className="flex flex-wrap items-center gap-2">
+                  {lastLoadedTime && (
+                    <span className="inline-flex h-10 items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 text-sm text-slate-500 shadow-sm">
+                      <Clock3 className="h-4 w-4" />
+                      {lastLoadedTime}
+                    </span>
+                  )}
                   <Button
                     type="button"
-                    variant={mapMode === 'points' ? 'secondary' : 'ghost'}
+                    variant="outline"
                     size="sm"
-                    className="h-7 px-3 text-xs"
-                    onClick={() => setMapMode('points')}
+                    className="h-10 rounded-xl border-slate-200 bg-white px-4 text-sm font-medium shadow-sm hover:bg-slate-50"
+                    onClick={resetFilters}
                   >
-                    Точки
+                    <RotateCcw className="mr-2 h-4 w-4" />
+                    Сбросить
                   </Button>
                   <Button
                     type="button"
-                    variant={mapMode === 'heatmap' ? 'secondary' : 'ghost'}
                     size="sm"
-                    className="h-7 px-3 text-xs"
-                    onClick={() => setMapMode('heatmap')}
+                    className="h-10 rounded-xl bg-blue-600 px-4 text-sm font-semibold text-white shadow-sm hover:bg-blue-700"
+                    onClick={() => setReloadToken((value) => value + 1)}
+                    disabled={loading}
                   >
-                    Тепловая карта
+                    {loading ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <RefreshCw className="mr-2 h-4 w-4" />}
+                    Обновить
                   </Button>
                 </div>
               </div>
-              <div className="flex flex-wrap items-center gap-2">
-                {lastLoadedAt && (
-                  <span className="text-xs text-muted-foreground">
-                    {new Date(lastLoadedAt).toLocaleTimeString('ru-RU', {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      second: '2-digit',
-                    })}
-                  </span>
-                )}
-                {activeFilterCount > 0 && (
-                  <Badge variant="outline" className="font-normal">
-                    фильтров: {activeFilterCount}
-                  </Badge>
-                )}
-                <Button type="button" variant="outline" size="sm" className="h-8 gap-2" onClick={resetFilters}>
-                  <RotateCcw className="h-4 w-4" />
-                  Сбросить
-                </Button>
-                <Button
-                  type="button"
-                  variant="outline"
-                  size="sm"
-                  className="h-8 gap-2"
-                  onClick={() => setReloadToken((value) => value + 1)}
-                  disabled={loading}
-                >
-                  {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-                  Обновить
-                </Button>
-              </div>
             </div>
+          </div>
 
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-8">
-              <div className="space-y-1">
-                <span className="text-[11px] uppercase text-muted-foreground">Отрасль</span>
+          <div className="space-y-4 px-4 py-4 sm:px-5">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-12">
+              <FilterField label="Отрасль" className="xl:col-span-2">
                 <Select value={industryId} onValueChange={setIndustryId}>
-                  <SelectTrigger className="h-9 text-left text-sm" disabled={industriesLoading && !industries.length}>
+                  <SelectTrigger className={CONTROL_CLASS} disabled={industriesLoading && !industries.length}>
                     <SelectValue placeholder="Все отрасли" />
                   </SelectTrigger>
                   <SelectContent className="min-w-full sm:min-w-[420px]">
@@ -647,12 +829,11 @@ export default function CompaniesMapTab() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FilterField>
 
-              <div className="space-y-1">
-                <span className="text-[11px] uppercase text-muted-foreground">Тип предприятия</span>
+              <FilterField label="Тип предприятия" className="xl:col-span-2">
                 <Select value={enterpriseType} onValueChange={setEnterpriseType}>
-                  <SelectTrigger className="h-9 text-left text-sm">
+                  <SelectTrigger className={CONTROL_CLASS}>
                     <SelectValue placeholder="Все типы" />
                   </SelectTrigger>
                   <SelectContent>
@@ -664,12 +845,11 @@ export default function CompaniesMapTab() {
                     ))}
                   </SelectContent>
                 </Select>
-              </div>
+              </FilterField>
 
-              <div className="space-y-1">
-                <span className="text-[11px] uppercase text-muted-foreground">ОКВЭД</span>
+              <FilterField label="ОКВЭД" className="xl:col-span-2">
                 <Select value={okvedCode} onValueChange={setOkvedCode}>
-                  <SelectTrigger className="h-9 text-left text-sm" disabled={okvedLoading && !okvedOptions.length}>
+                  <SelectTrigger className={CONTROL_CLASS} disabled={okvedLoading && !okvedOptions.length}>
                     <SelectValue placeholder="Все коды" />
                   </SelectTrigger>
                   <SelectContent className="min-w-full sm:min-w-[520px]">
@@ -678,36 +858,33 @@ export default function CompaniesMapTab() {
                       <SelectItem key={item.okved_code} value={item.okved_code} title={item.okved_main}>
                         <div className="flex flex-col gap-0.5 text-left">
                           <span className="font-medium text-foreground">{item.okved_code}</span>
-                          <span className="text-xs text-muted-foreground whitespace-normal break-words">
-                            {item.okved_main}
-                          </span>
+                          <span className="whitespace-normal break-words text-xs text-muted-foreground">{item.okved_main}</span>
                         </div>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                <label className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground">
-                  <Checkbox checked={mainOkvedOnly} onCheckedChange={(value) => setMainOkvedOnly(Boolean(value))} />
-                  <span>Искать по основному ОКВЭД</span>
-                </label>
-              </div>
+                <CompactCheckbox checked={mainOkvedOnly} onCheckedChange={setMainOkvedOnly}>
+                  Искать по основному ОКВЭД
+                </CompactCheckbox>
+              </FilterField>
 
-              <div className="space-y-1">
-                <span className="text-[11px] uppercase text-muted-foreground">Ответственный</span>
+              <FilterField label="Ответственный" className="xl:col-span-2">
                 <Popover open={responsibleOpen} onOpenChange={setResponsibleOpen}>
                   <PopoverTrigger asChild>
                     <Button
                       type="button"
                       variant="outline"
                       role="combobox"
+                      aria-label="Ответственный"
                       aria-expanded={responsibleOpen}
-                      className="h-9 w-full justify-between px-3 text-left text-sm font-normal"
+                      className={cn(CONTROL_CLASS, 'w-full justify-between px-3 text-left font-normal')}
                     >
-                      <span className="truncate">{responsible || 'ФИО'}</span>
-                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
+                      <span className={cn('truncate', !responsible && 'text-slate-400')}>{responsible || 'ФИО'}</span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 text-slate-400" />
                     </Button>
                   </PopoverTrigger>
-                  <PopoverContent className="w-[320px] p-0" align="start">
+                  <PopoverContent className="w-[320px] rounded-xl border-slate-200 p-0 shadow-xl" align="start">
                     <Command>
                       <CommandInput placeholder="Найти ФИО" />
                       <CommandList>
@@ -741,91 +918,71 @@ export default function CompaniesMapTab() {
                     </Command>
                   </PopoverContent>
                 </Popover>
-              </div>
+              </FilterField>
 
-              <div className="space-y-1">
-                <span className="text-[11px] uppercase text-muted-foreground">Скор</span>
-                <div className="grid grid-cols-2 gap-2">
-                  <Input
-                    className="h-9 text-sm"
-                    inputMode="decimal"
-                    placeholder="от"
-                    value={scoreFrom}
-                    onChange={(event) => setScoreFrom(event.target.value)}
-                  />
-                  <Input
-                    className="h-9 text-sm"
-                    inputMode="decimal"
-                    placeholder="до"
-                    value={scoreTo}
-                    onChange={(event) => setScoreTo(event.target.value)}
-                  />
-                </div>
-              </div>
+              <FilterField label="Скор" className="xl:col-span-2">
+                <RangeInputs
+                  fromValue={scoreFrom}
+                  toValue={scoreTo}
+                  onFromChange={setScoreFrom}
+                  onToChange={setScoreTo}
+                  fromLabel="Скор от"
+                  toLabel="Скор до"
+                />
+              </FilterField>
 
-              <div className="space-y-1">
-                <span className="text-[11px] uppercase text-muted-foreground">Выручка, млн</span>
-                <div className="grid grid-cols-2 gap-2">
-                  <Input
-                    className="h-9 text-sm"
-                    inputMode="decimal"
-                    placeholder="от"
-                    value={revenueFromMln}
-                    onChange={(event) => setRevenueFromMln(event.target.value)}
-                  />
-                  <Input
-                    className="h-9 text-sm"
-                    inputMode="decimal"
-                    placeholder="до"
-                    value={revenueToMln}
-                    onChange={(event) => setRevenueToMln(event.target.value)}
-                  />
-                </div>
-                <label className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground">
-                  <Checkbox checked={revenueGrowing} onCheckedChange={(value) => setRevenueGrowing(Boolean(value))} />
-                  <span>Выручка в рост</span>
-                </label>
-              </div>
-
-              <label className="flex h-full min-h-[58px] items-end gap-3 rounded-md border bg-muted/40 px-3 py-2 text-sm">
-                <Checkbox checked={successOnly} onCheckedChange={(value) => setSuccessOnly(Boolean(value))} />
-                <span className="pb-1 text-foreground">Успешные анализы</span>
-              </label>
+              <FilterField label="Выручка, млн" className="xl:col-span-2">
+                <RangeInputs
+                  fromValue={revenueFromMln}
+                  toValue={revenueToMln}
+                  onFromChange={setRevenueFromMln}
+                  onToChange={setRevenueToMln}
+                  fromLabel="Выручка от"
+                  toLabel="Выручка до"
+                />
+                <CompactCheckbox checked={revenueGrowing} onCheckedChange={setRevenueGrowing}>
+                  Выручка в рост
+                </CompactCheckbox>
+              </FilterField>
             </div>
 
-            {(selectedIndustryLabel || selectedEnterpriseTypeLabel || okvedCode !== 'all' || revenueGrowing || error) && (
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                {selectedIndustryLabel && <Badge variant="secondary">Отрасль: {selectedIndustryLabel}</Badge>}
-                {selectedEnterpriseTypeLabel && <Badge variant="secondary">Тип: {selectedEnterpriseTypeLabel}</Badge>}
-                {okvedCode !== 'all' && <Badge variant="secondary">ОКВЭД: {okvedCode}</Badge>}
-                {revenueGrowing && <Badge variant="secondary">Выручка в рост</Badge>}
-                {error && <Badge variant="destructive">{error}</Badge>}
+            <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex flex-wrap items-center gap-2">
+                <ModernCheckbox checked={successOnly} onCheckedChange={setSuccessOnly}>
+                  Успешные анализы
+                </ModernCheckbox>
+                {selectedIndustryLabel && <ActiveFilterBadge>Отрасль: {selectedIndustryLabel}</ActiveFilterBadge>}
+                {selectedEnterpriseTypeLabel && <ActiveFilterBadge>Тип: {selectedEnterpriseTypeLabel}</ActiveFilterBadge>}
+                {okvedCode !== 'all' && <ActiveFilterBadge>ОКВЭД: {okvedCode}</ActiveFilterBadge>}
+                {revenueGrowing && <ActiveFilterBadge>Выручка в рост</ActiveFilterBadge>}
               </div>
-            )}
+              {error && <Badge variant="destructive">{error}</Badge>}
+            </div>
           </div>
-        </div>
+        </section>
 
-        <div className="relative min-h-[520px] flex-1 overflow-hidden rounded-md border bg-muted">
-          <div ref={mapContainerRef} className={cn('h-full min-h-[520px] w-full', (!mapReady || mapError) && 'opacity-40')} />
+        <section className="relative min-h-[540px] flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-[0_14px_40px_rgba(15,23,42,0.08)]">
+          <div ref={mapContainerRef} className={cn('h-full min-h-[540px] w-full', (!mapReady || mapError) && 'opacity-40')} />
 
           {(loading || !mapReady || mapError) && (
-            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-background/70">
-              <div className="rounded-md border bg-background px-4 py-3 text-sm shadow-sm">
+            <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/75 backdrop-blur-sm">
+              <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm shadow-xl">
                 {mapError ? (
                   <span className="text-destructive">{mapError}</span>
                 ) : (
-                  <span className="inline-flex items-center gap-2 text-muted-foreground">
-                    <Loader2 className="h-4 w-4 animate-spin" />
+                  <span className="inline-flex items-center gap-2 text-slate-600">
+                    <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
                     {loading ? 'Загружаем компании' : 'Инициализируем карту'}
                   </span>
                 )}
               </div>
             </div>
           )}
-        </div>
+        </section>
 
-        <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <div className="flex flex-wrap items-center gap-2 px-1 text-xs text-slate-500">
           <span>Всего по фильтрам: {total.toLocaleString('ru-RU')}</span>
+          <span className="h-1 w-1 rounded-full bg-slate-300" />
           <span>С координатами: {withGeo.toLocaleString('ru-RU')}</span>
         </div>
       </div>
