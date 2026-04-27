@@ -103,7 +103,9 @@ test('companies map hides okved options without displayable companies', () => {
   assert.match(componentSource, /\[industryId, mainOkvedOnly, prodclassId\]/);
   assert.match(okvedRouteSource, /import \{ dbBitrix \} from '@\/lib\/db-bitrix'/);
   assert.match(okvedRouteSource, /filterOkvedItemsByCompanies/);
+  assert.match(okvedRouteSource, /getOkvedRootsForIndustry/);
   assert.match(okvedRouteSource, /searchParams\.get\('onlyWithCompanies'\) === '1'/);
   assert.match(okvedRouteSource, /d\.geo_lat BETWEEN -90 AND 90/);
+  assert.match(okvedRouteSource, /split_part\(d\.main_okved, '\.', 1\) = ANY\(\$2::text\[\]\)/);
   assert.match(okvedRouteSource, /TRIM\(d\.main_okved\) = selected\.code/);
 });

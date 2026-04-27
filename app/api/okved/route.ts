@@ -53,14 +53,27 @@ const SQL_BY_INDUSTRY_PRODCLASSES = `
   LIMIT 1000
 `;
 
+async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
+  const { rows } = await db.query<{ root: string }>(
+    `
+      SELECT DISTINCT split_part(m.okved_code, '.', 1) AS root
+      FROM ib_okved_main m
+      WHERE m.industry_id = $1
+    `,
+    [industryId],
+  );
+  return rows.map((row) => row.root).filter(Boolean);
+}
+
 async function filterOkvedItemsByCompanies(
   rows: OkvedItem[],
-  options: { mainOkvedOnly: boolean; onlyWithGeo: boolean },
+  options: { mainOkvedOnly: boolean; onlyWithGeo: boolean; industryRoots?: string[] },
 ): Promise<OkvedItem[]> {
   const codes = Array.from(
     new Set(rows.map((row) => String(row.okved_code ?? '').trim()).filter(Boolean)),
   );
   if (!codes.length) return rows;
+  if (options.industryRoots && options.industryRoots.length === 0) return [];
 
   const geoSql = options.onlyWithGeo
     ? `
@@ -89,6 +102,10 @@ async function filterOkvedItemsByCompanies(
             )
         )
       `;
+  const industrySql = options.industryRoots
+    ? `AND split_part(d.main_okved, '.', 1) = ANY($2::text[])`
+    : '';
+  const queryParams = options.industryRoots ? [codes, options.industryRoots] : [codes];
 
   try {
     const { rows: companyRows } = await dbBitrix.query<{ code: string }>(
@@ -100,13 +117,14 @@ async function filterOkvedItemsByCompanies(
           FROM dadata_result d
           WHERE (d.status = 'ACTIVE' OR d.status = 'REORGANIZING')
             ${geoSql}
+            ${industrySql}
             AND (
               TRIM(d.main_okved) = selected.code
               ${extraOkvedSql}
             )
         )
       `,
-      [codes],
+      queryParams,
     );
     const availableCodes = new Set(companyRows.map((row) => String(row.code ?? '').trim()));
     return rows.filter((row) => availableCodes.has(String(row.okved_code ?? '').trim()));
@@ -128,23 +146,28 @@ export async function GET(req: NextRequest) {
     const onlyWithCompanies = searchParams.get('onlyWithCompanies') === '1';
     const onlyWithGeo = searchParams.get('onlyWithGeo') === '1';
     const mainOkvedOnly = searchParams.get('mainOkvedOnly') !== '0';
+    let industryRoots: string[] | undefined;
 
     let rows: OkvedItem[] = [];
     if (Number.isFinite(prodclassId) && prodclassId > 0) {
       const res = await db.query<OkvedItem>(SQL_BY_PRODCLASS, [prodclassId]);
       rows = res.rows;
+      if (Number.isFinite(industryId) && industryId > 0) {
+        industryRoots = await getOkvedRootsForIndustry(industryId);
+      }
     } else if (Number.isFinite(industryId) && industryId > 0) {
       const res = await db.query<OkvedItem>(SQL_BY_INDUSTRY_PRODCLASSES, [industryId]).catch(() =>
         db.query<OkvedItem>(SQL_BY_INDUSTRY, [industryId]),
       );
       rows = res.rows;
+      industryRoots = await getOkvedRootsForIndustry(industryId);
     } else {
       const res = await db.query<OkvedItem>(SQL_ALL);
       rows = res.rows;
     }
 
     if (onlyWithCompanies) {
-      rows = await filterOkvedItemsByCompanies(rows, { mainOkvedOnly, onlyWithGeo });
+      rows = await filterOkvedItemsByCompanies(rows, { mainOkvedOnly, onlyWithGeo, industryRoots });
     }
 
     return NextResponse.json({ items: rows });
