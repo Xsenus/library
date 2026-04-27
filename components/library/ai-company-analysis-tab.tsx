@@ -4,7 +4,6 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition } from
 import type { PointerEvent as ReactPointerEvent } from 'react';
 import {
   AlertTriangle,
-  ArrowRight,
   CheckCircle2,
   ChevronDown,
   ChevronUp,
@@ -3177,13 +3176,13 @@ export default function AiCompanyAnalysisTab() {
   );
 
   const handleRemoveFromQueue = useCallback(
-    async (inn: string) => {
+    async (inn: string, options?: { force?: boolean }) => {
       setRemoveInn(inn);
       try {
         const res = await fetch('/api/ai-analysis/queue', {
           method: 'DELETE',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ inns: [inn] }),
+          body: JSON.stringify({ inns: [inn], force: options?.force === true }),
         });
         if (!res.ok) throw new Error(`Request failed with ${res.status}`);
         const data = (await res.json().catch(() => null)) as { removed?: number } | null;
@@ -5358,10 +5357,28 @@ export default function AiCompanyAnalysisTab() {
                       <div
                         key={`queue-${item.inn}`}
                         className={cn(
-                          'rounded-2xl border bg-background/95 p-4 shadow-sm transition-colors hover:border-foreground/20',
+                          'relative rounded-2xl border bg-background/95 p-4 pr-12 shadow-sm transition-colors hover:border-foreground/20',
                           queueSelected.has(item.inn) && 'border-zinc-400 bg-zinc-50 ring-1 ring-zinc-300',
                         )}
                       >
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="icon"
+                          className="absolute right-3 top-3 h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                          disabled={removeInn === item.inn || stopInn === item.inn}
+                          onClick={async () => {
+                            await handleRemoveFromQueue(item.inn, { force: true });
+                            fetchQueue();
+                          }}
+                          aria-label="Удалить из очереди"
+                        >
+                          {removeInn === item.inn || stopInn === item.inn ? (
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                          ) : (
+                            <Trash2 className="h-4 w-4" />
+                          )}
+                        </Button>
                         <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:justify-between">
                           <div className="flex shrink-0 items-center xl:mt-2">
                             <Checkbox
@@ -5378,11 +5395,7 @@ export default function AiCompanyAnalysisTab() {
                               }}
                             />
                           </div>
-                          <button
-                            type="button"
-                            className="min-w-0 flex-1 rounded-xl text-left transition-colors hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                            onClick={() => openCompanyInfo(item, { fromQueue: true })}
-                          >
+                          <div className="min-w-0 flex-1">
                             <div className="space-y-3 p-1">
                               <div className="flex flex-wrap items-center gap-2">
                                 <span className="truncate text-base font-semibold text-foreground">
@@ -5472,47 +5485,8 @@ export default function AiCompanyAnalysisTab() {
                                 </div>
                               )}
                             </div>
-                          </button>
-
-                          <div className="flex shrink-0 flex-col gap-3 xl:min-w-[190px]">
-                            <div className="flex flex-col gap-2 sm:flex-row xl:flex-col">
-                              <Button
-                                type="button"
-                                variant="outline"
-                                className="justify-between gap-2"
-                                onClick={() => openCompanyInfo(item, { fromQueue: true })}
-                              >
-                                <span className="inline-flex items-center gap-2">
-                                  <Info className="h-4 w-4" />
-                                  Карточка
-                                </span>
-                                <ArrowRight className="h-4 w-4" />
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                className="justify-between gap-2 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                                disabled={removeInn === item.inn || stopInn === item.inn}
-                                onClick={async () => {
-                                  if (state.running) {
-                                    await handleStopSingle(item.inn);
-                                  } else {
-                                    await handleRemoveFromQueue(item.inn);
-                                  }
-                                  fetchQueue();
-                                }}
-                              >
-                                <span className="inline-flex items-center gap-2">
-                                  {removeInn === item.inn || stopInn === item.inn ? (
-                                    <Loader2 className="h-4 w-4 animate-spin" />
-                                  ) : (
-                                    <Trash2 className="h-4 w-4" />
-                                  )}
-                                  Удалить
-                                </span>
-                              </Button>
-                            </div>
                           </div>
+
                         </div>
                       </div>
                     );

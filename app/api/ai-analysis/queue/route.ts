@@ -561,10 +561,11 @@ export async function POST(request: NextRequest) {
 
 export async function DELETE(request: NextRequest) {
   try {
-    const body = (await request.json().catch(() => null)) as { inns?: unknown } | null;
+    const body = (await request.json().catch(() => null)) as { inns?: unknown; force?: unknown } | null;
     const inns = Array.isArray(body?.inns)
       ? Array.from(new Set(body!.inns.map((inn) => String(inn ?? '').trim()).filter(Boolean)))
       : [];
+    const force = body?.force === true;
 
     if (!inns.length) {
       return NextResponse.json(
@@ -575,18 +576,18 @@ export async function DELETE(request: NextRequest) {
 
     await ensureQueueTable();
 
-    const deleteRes = await dbBitrix.query<{ inn: string }>(
-      `DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state = 'queued' RETURNING inn`,
-      [inns],
-    );
-    const removedInns = (deleteRes.rows ?? []).map((row) => row.inn).filter(Boolean);
-    const removed = deleteRes.rowCount ?? removedInns.length;
-
     const runningRes = await dbBitrix.query<{ inn: string }>(
       `SELECT inn FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state = 'running'`,
       [inns],
     );
     const running = runningRes.rowCount ?? (runningRes.rows?.length ?? 0);
+
+    const deleteSql = force
+      ? `DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state IN ('queued', 'running') RETURNING inn`
+      : `DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state = 'queued' RETURNING inn`;
+    const deleteRes = await dbBitrix.query<{ inn: string }>(deleteSql, [inns]);
+    const removedInns = (deleteRes.rows ?? []).map((row) => row.inn).filter(Boolean);
+    const removed = deleteRes.rowCount ?? removedInns.length;
 
     const columns = await getDadataColumns();
     const updates: string[] = [];
