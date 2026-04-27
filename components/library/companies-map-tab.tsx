@@ -462,8 +462,14 @@ export default function CompaniesMapTab() {
   const objectManagerRef = useRef<any>(null);
   const ymapsRef = useRef<any>(null);
   const heatmapRef = useRef<any>(null);
+  const heatmapDataKeyRef = useRef('');
+  const heatmapBuildIdRef = useRef(0);
+  const objectManagerAttachedRef = useRef(false);
+  const objectManagerDataKeyRef = useRef('');
+  const mapBoundsKeyRef = useRef('');
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
+  const [heatmapLoading, setHeatmapLoading] = useState(false);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
@@ -504,6 +510,27 @@ export default function CompaniesMapTab() {
     setRevenueFromMln('');
     setRevenueToMln('');
   }, []);
+
+  const companiesDataKey = useMemo(() => {
+    const first = companies[0]?.inn ?? '';
+    const last = companies[companies.length - 1]?.inn ?? '';
+    return `${companies.length}:${total}:${withGeo}:${first}:${last}`;
+  }, [companies, total, withGeo]);
+
+  const pointFeatureCollection = useMemo(() => buildFeatureCollection(companies), [companies]);
+
+  const heatmapFeatureCollection = useMemo(
+    () => ({
+      type: 'FeatureCollection',
+      features: companies.map((company) => ({
+        type: 'Feature',
+        id: company.inn,
+        geometry: { type: 'Point', coordinates: [company.geo_lat, company.geo_lon] },
+        properties: { weight: 1 },
+      })),
+    }),
+    [companies],
+  );
 
   const fetchCompanies = useCallback(
     async (signal?: AbortSignal) => {
@@ -643,6 +670,7 @@ export default function CompaniesMapTab() {
           });
 
           map.geoObjects.add(objectManager);
+          objectManagerAttachedRef.current = true;
           ymapsRef.current = ymaps;
           mapRef.current = map;
           objectManagerRef.current = objectManager;
@@ -664,6 +692,7 @@ export default function CompaniesMapTab() {
         mapRef.current.destroy();
         mapRef.current = null;
         objectManagerRef.current = null;
+        objectManagerAttachedRef.current = false;
       }
     };
   }, []);
@@ -673,19 +702,23 @@ export default function CompaniesMapTab() {
     const objectManager = objectManagerRef.current;
     if (!map || !objectManager || !mapReady) return;
 
-    objectManager.removeAll();
-    if (heatmapRef.current) {
-      heatmapRef.current.setMap(null);
-      heatmapRef.current = null;
-    }
-
     if (!companies.length) {
+      objectManager.removeAll();
+      objectManagerDataKeyRef.current = '';
+      mapBoundsKeyRef.current = '';
+      if (heatmapRef.current) heatmapRef.current.setMap(null);
+      heatmapDataKeyRef.current = '';
       map.setCenter([61.524, 105.3188], 4);
       return;
     }
 
-    if (mapMode === 'points') {
-      objectManager.add(buildFeatureCollection(companies));
+    if (objectManagerDataKeyRef.current !== companiesDataKey) {
+      objectManager.removeAll();
+      objectManager.add(pointFeatureCollection);
+      objectManagerDataKeyRef.current = companiesDataKey;
+    }
+
+    if (mapBoundsKeyRef.current !== companiesDataKey) {
       const bounds = objectManager.getBounds();
       if (bounds) {
         map.setBounds(bounds, {
@@ -693,41 +726,66 @@ export default function CompaniesMapTab() {
           zoomMargin: [36, 36, 36, 36],
         });
       }
+      mapBoundsKeyRef.current = companiesDataKey;
+    }
+
+    if (heatmapDataKeyRef.current && heatmapDataKeyRef.current !== companiesDataKey && heatmapRef.current) {
+      heatmapRef.current.setMap(null);
+      heatmapRef.current = null;
+      heatmapDataKeyRef.current = '';
+    }
+  }, [companies.length, companiesDataKey, mapReady, pointFeatureCollection]);
+
+  useEffect(() => {
+    const map = mapRef.current;
+    const objectManager = objectManagerRef.current;
+    if (!map || !objectManager || !mapReady) return;
+
+    if (mapMode === 'points') {
+      heatmapBuildIdRef.current += 1;
+      setHeatmapLoading(false);
+      if (heatmapRef.current) heatmapRef.current.setMap(null);
+      if (!objectManagerAttachedRef.current) {
+        map.geoObjects.add(objectManager);
+        objectManagerAttachedRef.current = true;
+      }
+      return;
+    }
+
+    if (objectManagerAttachedRef.current) {
+      map.geoObjects.remove(objectManager);
+      objectManagerAttachedRef.current = false;
+    }
+
+    if (!companies.length) return;
+
+    if (heatmapRef.current && heatmapDataKeyRef.current === companiesDataKey) {
+      heatmapRef.current.setMap(map);
       return;
     }
 
     const ymaps = ymapsRef.current;
+    const buildId = heatmapBuildIdRef.current + 1;
+    heatmapBuildIdRef.current = buildId;
+    setHeatmapLoading(true);
+
     loadYandexHeatmapModule(ymaps)
       .then((Heatmap) => {
-        if (mapMode !== 'heatmap' || !mapRef.current) return;
-        const heatmap = new Heatmap(
-          {
-            type: 'FeatureCollection',
-            features: companies.map((company) => ({
-              type: 'Feature',
-              id: company.inn,
-              geometry: { type: 'Point', coordinates: [company.geo_lat, company.geo_lon] },
-              properties: { weight: 1 },
-            })),
-          },
-          { radius: 24, opacity: 0.8, dissipating: false },
-        );
+        if (heatmapBuildIdRef.current !== buildId || mapMode !== 'heatmap' || !mapRef.current) return;
+        const heatmap = new Heatmap(heatmapFeatureCollection, { radius: 24, opacity: 0.8, dissipating: false });
+        if (heatmapRef.current) heatmapRef.current.setMap(null);
         heatmapRef.current = heatmap;
+        heatmapDataKeyRef.current = companiesDataKey;
         heatmap.setMap(mapRef.current);
-        const coordinates = companies.map((company) => [company.geo_lat, company.geo_lon]);
-        const bounds = ymaps.util.bounds.fromPoints(coordinates);
-        if (bounds) {
-          mapRef.current.setBounds(bounds, {
-            checkZoomRange: true,
-            zoomMargin: [36, 36, 36, 36],
-          });
-        }
       })
       .catch((err) => {
         console.error('Failed to initialize heatmap layer:', err);
         setMapError('Не удалось загрузить тепловую карту');
+      })
+      .finally(() => {
+        if (heatmapBuildIdRef.current === buildId) setHeatmapLoading(false);
       });
-  }, [companies, mapMode, mapReady]);
+  }, [companies.length, companiesDataKey, heatmapFeatureCollection, mapMode, mapReady]);
 
   const selectedIndustryLabel = useMemo(
     () => industries.find((item) => String(item.id) === industryId)?.industry ?? null,
@@ -780,6 +838,9 @@ export default function CompaniesMapTab() {
               </div>
 
               <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-center xl:justify-end">
+                <ModernCheckbox checked={successOnly} onCheckedChange={setSuccessOnly} className="h-10">
+                  Успешные анализы
+                </ModernCheckbox>
                 <SegmentedControl value={mapMode} onChange={setMapMode} />
                 <div className="flex flex-wrap items-center gap-2">
                   {lastLoadedTime && (
@@ -946,11 +1007,9 @@ export default function CompaniesMapTab() {
               </FilterField>
             </div>
 
+            {(selectedIndustryLabel || selectedEnterpriseTypeLabel || okvedCode !== 'all' || revenueGrowing || error) && (
             <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-wrap items-center gap-2">
-                <ModernCheckbox checked={successOnly} onCheckedChange={setSuccessOnly}>
-                  Успешные анализы
-                </ModernCheckbox>
                 {selectedIndustryLabel && <ActiveFilterBadge>Отрасль: {selectedIndustryLabel}</ActiveFilterBadge>}
                 {selectedEnterpriseTypeLabel && <ActiveFilterBadge>Тип: {selectedEnterpriseTypeLabel}</ActiveFilterBadge>}
                 {okvedCode !== 'all' && <ActiveFilterBadge>ОКВЭД: {okvedCode}</ActiveFilterBadge>}
@@ -958,13 +1017,14 @@ export default function CompaniesMapTab() {
               </div>
               {error && <Badge variant="destructive">{error}</Badge>}
             </div>
+            )}
           </div>
         </section>
 
         <section className="relative min-h-[540px] flex-1 overflow-hidden rounded-2xl border border-slate-200 bg-slate-100 shadow-[0_14px_40px_rgba(15,23,42,0.08)]">
           <div ref={mapContainerRef} className={cn('h-full min-h-[540px] w-full', (!mapReady || mapError) && 'opacity-40')} />
 
-          {(loading || !mapReady || mapError) && (
+          {(loading || heatmapLoading || !mapReady || mapError) && (
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-white/75 backdrop-blur-sm">
               <div className="rounded-2xl border border-slate-200 bg-white px-5 py-4 text-sm shadow-xl">
                 {mapError ? (
@@ -972,7 +1032,7 @@ export default function CompaniesMapTab() {
                 ) : (
                   <span className="inline-flex items-center gap-2 text-slate-600">
                     <Loader2 className="h-4 w-4 animate-spin text-blue-600" />
-                    {loading ? 'Загружаем компании' : 'Инициализируем карту'}
+                    {loading ? 'Загружаем компании' : heatmapLoading ? 'Готовим тепловую карту' : 'Инициализируем карту'}
                   </span>
                 )}
               </div>

@@ -33,6 +33,14 @@ test('companies map uses the redesigned commercial filter layout', () => {
   assert.match(componentSource, /aria-label="Режим отображения карты"/);
 });
 
+test('companies map keeps success filter in the top controls and reuses map layers on mode switch', () => {
+  assert.match(componentSource, /<ModernCheckbox checked=\{successOnly\}[\s\S]*?<SegmentedControl value=\{mapMode\}/);
+  assert.match(componentSource, /objectManagerAttachedRef/);
+  assert.match(componentSource, /objectManagerDataKeyRef/);
+  assert.match(componentSource, /heatmapDataKeyRef/);
+  assert.match(componentSource, /Готовим тепловую карту/);
+});
+
 test('companies map balloon includes company website as external link', () => {
   assert.match(componentSource, /extractFirstSite\(company\.web_sites\)/);
   assert.match(componentSource, /siteHref\(site\)/);
