@@ -85,8 +85,10 @@ test('companies map auto-scales heatmap intensity by maximum local density', () 
   assert.match(componentSource, /Math\.pow\(normalizedRegionalDensity, HEATMAP_REGIONAL_DENSITY_POWER\)/);
   assert.match(componentSource, /dissipating: true/);
   assert.match(componentSource, /radius: 28/);
-  assert.match(componentSource, /intensityOfMidpoint: 0\.94/);
-  assert.match(componentSource, /0\.96: 'rgba\(249, 115, 22, 0\.78\)'/);
+  assert.match(componentSource, /intensityOfMidpoint: 0\.965/);
+  assert.match(componentSource, /0\.94: 'rgba\(249, 115, 22, 0\.78\)'/);
+  assert.match(componentSource, /0\.985: 'rgba\(220, 38, 38, 0\.92\)'/);
+  assert.match(componentSource, /1\.0: 'rgba\(127, 29, 29, 0\.98\)'/);
 });
 
 test('companies map balloon includes company website as external link', () => {
