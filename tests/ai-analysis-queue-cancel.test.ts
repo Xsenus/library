@@ -45,8 +45,12 @@ test('AI analysis queue rows keep selection compact and avoid duplicate status b
   assert.match(queueRowsSource, /aria-label=\{`Выбрать \$\{itemCompanyLabel\}`\}/);
   assert.match(queueRowsSource, /const showStatusLabel = statusLabel !== '—' && statusLabel\.trim\(\) !== badge\.label\.trim\(\)/);
   assert.match(queueRowsSource, /\{showStatusLabel && \(/);
+  assert.match(queueRowsSource, /aria-label="Удалить из очереди"/);
+  assert.match(queueRowsSource, /handleRemoveFromQueue\(item\.inn,\s*\{\s*force:\s*true\s*\}\)/);
   assert.doesNotMatch(queueRowsSource, />\s*Выбрать\s*</);
   assert.doesNotMatch(queueRowsSource, />\s*Оценка\s*</);
+  assert.doesNotMatch(queueRowsSource, />\s*Карточка\s*</);
+  assert.doesNotMatch(queueRowsSource, /openCompanyInfo\(item,\s*\{\s*fromQueue:\s*true\s*\}\)/);
   assert.doesNotMatch(queueRowsSource, /Появится после расч/);
 });
 
@@ -64,4 +68,14 @@ test('AI analysis queue filter POST uses discovered dadata status columns', () =
   assert.match(queueRouteSource, /columns\.startedAt \? `d\.\$\{quoteIdent\(columns\.startedAt\)\}` : 'NULL::timestamptz'/);
   assert.doesNotMatch(queueRouteSource, /d\.analysis_started_at > now\(\) - interval/);
   assert.doesNotMatch(queueRouteSource, /ORDER BY COALESCE\(q\.queued_at, d\.analysis_started_at\)/);
+});
+
+test('AI analysis queue DELETE can force remove stuck running items', () => {
+  assert.match(queueRouteSource, /force\?:\s*unknown/);
+  assert.match(queueRouteSource, /const force = body\?\.force === true/);
+  assert.match(
+    queueRouteSource,
+    /DELETE FROM ai_analysis_queue WHERE inn = ANY\(\$1::text\[\]\) AND state IN \('queued', 'running'\) RETURNING inn/,
+  );
+  assert.match(queueRouteSource, /state = 'queued' RETURNING inn/);
 });
