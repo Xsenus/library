@@ -30,6 +30,15 @@ test('companies map uses the redesigned commercial filter layout', () => {
   assert.match(componentSource, /function ModernCheckbox/);
   assert.match(componentSource, /function SegmentedControl/);
   assert.match(componentSource, /function StatBadge/);
+  assert.match(componentSource, /grid gap-4 md:grid-cols-2 xl:grid-cols-4/);
+  assert.match(componentSource, /label="Отрасль" className="order-1"/);
+  assert.match(componentSource, /label="Тип предприятия" className="order-2"/);
+  assert.match(componentSource, /label="ОКВЭД" className="order-3"/);
+  assert.match(componentSource, /label="Ответственный" className="order-4"/);
+  assert.match(componentSource, /label="Размер бизнеса" className="order-5"/);
+  assert.match(componentSource, /label="Скор" className="order-6"/);
+  assert.match(componentSource, /label="Выручка, млн" className="order-7"/);
+  assert.match(componentSource, /className="order-8 flex min-w-0 items-end"/);
   assert.match(componentSource, /rounded-2xl border border-slate-200 bg-white/);
   assert.match(componentSource, /shadow-\[0_18px_50px_rgba\(15,23,42,0\.08\)\]/);
   assert.match(componentSource, /aria-label="Режим отображения карты"/);

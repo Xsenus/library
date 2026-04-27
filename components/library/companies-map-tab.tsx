@@ -974,8 +974,8 @@ export default function CompaniesMapTab() {
           </div>
 
           <div className="space-y-4 px-4 py-4 sm:px-5">
-            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-12">
-              <FilterField label="Отрасль" className="xl:col-span-2">
+            <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+              <FilterField label="Отрасль" className="order-1">
                 <Select value={industryId} onValueChange={setIndustryId}>
                   <SelectTrigger className={CONTROL_CLASS} disabled={industriesLoading && !industries.length}>
                     <SelectValue placeholder="Все отрасли" />
@@ -991,7 +991,7 @@ export default function CompaniesMapTab() {
                 </Select>
               </FilterField>
 
-              <FilterField label="Тип предприятия" className="xl:col-span-2">
+              <FilterField label="Тип предприятия" className="order-2">
                 <Select value={prodclassId} onValueChange={setProdclassId} disabled={industryId === 'all'}>
                   <SelectTrigger className={CONTROL_CLASS} disabled={industryId === 'all' || (prodclassesLoading && !prodclasses.length)}>
                     <SelectValue placeholder={industryId === 'all' ? 'Сначала отрасль' : 'Все типы'} />
@@ -1007,7 +1007,7 @@ export default function CompaniesMapTab() {
                 </Select>
               </FilterField>
 
-              <FilterField label="ОКВЭД" className="xl:col-span-2">
+              <FilterField label="ОКВЭД" className="order-3">
                 <Select value={okvedCode} onValueChange={setOkvedCode}>
                   <SelectTrigger className={CONTROL_CLASS} disabled={okvedLoading && !okvedOptions.length}>
                     <SelectValue placeholder="Все коды" />
@@ -1029,7 +1029,7 @@ export default function CompaniesMapTab() {
                 </CompactCheckbox>
               </FilterField>
 
-              <FilterField label="Ответственный" className="xl:col-span-2">
+              <FilterField label="Ответственный" className="order-4">
                 <Popover open={responsibleOpen} onOpenChange={setResponsibleOpen}>
                   <PopoverTrigger asChild>
                     <Button
@@ -1080,7 +1080,7 @@ export default function CompaniesMapTab() {
                 </Popover>
               </FilterField>
 
-              <FilterField label="Скор" className="xl:col-span-2">
+              <FilterField label="Скор" className="order-6">
                 <RangeInputs
                   fromValue={scoreFrom}
                   toValue={scoreTo}
@@ -1091,7 +1091,7 @@ export default function CompaniesMapTab() {
                 />
               </FilterField>
 
-              <FilterField label="Выручка, млн" className="xl:col-span-2">
+              <FilterField label="Выручка, млн" className="order-7">
                 <RangeInputs
                   fromValue={revenueFromMln}
                   toValue={revenueToMln}
@@ -1100,12 +1100,9 @@ export default function CompaniesMapTab() {
                   fromLabel="Выручка от"
                   toLabel="Выручка до"
                 />
-                <CompactCheckbox checked={revenueGrowing} onCheckedChange={setRevenueGrowing}>
-                  Выручка в рост
-                </CompactCheckbox>
               </FilterField>
 
-              <FilterField label="Размер бизнеса" className="xl:col-span-2">
+              <FilterField label="Размер бизнеса" className="order-5">
                 <Select value={enterpriseType} onValueChange={setEnterpriseType}>
                   <SelectTrigger className={CONTROL_CLASS}>
                     <SelectValue placeholder="Все размеры" />
@@ -1120,6 +1117,12 @@ export default function CompaniesMapTab() {
                   </SelectContent>
                 </Select>
               </FilterField>
+
+              <div className="order-8 flex min-w-0 items-end">
+                <ModernCheckbox checked={revenueGrowing} onCheckedChange={setRevenueGrowing} className="h-10 w-full">
+                  Выручка в рост
+                </ModernCheckbox>
+              </div>
             </div>
 
             {(selectedIndustryLabel || selectedProdclassLabel || selectedEnterpriseTypeLabel || okvedCode !== 'all' || revenueGrowing || error) && (
