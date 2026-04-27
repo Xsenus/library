@@ -1,17 +1,20 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Loader2, MapPinned, RefreshCw, RotateCcw } from 'lucide-react';
+import { Check, ChevronsUpDown, Loader2, MapPinned, RefreshCw, RotateCcw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
+import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
 import { Input } from '@/components/ui/input';
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useDebounce } from '@/hooks/use-debounce';
 import { cn } from '@/lib/utils';
 
 type IndustryItem = { id: number; industry: string };
 type OkvedOption = { id: number; okved_code: string; okved_main: string };
+type MapMode = 'points' | 'heatmap';
 
 type MapCompany = {
   inn: string;
@@ -23,6 +26,10 @@ type MapCompany = {
   employee_count: number | null;
   branch_count: number | null;
   main_okved: string | null;
+  web_sites: string | null;
+  smb_type: string | null;
+  smb_category: string | null;
+  revenue_1: number | null;
   analysis_ok: number | null;
   analysis_score: number | null;
   responsible: string | null;
@@ -48,9 +55,17 @@ declare global {
 }
 
 const MAP_SCRIPT_ID = 'yandex-maps-2-1-api';
+const HEATMAP_SCRIPT_ID = 'yandex-maps-heatmap-module';
 const YANDEX_MAPS_API_KEY = process.env.NEXT_PUBLIC_YANDEX_MAPS_API_KEY || '';
+const ENTERPRISE_TYPES = [
+  { value: 'MICRO', label: 'Микро' },
+  { value: 'SMALL', label: 'Малое' },
+  { value: 'MEDIUM', label: 'Среднее' },
+  { value: 'unknown', label: 'Не указано' },
+];
 
 let ymapsPromise: Promise<YMapsApi> | null = null;
+let heatmapModulePromise: Promise<any> | null = null;
 
 function loadYandexMaps(apiKey: string): Promise<YMapsApi> {
   if (typeof window === 'undefined') return Promise.reject(new Error('window is unavailable'));
@@ -75,6 +90,35 @@ function loadYandexMaps(apiKey: string): Promise<YMapsApi> {
   });
 
   return ymapsPromise;
+}
+
+function loadYandexHeatmapModule(ymaps: YMapsApi): Promise<any> {
+  if (typeof window === 'undefined') return Promise.reject(new Error('window is unavailable'));
+  if (heatmapModulePromise) return heatmapModulePromise;
+
+  heatmapModulePromise = new Promise((resolve, reject) => {
+    const requireModule = () => {
+      ymaps.modules.require(['Heatmap'], (Heatmap: any) => resolve(Heatmap), reject);
+    };
+
+    const existing = document.getElementById(HEATMAP_SCRIPT_ID) as HTMLScriptElement | null;
+    if (existing) {
+      existing.addEventListener('load', requireModule, { once: true });
+      existing.addEventListener('error', () => reject(new Error('Yandex heatmap script failed to load')), { once: true });
+      if (window.ymaps?.modules) requireModule();
+      return;
+    }
+
+    const script = document.createElement('script');
+    script.id = HEATMAP_SCRIPT_ID;
+    script.async = true;
+    script.src = 'https://yastatic.net/s3/mapsapi-jslibs/heatmap/0.0.1/heatmap.min.js';
+    script.onload = requireModule;
+    script.onerror = () => reject(new Error('Yandex heatmap script failed to load'));
+    document.head.appendChild(script);
+  });
+
+  return heatmapModulePromise;
 }
 
 function formatRevenueMln(value: number | null | undefined): string {
@@ -111,10 +155,33 @@ function buildBitrixHref(inn: string): string {
   return `/api/b24/resolve-company?inn=${encodeURIComponent(inn)}&mode=pick`;
 }
 
+function extractFirstSite(value: string | null | undefined): string | null {
+  return (
+    String(value ?? '')
+      .replace(/[{}"]/g, ' ')
+      .split(/[,\s;]+/)
+      .map((item) => item.trim())
+      .find(Boolean) ?? null
+  );
+}
+
+function siteHref(value: string): string {
+  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
+}
+
+function formatEnterpriseType(value: string | null | undefined): string {
+  const found = ENTERPRISE_TYPES.find((item) => item.value === value);
+  return found?.label ?? value ?? '—';
+}
+
 function buildBalloonContent(company: MapCompany): string {
   const revenue = formatRevenueMln(company.revenue);
   const score = formatScore(company.analysis_score);
   const bitrixHref = buildBitrixHref(company.inn);
+  const site = extractFirstSite(company.web_sites);
+  const siteLine = site
+    ? `<div><b>Сайт:</b> <a href="${escapeHtml(siteHref(site))}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:none;">${escapeHtml(site)}</a></div>`
+    : '';
 
   return `
     <div style="min-width:260px;max-width:360px;font-family:Arial,sans-serif;font-size:13px;line-height:1.45;color:#111827;">
@@ -126,6 +193,8 @@ function buildBalloonContent(company: MapCompany): string {
       <div><b>Ответственный:</b> ${escapeHtml(company.responsible || '—')}</div>
       <div><b>Сотрудников:</b> ${escapeHtml(formatInteger(company.employee_count))}</div>
       <div><b>Филиалов:</b> ${escapeHtml(formatInteger(company.branch_count))}</div>
+      <div><b>Тип предприятия:</b> ${escapeHtml(formatEnterpriseType(company.smb_category || company.smb_type))}</div>
+      ${siteLine}
       <div style="margin-top:6px;color:#4b5563;">${escapeHtml(company.address || 'Адрес не указан')}</div>
       <a href="${escapeHtml(bitrixHref)}" target="_blank" rel="noopener noreferrer" style="display:inline-block;margin-top:10px;color:#2563eb;font-weight:700;text-decoration:none;">Открыть в Bitrix24</a>
     </div>
@@ -191,12 +260,17 @@ export default function CompaniesMapTab() {
 
   const [industryId, setIndustryId] = useState('all');
   const [okvedCode, setOkvedCode] = useState('all');
+  const [enterpriseType, setEnterpriseType] = useState('all');
+  const [mainOkvedOnly, setMainOkvedOnly] = useState(true);
   const [successOnly, setSuccessOnly] = useState(false);
+  const [revenueGrowing, setRevenueGrowing] = useState(false);
   const [scoreFrom, setScoreFrom] = useState('');
   const [scoreTo, setScoreTo] = useState('');
   const [responsible, setResponsible] = useState('');
+  const [responsibleOpen, setResponsibleOpen] = useState(false);
   const [revenueFromMln, setRevenueFromMln] = useState('');
   const [revenueToMln, setRevenueToMln] = useState('');
+  const [mapMode, setMapMode] = useState<MapMode>('points');
   const [reloadToken, setReloadToken] = useState(0);
 
   const debouncedScoreFrom = useDebounce(scoreFrom, 350);
@@ -208,14 +282,19 @@ export default function CompaniesMapTab() {
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<any>(null);
   const objectManagerRef = useRef<any>(null);
+  const ymapsRef = useRef<any>(null);
+  const heatmapRef = useRef<any>(null);
   const [mapReady, setMapReady] = useState(false);
   const [mapError, setMapError] = useState<string | null>(null);
 
   const activeFilterCount = useMemo(() => {
     let count = 0;
     if (industryId !== 'all') count += 1;
+    if (enterpriseType !== 'all') count += 1;
     if (okvedCode !== 'all') count += 1;
+    if (!mainOkvedOnly) count += 1;
     if (successOnly) count += 1;
+    if (revenueGrowing) count += 1;
     if (debouncedScoreFrom.trim() || debouncedScoreTo.trim()) count += 1;
     if (debouncedResponsible.trim()) count += 1;
     if (debouncedRevenueFromMln.trim() || debouncedRevenueToMln.trim()) count += 1;
@@ -226,15 +305,21 @@ export default function CompaniesMapTab() {
     debouncedRevenueToMln,
     debouncedScoreFrom,
     debouncedScoreTo,
+    enterpriseType,
     industryId,
+    mainOkvedOnly,
     okvedCode,
+    revenueGrowing,
     successOnly,
   ]);
 
   const resetFilters = useCallback(() => {
     setIndustryId('all');
+    setEnterpriseType('all');
     setOkvedCode('all');
+    setMainOkvedOnly(true);
     setSuccessOnly(false);
+    setRevenueGrowing(false);
     setScoreFrom('');
     setScoreTo('');
     setResponsible('');
@@ -250,8 +335,11 @@ export default function CompaniesMapTab() {
 
         const params = new URLSearchParams();
         if (industryId !== 'all') params.set('industryId', industryId);
+        if (enterpriseType !== 'all') params.set('enterpriseType', enterpriseType);
         if (okvedCode !== 'all') params.set('okved', okvedCode);
+        params.set('mainOkvedOnly', mainOkvedOnly ? '1' : '0');
         if (successOnly) params.set('success', '1');
+        if (revenueGrowing) params.set('revenueGrowing', '1');
         if (debouncedScoreFrom.trim()) params.set('scoreFrom', debouncedScoreFrom.trim());
         if (debouncedScoreTo.trim()) params.set('scoreTo', debouncedScoreTo.trim());
         if (debouncedResponsible.trim()) params.set('responsible', debouncedResponsible.trim());
@@ -285,8 +373,11 @@ export default function CompaniesMapTab() {
       debouncedRevenueToMln,
       debouncedScoreFrom,
       debouncedScoreTo,
+      enterpriseType,
       industryId,
+      mainOkvedOnly,
       okvedCode,
+      revenueGrowing,
       successOnly,
     ],
   );
@@ -342,7 +433,7 @@ export default function CompaniesMapTab() {
     loadOkveds();
 
     return () => ac.abort();
-  }, [industryId]);
+  }, [industryId, enterpriseType]);
 
   useEffect(() => {
     let cancelled = false;
@@ -374,6 +465,7 @@ export default function CompaniesMapTab() {
           });
 
           map.geoObjects.add(objectManager);
+          ymapsRef.current = ymaps;
           mapRef.current = map;
           objectManagerRef.current = objectManager;
           setMapReady(true);
@@ -386,6 +478,10 @@ export default function CompaniesMapTab() {
 
     return () => {
       cancelled = true;
+      if (heatmapRef.current) {
+        heatmapRef.current.setMap(null);
+        heatmapRef.current = null;
+      }
       if (mapRef.current) {
         mapRef.current.destroy();
         mapRef.current = null;
@@ -400,25 +496,68 @@ export default function CompaniesMapTab() {
     if (!map || !objectManager || !mapReady) return;
 
     objectManager.removeAll();
+    if (heatmapRef.current) {
+      heatmapRef.current.setMap(null);
+      heatmapRef.current = null;
+    }
 
     if (!companies.length) {
       map.setCenter([61.524, 105.3188], 4);
       return;
     }
 
-    objectManager.add(buildFeatureCollection(companies));
-    const bounds = objectManager.getBounds();
-    if (bounds) {
-      map.setBounds(bounds, {
-        checkZoomRange: true,
-        zoomMargin: [36, 36, 36, 36],
-      });
+    if (mapMode === 'points') {
+      objectManager.add(buildFeatureCollection(companies));
+      const bounds = objectManager.getBounds();
+      if (bounds) {
+        map.setBounds(bounds, {
+          checkZoomRange: true,
+          zoomMargin: [36, 36, 36, 36],
+        });
+      }
+      return;
     }
-  }, [companies, mapReady]);
+
+    const ymaps = ymapsRef.current;
+    loadYandexHeatmapModule(ymaps)
+      .then((Heatmap) => {
+        if (mapMode !== 'heatmap' || !mapRef.current) return;
+        const heatmap = new Heatmap(
+          {
+            type: 'FeatureCollection',
+            features: companies.map((company) => ({
+              type: 'Feature',
+              id: company.inn,
+              geometry: { type: 'Point', coordinates: [company.geo_lat, company.geo_lon] },
+              properties: { weight: 1 },
+            })),
+          },
+          { radius: 24, opacity: 0.8, dissipating: false },
+        );
+        heatmapRef.current = heatmap;
+        heatmap.setMap(mapRef.current);
+        const coordinates = companies.map((company) => [company.geo_lat, company.geo_lon]);
+        const bounds = ymaps.util.bounds.fromPoints(coordinates);
+        if (bounds) {
+          mapRef.current.setBounds(bounds, {
+            checkZoomRange: true,
+            zoomMargin: [36, 36, 36, 36],
+          });
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to initialize heatmap layer:', err);
+        setMapError('Не удалось загрузить тепловую карту');
+      });
+  }, [companies, mapMode, mapReady]);
 
   const selectedIndustryLabel = useMemo(
     () => industries.find((item) => String(item.id) === industryId)?.industry ?? null,
     [industries, industryId],
+  );
+  const selectedEnterpriseTypeLabel = useMemo(
+    () => ENTERPRISE_TYPES.find((item) => item.value === enterpriseType)?.label ?? null,
+    [enterpriseType],
   );
 
   return (
@@ -438,6 +577,26 @@ export default function CompaniesMapTab() {
                     без координат: {skippedNoGeo.toLocaleString('ru-RU')}
                   </Badge>
                 )}
+                <div className="ml-1 inline-flex rounded-md border bg-muted/30 p-0.5">
+                  <Button
+                    type="button"
+                    variant={mapMode === 'points' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    className="h-7 px-3 text-xs"
+                    onClick={() => setMapMode('points')}
+                  >
+                    Точки
+                  </Button>
+                  <Button
+                    type="button"
+                    variant={mapMode === 'heatmap' ? 'secondary' : 'ghost'}
+                    size="sm"
+                    className="h-7 px-3 text-xs"
+                    onClick={() => setMapMode('heatmap')}
+                  >
+                    Тепловая карта
+                  </Button>
+                </div>
               </div>
               <div className="flex flex-wrap items-center gap-2">
                 {lastLoadedAt && (
@@ -472,7 +631,7 @@ export default function CompaniesMapTab() {
               </div>
             </div>
 
-            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-6">
+            <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-8">
               <div className="space-y-1">
                 <span className="text-[11px] uppercase text-muted-foreground">Отрасль</span>
                 <Select value={industryId} onValueChange={setIndustryId}>
@@ -484,6 +643,23 @@ export default function CompaniesMapTab() {
                     {industries.map((item) => (
                       <SelectItem key={item.id} value={String(item.id)}>
                         {item.industry}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+
+              <div className="space-y-1">
+                <span className="text-[11px] uppercase text-muted-foreground">Тип предприятия</span>
+                <Select value={enterpriseType} onValueChange={setEnterpriseType}>
+                  <SelectTrigger className="h-9 text-left text-sm">
+                    <SelectValue placeholder="Все типы" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Все типы</SelectItem>
+                    {ENTERPRISE_TYPES.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -510,22 +686,61 @@ export default function CompaniesMapTab() {
                     ))}
                   </SelectContent>
                 </Select>
+                <label className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground">
+                  <Checkbox checked={mainOkvedOnly} onCheckedChange={(value) => setMainOkvedOnly(Boolean(value))} />
+                  <span>Искать по основному ОКВЭД</span>
+                </label>
               </div>
 
               <div className="space-y-1">
                 <span className="text-[11px] uppercase text-muted-foreground">Ответственный</span>
-                <Input
-                  className="h-9 text-sm"
-                  list="companies-map-responsibles"
-                  placeholder="ФИО"
-                  value={responsible}
-                  onChange={(event) => setResponsible(event.target.value)}
-                />
-                <datalist id="companies-map-responsibles">
-                  {responsibleOptions.map((item) => (
-                    <option key={item} value={item} />
-                  ))}
-                </datalist>
+                <Popover open={responsibleOpen} onOpenChange={setResponsibleOpen}>
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      role="combobox"
+                      aria-expanded={responsibleOpen}
+                      className="h-9 w-full justify-between px-3 text-left text-sm font-normal"
+                    >
+                      <span className="truncate">{responsible || 'ФИО'}</span>
+                      <ChevronsUpDown className="ml-2 h-4 w-4 shrink-0 opacity-60" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-[320px] p-0" align="start">
+                    <Command>
+                      <CommandInput placeholder="Найти ФИО" />
+                      <CommandList>
+                        <CommandEmpty>Ничего не найдено</CommandEmpty>
+                        <CommandGroup>
+                          <CommandItem
+                            value="all"
+                            onSelect={() => {
+                              setResponsible('');
+                              setResponsibleOpen(false);
+                            }}
+                          >
+                            <Check className={cn('mr-2 h-4 w-4', !responsible ? 'opacity-100' : 'opacity-0')} />
+                            Все ответственные
+                          </CommandItem>
+                          {responsibleOptions.map((item) => (
+                            <CommandItem
+                              key={item}
+                              value={item}
+                              onSelect={() => {
+                                setResponsible(item);
+                                setResponsibleOpen(false);
+                              }}
+                            >
+                              <Check className={cn('mr-2 h-4 w-4', responsible === item ? 'opacity-100' : 'opacity-0')} />
+                              <span className="truncate">{item}</span>
+                            </CommandItem>
+                          ))}
+                        </CommandGroup>
+                      </CommandList>
+                    </Command>
+                  </PopoverContent>
+                </Popover>
               </div>
 
               <div className="space-y-1">
@@ -566,6 +781,10 @@ export default function CompaniesMapTab() {
                     onChange={(event) => setRevenueToMln(event.target.value)}
                   />
                 </div>
+                <label className="flex items-center gap-2 pt-1 text-[11px] text-muted-foreground">
+                  <Checkbox checked={revenueGrowing} onCheckedChange={(value) => setRevenueGrowing(Boolean(value))} />
+                  <span>Выручка в рост</span>
+                </label>
               </div>
 
               <label className="flex h-full min-h-[58px] items-end gap-3 rounded-md border bg-muted/40 px-3 py-2 text-sm">
@@ -574,10 +793,12 @@ export default function CompaniesMapTab() {
               </label>
             </div>
 
-            {(selectedIndustryLabel || okvedCode !== 'all' || error) && (
+            {(selectedIndustryLabel || selectedEnterpriseTypeLabel || okvedCode !== 'all' || revenueGrowing || error) && (
               <div className="flex flex-wrap items-center gap-2 text-xs">
                 {selectedIndustryLabel && <Badge variant="secondary">Отрасль: {selectedIndustryLabel}</Badge>}
+                {selectedEnterpriseTypeLabel && <Badge variant="secondary">Тип: {selectedEnterpriseTypeLabel}</Badge>}
                 {okvedCode !== 'all' && <Badge variant="secondary">ОКВЭД: {okvedCode}</Badge>}
+                {revenueGrowing && <Badge variant="secondary">Выручка в рост</Badge>}
                 {error && <Badge variant="destructive">{error}</Badge>}
               </div>
             )}

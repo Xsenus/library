@@ -17,6 +17,10 @@ type MapCompanyRow = {
   employee_count: number | string | null;
   branch_count: number | string | null;
   main_okved: string | null;
+  web_sites: string | null;
+  smb_type: string | null;
+  smb_category: string | null;
+  revenue_1: number | string | null;
   analysis_ok: number | string | null;
   analysis_score: number | string | null;
 };
@@ -169,8 +173,11 @@ export async function GET(request: NextRequest) {
     const { searchParams } = request.nextUrl;
     const industryId = parsePositiveInt(searchParams.get('industryId'));
     const okved = (searchParams.get('okved') ?? '').trim();
+    const enterpriseType = (searchParams.get('enterpriseType') ?? '').trim();
+    const mainOkvedOnly = searchParams.get('mainOkvedOnly') !== '0';
     const responsible = (searchParams.get('responsible') ?? '').trim();
     const successOnly = searchParams.get('success') === '1';
+    const revenueGrowing = searchParams.get('revenueGrowing') === '1';
     const scoreFrom = parseFiniteNumber(searchParams.get('scoreFrom'));
     const scoreTo = parseFiniteNumber(searchParams.get('scoreTo'));
     const revenueFromMln = parseFiniteNumber(searchParams.get('revenueFromMln'));
@@ -198,25 +205,38 @@ export async function GET(request: NextRequest) {
     if (okved) {
       args.push(okved);
       const param = args.length;
-      where.push(`
-        (
-          TRIM(d.main_okved) = $${param}
-          OR EXISTS (
-            SELECT 1
-            FROM jsonb_array_elements(COALESCE(d.okveds, '[]'::jsonb)) AS elem(val)
-            WHERE
-              (jsonb_typeof(elem.val) = 'string' AND TRIM(BOTH '"' FROM elem.val::text) = $${param})
-              OR (
-                jsonb_typeof(elem.val) = 'object'
-                AND (
-                  elem.val->>'okved' = $${param}
-                  OR elem.val->>'code' = $${param}
-                  OR elem.val->>'okved_code' = $${param}
+      if (mainOkvedOnly) {
+        where.push(`TRIM(d.main_okved) = $${param}`);
+      } else {
+        where.push(`
+          (
+            TRIM(d.main_okved) = $${param}
+            OR EXISTS (
+              SELECT 1
+              FROM jsonb_array_elements(COALESCE(d.okveds, '[]'::jsonb)) AS elem(val)
+              WHERE
+                (jsonb_typeof(elem.val) = 'string' AND TRIM(BOTH '"' FROM elem.val::text) = $${param})
+                OR (
+                  jsonb_typeof(elem.val) = 'object'
+                  AND (
+                    elem.val->>'okved' = $${param}
+                    OR elem.val->>'code' = $${param}
+                    OR elem.val->>'okved_code' = $${param}
+                  )
                 )
-              )
+            )
           )
-        )
-      `);
+        `);
+      }
+    }
+
+    if (enterpriseType) {
+      if (enterpriseType === 'unknown') {
+        where.push(`COALESCE(d.smb_category, '') = ''`);
+      } else {
+        args.push(enterpriseType);
+        where.push(`d.smb_category = $${args.length}`);
+      }
     }
 
     if (successOnly) {
@@ -241,6 +261,10 @@ export async function GET(request: NextRequest) {
     if (revenueToMln != null) {
       args.push(revenueToMln * 1_000_000);
       where.push(`d.revenue <= $${args.length}`);
+    }
+
+    if (revenueGrowing) {
+      where.push(`d.revenue IS NOT NULL AND d."revenue-1" IS NOT NULL AND d.revenue > d."revenue-1"`);
     }
 
     if (responsible) {
@@ -285,6 +309,10 @@ export async function GET(request: NextRequest) {
         d.employee_count,
         d.branch_count,
         d.main_okved,
+        d.web_sites,
+        d.smb_type,
+        d.smb_category,
+        d."revenue-1" AS revenue_1,
         d.analysis_ok,
         d.analysis_score
       FROM dadata_result d
@@ -325,6 +353,10 @@ export async function GET(request: NextRequest) {
           employee_count: toNumber(row.employee_count),
           branch_count: toNumber(row.branch_count),
           main_okved: row.main_okved ?? null,
+          web_sites: row.web_sites ?? null,
+          smb_type: row.smb_type ?? null,
+          smb_category: row.smb_category ?? null,
+          revenue_1: toNumber(row.revenue_1),
           analysis_ok: toNumber(row.analysis_ok),
           analysis_score: toNumber(row.analysis_score),
           responsible: meta?.assigned_name ?? null,
