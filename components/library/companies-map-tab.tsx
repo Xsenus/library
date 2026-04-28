@@ -65,13 +65,13 @@ declare global {
 const MAP_SCRIPT_ID = 'yandex-maps-2-1-api';
 const HEATMAP_SCRIPT_ID = 'yandex-maps-heatmap-module';
 const YANDEX_MAPS_API_KEY = process.env.NEXT_PUBLIC_YANDEX_MAPS_API_KEY || '';
-const HEATMAP_CLUSTER_CELL_KM = 22;
-const HEATMAP_DENSITY_RADIUS_KM = 38;
-const HEATMAP_REGIONAL_RADIUS_KM = 180;
+const HEATMAP_CLUSTER_CELL_KM = 12;
+const HEATMAP_DENSITY_RADIUS_KM = 28;
+const HEATMAP_REGIONAL_RADIUS_KM = 110;
 const HEATMAP_GRID_CELL_DEGREES = HEATMAP_CLUSTER_CELL_KM / 111;
-const HEATMAP_LOCAL_DENSITY_POWER = 2.8;
-const HEATMAP_REGIONAL_DENSITY_POWER = 1.5;
-const HEATMAP_CELL_COUNT_POWER = 0.6;
+const HEATMAP_LOCAL_DENSITY_POWER = 3.8;
+const HEATMAP_REGIONAL_DENSITY_POWER = 1.2;
+const HEATMAP_CELL_COUNT_POWER = 0.85;
 const ENTERPRISE_TYPES = [
   { value: 'MICRO', label: 'Микро' },
   { value: 'SMALL', label: 'Малое' },
@@ -257,7 +257,7 @@ function buildAutoScaledHeatmapFeatureCollection(companies: MapCompany[]) {
   return {
     type: 'FeatureCollection',
     features: cells.map((cell, index) => {
-      const normalizedCellCount = Math.log1p(cell.count) / Math.log1p(maxCellCount);
+      const normalizedCellCount = cell.count / maxCellCount;
       const normalizedLocalDensity = densities[index].local / maxLocalDensity;
       const normalizedRegionalDensity = densities[index].regional / maxRegionalDensity;
       const weight =

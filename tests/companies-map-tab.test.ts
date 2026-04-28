@@ -59,9 +59,9 @@ test('companies map keeps success filter in the top controls and reuses map laye
 
 test('companies map auto-scales heatmap intensity by maximum local density', () => {
   assert.match(componentSource, /function buildAutoScaledHeatmapFeatureCollection/);
-  assert.match(componentSource, /HEATMAP_CLUSTER_CELL_KM = 22/);
-  assert.match(componentSource, /HEATMAP_DENSITY_RADIUS_KM = 38/);
-  assert.match(componentSource, /HEATMAP_REGIONAL_RADIUS_KM = 180/);
+  assert.match(componentSource, /HEATMAP_CLUSTER_CELL_KM = 12/);
+  assert.match(componentSource, /HEATMAP_DENSITY_RADIUS_KM = 28/);
+  assert.match(componentSource, /HEATMAP_REGIONAL_RADIUS_KM = 110/);
   assert.match(componentSource, /HEATMAP_GRID_CELL_DEGREES/);
   assert.match(componentSource, /buildHeatmapDensityCells/);
   assert.match(componentSource, /buildHeatmapCellIndex/);
@@ -76,10 +76,11 @@ test('companies map auto-scales heatmap intensity by maximum local density', () 
   assert.match(componentSource, /max_cell_count: maxCellCount/);
   assert.match(componentSource, /max_local_density: maxLocalDensity/);
   assert.match(componentSource, /max_regional_density: maxRegionalDensity/);
-  assert.match(componentSource, /HEATMAP_LOCAL_DENSITY_POWER = 2\.8/);
-  assert.match(componentSource, /HEATMAP_REGIONAL_DENSITY_POWER = 1\.5/);
-  assert.match(componentSource, /HEATMAP_CELL_COUNT_POWER = 0\.6/);
+  assert.match(componentSource, /HEATMAP_LOCAL_DENSITY_POWER = 3\.8/);
+  assert.match(componentSource, /HEATMAP_REGIONAL_DENSITY_POWER = 1\.2/);
+  assert.match(componentSource, /HEATMAP_CELL_COUNT_POWER = 0\.85/);
   assert.match(componentSource, /Math\.max\(0\.0001/);
+  assert.match(componentSource, /cell\.count \/ maxCellCount/);
   assert.match(componentSource, /Math\.pow\(normalizedCellCount, HEATMAP_CELL_COUNT_POWER\)/);
   assert.match(componentSource, /Math\.pow\(normalizedLocalDensity, HEATMAP_LOCAL_DENSITY_POWER\)/);
   assert.match(componentSource, /Math\.pow\(normalizedRegionalDensity, HEATMAP_REGIONAL_DENSITY_POWER\)/);
