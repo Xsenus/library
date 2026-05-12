@@ -112,3 +112,23 @@ test('ui qa targets the dedicated company search input and keeps responsible fil
   assert.match(componentSource, /data-testid="ai-analysis-filters-query"/);
   assert.match(componentSource, /data-testid="ai-analysis-filters-responsible"/);
 });
+
+test('ui qa verifies the path tables requested by the customer', () => {
+  const qaSource = fs.readFileSync(path.join(__dirname, '..', 'lib', 'ai-analysis-ui-qa.ts'), 'utf8');
+  const componentSource = fs.readFileSync(
+    path.join(__dirname, '..', 'components', 'library', 'ai-company-analysis-tab.tsx'),
+    'utf8',
+  );
+
+  for (const testId of [
+    'ai-analysis-path-top',
+    'ai-analysis-path-products',
+    'ai-analysis-path-site-equipment',
+    'ai-analysis-path-okved',
+  ]) {
+    assert.match(componentSource, new RegExp(`data-testid="${testId}"`));
+    assert.match(qaSource, new RegExp(testId));
+  }
+
+  assert.match(qaSource, /pathTablesFound/);
+});

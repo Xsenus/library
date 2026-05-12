@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import path from 'node:path';
 
-import { chromium, type Browser, type BrowserContext, type Page } from 'playwright';
+import { chromium, type Browser, type BrowserContext, type Locator, type Page } from 'playwright';
 
 import {
   DEFAULT_ARTIFACT_RETENTION,
@@ -52,6 +52,7 @@ export type AiAnalysisUiQaCaseSummary = {
   rowScreenshotPath: string | null;
   dialogScreenshotPath: string | null;
   equipmentScreenshotPath: string | null;
+  pathTablesFound: string[];
   companyArtifactPath: string | null;
   equipmentTraceArtifactPath: string | null;
   productTraceArtifactPath: string | null;
@@ -209,6 +210,11 @@ function errorText(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function assertElementContains(locator: Locator, expectedText: string, message: string) {
+  const text = await locator.innerText();
+  assert.match(text, new RegExp(expectedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), message);
+}
+
 async function fetchJsonWithSession(page: Page, relativeUrl: string): Promise<JsonFetchResult> {
   return page.evaluate(async (target) => {
     const response = await fetch(target, { cache: 'no-store' });
@@ -299,6 +305,7 @@ async function captureCaseArtifacts({
     rowScreenshotPath: null,
     dialogScreenshotPath: null,
     equipmentScreenshotPath: null,
+    pathTablesFound: [],
     companyArtifactPath: path.join(caseDir, 'company.json'),
     equipmentTraceArtifactPath: path.join(caseDir, 'equipment-trace.json'),
     productTraceArtifactPath: path.join(caseDir, 'product-trace.json'),
@@ -322,6 +329,18 @@ async function captureCaseArtifacts({
     await dialog.waitFor({ state: 'visible', timeout: timeoutMs });
     const equipmentSection = page.getByTestId('ai-analysis-company-equipment');
     await equipmentSection.waitFor({ state: 'visible', timeout: timeoutMs });
+    const expectedPathTables = [
+      { id: 'ai-analysis-path-top', label: 'Топ-10 оборудования' },
+      { id: 'ai-analysis-path-products', label: 'Путь 1' },
+      { id: 'ai-analysis-path-site-equipment', label: 'Путь 2' },
+      { id: 'ai-analysis-path-okved', label: 'Путь 3' },
+    ];
+    for (const table of expectedPathTables) {
+      const section = page.getByTestId(table.id);
+      await section.waitFor({ state: 'visible', timeout: timeoutMs });
+      await assertElementContains(section, table.label, `${caseConfig.name}: ${table.label} section should be visible`);
+      summary.pathTablesFound.push(table.id);
+    }
 
     summary.dialogTitle = (await page.getByTestId('ai-analysis-company-dialog-title').innerText()).trim();
     assert.match(summary.dialogTitle, new RegExp(caseConfig.inn), 'dialog title should contain INN');
