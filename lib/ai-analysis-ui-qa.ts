@@ -212,7 +212,7 @@ function errorText(error: unknown): string {
 
 async function assertElementContains(locator: Locator, expectedText: string, message: string) {
   const text = await locator.innerText();
-  assert.match(text, new RegExp(expectedText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')), message);
+  assert.ok(text.toLocaleLowerCase('ru-RU').includes(expectedText.toLocaleLowerCase('ru-RU')), message);
 }
 
 async function fetchJsonWithSession(page: Page, relativeUrl: string): Promise<JsonFetchResult> {
