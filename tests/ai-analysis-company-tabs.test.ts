@@ -81,6 +81,8 @@ test('company analysis dialog exposes path tables for audit and future reports',
   assert.match(componentSource, /buildGoodsHref/);
   assert.match(componentSource, /goodsId/);
   assert.match(componentSource, /equipmentId/);
+  assert.match(componentSource, /linkedEquipmentPreview/);
+  assert.match(componentSource, /Открыть оборудование в библиотеке/);
 });
 
 test('company analysis dialog uses full GPT response when backend exposes it', () => {

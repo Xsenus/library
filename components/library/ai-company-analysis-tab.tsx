@@ -6282,15 +6282,7 @@ export default function AiCompanyAnalysisTab() {
                             const goodsTypeSourceLabel = formatGoodsTypeSource(trace?.goods_type_source ?? item.goodsTypeSource);
                             const linkedEquipment = trace?.linked_equipment ?? [];
                             const goodsHref = buildGoodsHref(trace?.goods_type_id ?? item.id);
-                            const equipmentLabels = linkedEquipment.length
-                              ? linkedEquipment.slice(0, 4).map((equipment) => {
-                                  const score =
-                                    equipment.final_score != null
-                                      ? ` · ${formatSimilarityScore(equipment.final_score) ?? formatRawScore(equipment.final_score)}`
-                                      : '';
-                                  return `${equipment.equipment_name || `Оборудование #${equipment.equipment_id}`}${score}`;
-                                }).join('; ')
-                              : '—';
+                            const linkedEquipmentPreview = linkedEquipment.slice(0, 4);
 
                             return (
                               <TableRow
@@ -6314,7 +6306,48 @@ export default function AiCompanyAnalysisTab() {
                                   <div className="line-clamp-2">{trace?.goods_type_name || item.name}</div>
                                 </TableCell>
                                 <TableCell className="max-w-[360px] px-3 py-2 text-muted-foreground">
-                                  <div className="line-clamp-3">{equipmentLabels}</div>
+                                  {linkedEquipmentPreview.length ? (
+                                    <div className="flex flex-wrap gap-1.5">
+                                      {linkedEquipmentPreview.map((equipment) => {
+                                        const href = buildEquipmentCardHref({ id: equipment.equipment_id });
+                                        const score =
+                                          equipment.final_score != null
+                                            ? formatSimilarityScore(equipment.final_score) ?? formatRawScore(equipment.final_score)
+                                            : null;
+                                        const label = equipment.equipment_name || `Оборудование #${equipment.equipment_id}`;
+                                        const content = (
+                                          <>
+                                            <span className="tabular-nums">ID {equipment.equipment_id}</span>
+                                            <span className="max-w-[220px] truncate">{label}</span>
+                                            {score ? <span className="tabular-nums">{score}</span> : null}
+                                          </>
+                                        );
+
+                                        return href ? (
+                                          <a
+                                            key={equipment.equipment_id}
+                                            href={href}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="inline-flex max-w-full items-center gap-1 rounded-full border bg-background px-2 py-1 text-[11px] font-medium text-foreground hover:border-primary/60 hover:text-primary"
+                                            aria-label="Открыть оборудование в библиотеке"
+                                          >
+                                            {content}
+                                            <ExternalLink className="h-3 w-3 shrink-0" />
+                                          </a>
+                                        ) : (
+                                          <span
+                                            key={equipment.equipment_id}
+                                            className="inline-flex max-w-full items-center gap-1 rounded-full border bg-background px-2 py-1 text-[11px] font-medium text-foreground"
+                                          >
+                                            {content}
+                                          </span>
+                                        );
+                                      })}
+                                    </div>
+                                  ) : (
+                                    '—'
+                                  )}
                                   {trace ? (
                                     <div className="mt-1 text-[11px]">
                                       Связано: {trace.linked_equipment_count}
