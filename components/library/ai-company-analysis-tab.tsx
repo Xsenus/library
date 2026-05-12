@@ -6091,7 +6091,24 @@ export default function AiCompanyAnalysisTab() {
                   </div>
                 </div>
 
-                <div data-testid="ai-analysis-path-top" className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                <Tabs defaultValue="top" className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                  <TabsList className="grid h-auto w-full grid-cols-2 rounded-lg bg-muted p-1 md:grid-cols-4">
+                    <TabsTrigger data-testid="ai-analysis-path-tab-top" value="top" className="rounded-md">
+                      TOP-10
+                    </TabsTrigger>
+                    <TabsTrigger data-testid="ai-analysis-path-tab-products" value="products" className="rounded-md">
+                      Путь 1
+                    </TabsTrigger>
+                    <TabsTrigger data-testid="ai-analysis-path-tab-site-equipment" value="site-equipment" className="rounded-md">
+                      Путь 2
+                    </TabsTrigger>
+                    <TabsTrigger data-testid="ai-analysis-path-tab-okved" value="okved" className="rounded-md">
+                      Путь 3
+                    </TabsTrigger>
+                  </TabsList>
+
+                <TabsContent value="top" className="mt-4">
+                <div data-testid="ai-analysis-path-top">
                   <div className="mb-2 text-xs font-medium uppercase tracking-wide text-muted-foreground">Топ-10 оборудования</div>
                   {(() => {
                     const equipmentItems = topEquipment(infoCompany, analyzerInfo);
@@ -6213,8 +6230,10 @@ export default function AiCompanyAnalysisTab() {
                     );
                   })()}
                 </div>
+                </TabsContent>
 
-                <div data-testid="ai-analysis-path-products" className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                <TabsContent value="products" className="mt-4">
+                <div data-testid="ai-analysis-path-products">
                   <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Путь 1. Продукция сайта → ТНВЭД → товар из базы → оборудование / кейс
                   </div>
@@ -6327,8 +6346,10 @@ export default function AiCompanyAnalysisTab() {
                     );
                   })()}
                 </div>
+                </TabsContent>
 
-                <div data-testid="ai-analysis-path-site-equipment" className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                <TabsContent value="site-equipment" className="mt-4">
+                <div data-testid="ai-analysis-path-site-equipment">
                   <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Путь 2. Оборудование с сайта → оборудование из базы → кейс
                   </div>
@@ -6398,8 +6419,10 @@ export default function AiCompanyAnalysisTab() {
                     );
                   })()}
                 </div>
+                </TabsContent>
 
-                <div data-testid="ai-analysis-path-okved" className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                <TabsContent value="okved" className="mt-4">
+                <div data-testid="ai-analysis-path-okved">
                   <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
                     Путь 3. ОКВЭД → оборудование из базы → кейс
                   </div>
@@ -6470,6 +6493,8 @@ export default function AiCompanyAnalysisTab() {
                     );
                   })()}
                 </div>
+                </TabsContent>
+                </Tabs>
 
                 </TabsContent>
 

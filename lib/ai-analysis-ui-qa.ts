@@ -330,12 +330,13 @@ async function captureCaseArtifacts({
     const equipmentSection = page.getByTestId('ai-analysis-company-equipment');
     await equipmentSection.waitFor({ state: 'visible', timeout: timeoutMs });
     const expectedPathTables = [
-      { id: 'ai-analysis-path-top', label: 'Топ-10 оборудования' },
-      { id: 'ai-analysis-path-products', label: 'Путь 1' },
-      { id: 'ai-analysis-path-site-equipment', label: 'Путь 2' },
-      { id: 'ai-analysis-path-okved', label: 'Путь 3' },
+      { id: 'ai-analysis-path-top', tabId: 'ai-analysis-path-tab-top', label: 'Топ-10 оборудования' },
+      { id: 'ai-analysis-path-products', tabId: 'ai-analysis-path-tab-products', label: 'Путь 1' },
+      { id: 'ai-analysis-path-site-equipment', tabId: 'ai-analysis-path-tab-site-equipment', label: 'Путь 2' },
+      { id: 'ai-analysis-path-okved', tabId: 'ai-analysis-path-tab-okved', label: 'Путь 3' },
     ];
     for (const table of expectedPathTables) {
+      await page.getByTestId(table.tabId).click();
       const section = page.getByTestId(table.id);
       await section.waitFor({ state: 'visible', timeout: timeoutMs });
       await assertElementContains(section, table.label, `${caseConfig.name}: ${table.label} section should be visible`);

@@ -125,10 +125,15 @@ test('ui qa verifies the path tables requested by the customer', () => {
     'ai-analysis-path-products',
     'ai-analysis-path-site-equipment',
     'ai-analysis-path-okved',
+    'ai-analysis-path-tab-top',
+    'ai-analysis-path-tab-products',
+    'ai-analysis-path-tab-site-equipment',
+    'ai-analysis-path-tab-okved',
   ]) {
     assert.match(componentSource, new RegExp(`data-testid="${testId}"`));
     assert.match(qaSource, new RegExp(testId));
   }
 
+  assert.match(componentSource, /<Tabs defaultValue="top"/);
   assert.match(qaSource, /pathTablesFound/);
 });
