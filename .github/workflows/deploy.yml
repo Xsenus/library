@@ -19,18 +19,7 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@v4
 
-      - name: Upload project to VPS
-        uses: appleboy/scp-action@v0.1.7
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          passphrase: ${{ secrets.VPS_SSH_PASSPHRASE }}
-          source: "."
-          target: "/opt/library/app"
-          overwrite: true
-
-      - name: Build & restart service
+      - name: Roll out on VPS
         uses: appleboy/ssh-action@v1.2.0
         with:
           host: ${{ secrets.VPS_HOST }}
@@ -40,24 +29,5 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/library/app
-
-            # На всякий случай
-            chmod +x /opt/library/app/run.sh || true
-
-            # Переменные окружения (если есть)
-            if [ -f /etc/default/library ]; then set -a; . /etc/default/library; set +a; fi
-
             echo "[deploy] node=$(node -v) npm=$(npm -v)"
-
-            # Установка dev-зависимостей для сборки (нужны типы и линтеры)
-            npm ci --include=dev
-
-            # Сборка
-            npm run build
-
-            # Обрезаем dev-зависимости для прод-рантайма
-            npm prune --omit=dev
-
-            # Рестарт сервиса
-            systemctl restart library
-            systemctl --no-pager -l status library || true
+            bash deploy/library-rollout.sh
