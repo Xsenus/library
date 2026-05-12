@@ -119,4 +119,6 @@ test('library rollout loads shared monitoring env and skips QA timer without cre
   assert.match(rollout, /node_modules validation failed after npm ci/);
   assert.match(rollout, /rm -rf node_modules failed, retrying with Python shutil\.rmtree/);
   assert.match(rollout, /remove_node_modules_tree/);
+  assert.match(rollout, /LIBRARY_ROLLOUT_UI_QA_ATTEMPTS/);
+  assert.match(rollout, /browser UI QA failed on attempt/);
 });

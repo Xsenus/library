@@ -34,6 +34,7 @@ UI_SMOKE_MODE="${LIBRARY_ROLLOUT_UI_SMOKE_MODE:-auto}"
 UI_QA_BASE_URL="${AI_ANALYSIS_UI_QA_BASE_URL:-http://127.0.0.1:8090}"
 UI_QA_ARTIFACT_DIR="${AI_ANALYSIS_UI_QA_ARTIFACT_DIR:-/var/lib/library/ai-analysis-ui-qa}"
 UI_QA_MODE="${LIBRARY_ROLLOUT_UI_QA_MODE:-auto}"
+UI_QA_ATTEMPTS="${LIBRARY_ROLLOUT_UI_QA_ATTEMPTS:-2}"
 SERVICES_RAW="${LIBRARY_ROLLOUT_SERVICES:-library.service library-system-healthcheck.timer ai-analysis-acceptance-healthcheck.timer ai-analysis-ui-smoke-healthcheck.timer ai-analysis-ui-qa-healthcheck.timer}"
 INSTALL_SYSTEMD_MODE="${LIBRARY_ROLLOUT_INSTALL_SYSTEMD:-auto}"
 SKIP_GIT_PULL="${LIBRARY_ROLLOUT_SKIP_GIT_PULL:-0}"
@@ -222,6 +223,13 @@ run_optional_ui_smoke() {
     --json
 }
 
+run_optional_ui_qa_command() {
+  run env \
+    AI_ANALYSIS_UI_QA_BASE_URL="$UI_QA_BASE_URL" \
+    AI_ANALYSIS_UI_QA_ARTIFACT_DIR="$UI_QA_ARTIFACT_DIR" \
+    npm run test:ui:qa
+}
+
 run_optional_ui_qa() {
   case "$UI_QA_MODE" in
     never)
@@ -254,10 +262,27 @@ run_optional_ui_qa() {
       ;;
   esac
 
-  run env \
-    AI_ANALYSIS_UI_QA_BASE_URL="$UI_QA_BASE_URL" \
-    AI_ANALYSIS_UI_QA_ARTIFACT_DIR="$UI_QA_ARTIFACT_DIR" \
-    npm run test:ui:qa
+  local max_attempts="$UI_QA_ATTEMPTS"
+  if ! [[ "$max_attempts" =~ ^[1-9][0-9]*$ ]]; then
+    log "unsupported LIBRARY_ROLLOUT_UI_QA_ATTEMPTS=$UI_QA_ATTEMPTS (expected positive integer)"
+    return 2
+  fi
+
+  local attempt=1
+  while (( attempt <= max_attempts )); do
+    if run_optional_ui_qa_command; then
+      return 0
+    fi
+
+    if (( attempt >= max_attempts )); then
+      log "browser UI QA failed after ${max_attempts} attempt(s)"
+      return 1
+    fi
+
+    log "browser UI QA failed on attempt ${attempt}, retrying once"
+    sleep 2
+    attempt=$((attempt + 1))
+  done
 }
 
 resolve_existing_services() {
