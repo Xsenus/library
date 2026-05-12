@@ -29,6 +29,12 @@ const TNVED_CODE_KEYS = ['tnved_code', 'goods_type_code', 'tnved', 'code', 'tn_v
 const OKVED_FALLBACK_DOMAIN = 'okved-fallback.local';
 const OKVED_FALLBACK_SITE_TOKEN = 'okved://fallback';
 
+type ColumnNameRow = { column_name: string };
+type ExistsRow = { exists: boolean };
+type TableNameRow = { table_name: string };
+type InnRow = { inn: string };
+type ResponsibleMetaRow = { inn: string; assigned_name: string | null };
+
 async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
   const now = Date.now();
   const cached = rootsCache.get(industryId);
@@ -175,7 +181,7 @@ async function findTableName(
   { schema = 'public', connection = db }: { schema?: string; connection?: typeof db } = {},
 ): Promise<string | null> {
   try {
-    const { rows } = await connection.query<{ table_name: string }>(
+    const { rows } = await connection.query<TableNameRow>(
       `
         SELECT table_name
         FROM information_schema.tables
@@ -198,7 +204,7 @@ async function isQueueTableAvailable(): Promise<boolean> {
     return cachedQueueCheck.available;
   }
   try {
-    const res = await dbBitrix.query<{ exists: boolean }>(
+    const res = await dbBitrix.query<ExistsRow>(
       "SELECT to_regclass('public.ai_analysis_queue') IS NOT NULL AS exists",
     );
     const available = !!res.rows?.[0]?.exists;
@@ -234,7 +240,7 @@ async function getEquipmentColumns({
       return { names: new Set(), available: false, tableName: null };
     }
 
-    const existsRes = await connection.query<{ exists: boolean }>(
+    const existsRes = await connection.query<ExistsRow>(
       `SELECT to_regclass($1) IS NOT NULL AS exists`,
       [`public.${quoteIdent(resolvedName)}`],
     );
@@ -244,7 +250,7 @@ async function getEquipmentColumns({
       return { names: new Set(), available, tableName: resolvedName };
     }
 
-    const { rows } = await connection.query<{ column_name: string }>(
+    const { rows } = await connection.query<ColumnNameRow>(
       `
         SELECT column_name
         FROM information_schema.columns
@@ -253,7 +259,7 @@ async function getEquipmentColumns({
       [resolvedName],
     );
 
-    const names = new Set(rows.map((r) => r.column_name));
+    const names = new Set<string>(rows.map((r: ColumnNameRow) => r.column_name));
     cachedEquipmentCols = { names, available: true, tableName: resolvedName, ts: now };
     return { names, available: true, tableName: resolvedName };
   } catch (error) {
@@ -283,7 +289,7 @@ async function getTableColumns(
   }
 
   try {
-    const existsRes = await connection.query<{ exists: boolean }>(
+    const existsRes = await connection.query<ExistsRow>(
       `SELECT to_regclass($1) IS NOT NULL AS exists`,
       [`${schema}.${quoteIdent(resolvedName)}`],
     );
@@ -294,7 +300,7 @@ async function getTableColumns(
       return { names, available, tableName: resolvedName };
     }
 
-    const { rows } = await connection.query<{ column_name: string }>(
+    const { rows } = await connection.query<ColumnNameRow>(
       `
         SELECT column_name
         FROM information_schema.columns
@@ -303,7 +309,7 @@ async function getTableColumns(
       [schema, resolvedName],
     );
 
-    const names = new Set(rows.map((r) => r.column_name));
+    const names = new Set<string>(rows.map((r: ColumnNameRow) => r.column_name));
     tableCache.set(key, { names, available: true, tableName: resolvedName, ts: now });
     return { names, available: true, tableName: resolvedName };
   } catch (error) {
@@ -319,14 +325,14 @@ async function getExistingColumns(): Promise<Set<string>> {
   if (cachedColumns && now - cachedColumns.ts < COL_CACHE_TTL_MS) {
     return cachedColumns.names;
   }
-  const { rows } = await dbBitrix.query<{ column_name: string }>(
+  const { rows } = await dbBitrix.query<ColumnNameRow>(
     `
       SELECT column_name
       FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'dadata_result'
     `,
   );
-  const names = new Set(rows.map((r) => r.column_name));
+  const names = new Set<string>(rows.map((r: ColumnNameRow) => r.column_name));
   cachedColumns = { names, ts: now };
   return names;
 }
@@ -1938,7 +1944,7 @@ export async function GET(request: NextRequest) {
         return NextResponse.json({ items: [], total: 0, page: base.page, pageSize: base.pageSize });
       }
 
-      const { rows: responsibleRows } = await db.query<{ inn: string }>(
+      const { rows: responsibleRows } = await db.query<InnRow>(
         `
           SELECT inn
           FROM b24_company_meta
@@ -1948,7 +1954,7 @@ export async function GET(request: NextRequest) {
       );
 
       const responsibleInns = responsibleRows
-        .map((row) => String(row.inn ?? '').trim())
+        .map((row: InnRow) => String(row.inn ?? '').trim())
         .filter(Boolean);
 
       if (!responsibleInns.length) {
@@ -2090,7 +2096,7 @@ export async function GET(request: NextRequest) {
 
       if (await isB24MetaAvailable()) {
         try {
-          const { rows: responsibleRows } = await db.query<{ inn: string; assigned_name: string | null }>(
+          const { rows: responsibleRows } = await db.query<ResponsibleMetaRow>(
             `
               SELECT inn, assigned_name
               FROM b24_company_meta
@@ -2098,10 +2104,12 @@ export async function GET(request: NextRequest) {
             `,
             [inns],
           );
+          const responsibleEntries: Array<[string, string]> = responsibleRows.map((row: ResponsibleMetaRow) => [
+            String(row.inn ?? '').trim(),
+            String(row.assigned_name ?? '').trim(),
+          ]);
           responsiblesByInn = new Map(
-            responsibleRows
-              .map((row) => [String(row.inn ?? '').trim(), String(row.assigned_name ?? '').trim()] as const)
-              .filter(([inn, assignedName]) => !!inn && !!assignedName),
+            responsibleEntries.filter(([inn, assignedName]: [string, string]) => !!inn && !!assignedName),
           );
         } catch (error) {
           console.warn('Failed to load responsibles for AI analysis companies', error);

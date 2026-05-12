@@ -31,6 +31,13 @@ type CompanyMetaRow = {
   assigned_name: string | null;
 };
 
+type OkvedRootRow = { root: string };
+type OkvedCodeRow = { code: string };
+type InnRow = { inn: string };
+type ResponsibleRow = { assigned_name: string | null };
+type MapStatsRow = { total: number; with_geo: number };
+type QueryResult<Row> = { rows?: Row[] };
+
 const rootsCache = new Map<number, { roots: string[]; ts: number }>();
 const ROOTS_TTL_MS = 10 * 60 * 1000;
 const RESPONSIBLES_TTL_MS = 5 * 60 * 1000;
@@ -61,7 +68,7 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
   if (cached && now - cached.ts < ROOTS_TTL_MS) return cached.roots;
 
   try {
-    const { rows } = await db.query<{ root: string }>(
+    const { rows } = await db.query<OkvedRootRow>(
       `
         SELECT DISTINCT split_part(m.okved_code, '.', 1) AS root
         FROM ib_okved_main m
@@ -69,7 +76,7 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
       `,
       [industryId],
     );
-    const roots = rows.map((row) => row.root).filter(Boolean);
+    const roots = rows.map((row: OkvedRootRow) => row.root).filter(Boolean);
     rootsCache.set(industryId, { roots, ts: now });
     return roots;
   } catch (error) {
@@ -77,7 +84,7 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
   }
 
   try {
-    const { rows } = await db.query<{ root: string }>(
+    const { rows } = await db.query<OkvedRootRow>(
       `
         SELECT DISTINCT split_part(o.okved_code, '.', 1) AS root
         FROM ib_okved_main o
@@ -86,7 +93,7 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
       `,
       [industryId],
     );
-    const roots = rows.map((row) => row.root).filter(Boolean);
+    const roots = rows.map((row: OkvedRootRow) => row.root).filter(Boolean);
     rootsCache.set(industryId, { roots, ts: now });
     return roots;
   } catch (error) {
@@ -98,7 +105,7 @@ async function getOkvedRootsForIndustry(industryId: number): Promise<string[]> {
 
 async function getOkvedCodesForProdclass(prodclassId: number): Promise<string[]> {
   try {
-    const { rows } = await db.query<{ code: string }>(
+    const { rows } = await db.query<OkvedCodeRow>(
       `
         SELECT DISTINCT regexp_replace(btrim(o.okved_code), '[\\s\\u00A0]+', '', 'g') AS code
         FROM ib_okved o
@@ -107,7 +114,7 @@ async function getOkvedCodesForProdclass(prodclassId: number): Promise<string[]>
       `,
       [prodclassId],
     );
-    return rows.map((row) => row.code).filter(Boolean);
+    return rows.map((row: OkvedCodeRow) => row.code).filter(Boolean);
   } catch (error) {
     console.warn('companies-map: failed to load okved codes for prodclass', error);
     return [];
@@ -119,7 +126,7 @@ async function resolveResponsibleInns(responsible: string): Promise<string[] | n
   if (!normalized) return null;
 
   try {
-    const { rows } = await db.query<{ inn: string }>(
+    const { rows } = await db.query<InnRow>(
       `
         SELECT inn
         FROM b24_company_meta
@@ -127,7 +134,7 @@ async function resolveResponsibleInns(responsible: string): Promise<string[] | n
       `,
       [`%${normalized}%`],
     );
-    return rows.map((row) => String(row.inn ?? '').trim()).filter(Boolean);
+    return rows.map((row: InnRow) => String(row.inn ?? '').trim()).filter(Boolean);
   } catch (error) {
     console.warn('companies-map: failed to resolve responsible filter', error);
     return [];
@@ -146,11 +153,11 @@ async function loadCompanyMeta(inns: string[]): Promise<Map<string, CompanyMetaR
       `,
       [inns],
     );
-    return new Map(
-      rows
-        .map((row) => [String(row.inn ?? '').trim(), row] as const)
-        .filter(([inn]) => Boolean(inn)),
-    );
+    const entries: Array<[string, CompanyMetaRow]> = rows.map((row: CompanyMetaRow) => [
+      String(row.inn ?? '').trim(),
+      row,
+    ]);
+    return new Map(entries.filter(([inn]: [string, CompanyMetaRow]) => Boolean(inn)));
   } catch (error) {
     console.warn('companies-map: failed to load company meta', error);
     return new Map();
@@ -164,7 +171,7 @@ async function loadResponsibleOptions(): Promise<string[]> {
   }
 
   try {
-    const { rows } = await db.query<{ assigned_name: string | null }>(
+    const { rows } = await db.query<ResponsibleRow>(
       `
         SELECT DISTINCT assigned_name
         FROM b24_company_meta
@@ -173,7 +180,7 @@ async function loadResponsibleOptions(): Promise<string[]> {
         LIMIT 500
       `,
     );
-    const items = rows.map((row) => String(row.assigned_name ?? '').trim()).filter(Boolean);
+    const items = rows.map((row: ResponsibleRow) => String(row.assigned_name ?? '').trim()).filter(Boolean);
     responsiblesCache = { items, ts: now };
     return items;
   } catch (error) {
@@ -380,17 +387,17 @@ export async function GET(request: NextRequest) {
     `;
 
     const [statsRes, dataRes, responsibles] = await Promise.all([
-      dbBitrix.query<{ total: number; with_geo: number }>(statsSql, args),
-      dbBitrix.query<MapCompanyRow>(dataSql, args),
+      dbBitrix.query(statsSql, args) as Promise<QueryResult<MapStatsRow>>,
+      dbBitrix.query(dataSql, args) as Promise<QueryResult<MapCompanyRow>>,
       loadResponsibleOptions(),
     ]);
 
     const rows = dataRes.rows ?? [];
-    const inns = rows.map((row) => String(row.inn ?? '').trim()).filter(Boolean);
+    const inns = rows.map((row: MapCompanyRow) => String(row.inn ?? '').trim()).filter(Boolean);
     const metaByInn = await loadCompanyMeta(inns);
 
     const items = rows
-      .map((row) => {
+      .map((row: MapCompanyRow) => {
         const inn = String(row.inn ?? '').trim();
         if (!inn) return null;
         const lat = toNumber(row.geo_lat);

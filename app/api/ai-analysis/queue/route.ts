@@ -19,6 +19,9 @@ type OptionalColumnSpec = {
   candidates: string[];
   fallback: string;
 };
+type ColumnNameRow = { column_name: string };
+type CountRow = { cnt: number };
+type InnRow = { inn: string };
 
 const OPTIONAL_COLUMNS: OptionalColumnSpec[] = [
   { alias: 'short_name', candidates: ['short_name', 'name'], fallback: 'NULL::text' },
@@ -115,14 +118,14 @@ async function ensureQueueTable() {
 }
 
 async function getExistingColumns(): Promise<Set<string>> {
-  const { rows } = await dbBitrix.query<{ column_name: string }>(
+  const { rows } = await dbBitrix.query<ColumnNameRow>(
     `
       SELECT column_name
       FROM information_schema.columns
       WHERE table_schema = 'public' AND table_name = 'dadata_result'
     `,
   );
-  return new Set(rows.map((row) => row.column_name));
+  return new Set<string>(rows.map((row: ColumnNameRow) => row.column_name));
 }
 
 function buildOptionalSelect(columns: Set<string>, tableAlias: string): string[] {
@@ -270,7 +273,7 @@ export async function GET(request: NextRequest) {
     const optionalSelect = buildOptionalSelect(columns, 'd');
     const runningCondition = normalizeRunningCondition(columns);
 
-    const { rows } = await dbBitrix.query(
+    const { rows } = await dbBitrix.query<any>(
       `
         WITH queue_items AS (
           SELECT
@@ -353,7 +356,7 @@ export async function GET(request: NextRequest) {
       [limit],
     );
 
-    const items = rows.map((row) => {
+    const items = rows.map((row: any) => {
       const normalizedStatus = String(row.analysis_status ?? '').toLowerCase();
       const stopRequested =
         row.source === 'running' && ['stop_requested', 'stop-requested', 'stopping'].some((token) => normalizedStatus.includes(token));
@@ -485,12 +488,18 @@ export async function POST(request: NextRequest) {
     `;
 
     const [countRes, dataRes] = await Promise.all([
-      dbBitrix.query<{ cnt: number }>(countSql, args),
-      dbBitrix.query<{ inn: string }>(dataSql, [...args, limit]),
+      dbBitrix.query<CountRow>(countSql, args),
+      dbBitrix.query<InnRow>(dataSql, [...args, limit]),
     ]);
 
     const total = Number(countRes.rows?.[0]?.cnt ?? 0);
-    const inns = Array.from(new Set((dataRes.rows ?? []).map((row) => row.inn).filter(Boolean)));
+    const inns: string[] = Array.from(
+      new Set<string>(
+        (dataRes.rows ?? [])
+          .map((row: InnRow) => row.inn)
+          .filter((inn: string | null): inn is string => Boolean(inn)),
+      ),
+    );
 
     if (dryRun) {
       return NextResponse.json({ ok: true, total, inns });
@@ -585,8 +594,10 @@ export async function DELETE(request: NextRequest) {
     const deleteSql = force
       ? `DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state IN ('queued', 'running') RETURNING inn`
       : `DELETE FROM ai_analysis_queue WHERE inn = ANY($1::text[]) AND state = 'queued' RETURNING inn`;
-    const deleteRes = await dbBitrix.query<{ inn: string }>(deleteSql, [inns]);
-    const removedInns = (deleteRes.rows ?? []).map((row) => row.inn).filter(Boolean);
+    const deleteRes = await dbBitrix.query<InnRow>(deleteSql, [inns]);
+    const removedInns = (deleteRes.rows ?? [])
+      .map((row: InnRow) => row.inn)
+      .filter((inn: string | null): inn is string => Boolean(inn));
     const removed = deleteRes.rowCount ?? removedInns.length;
 
     const columns = await getDadataColumns();

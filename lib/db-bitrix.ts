@@ -1,4 +1,4 @@
-import { Pool } from 'pg';
+import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from 'pg';
 
 // Separate connection pool for bitrix_data database (dadata_result table)
 const sslMode = (process.env.BITRIX_DB_SSL ?? '').toLowerCase();
@@ -20,8 +20,19 @@ declare global {
   var __libraryMainBitrixDb: Pool | undefined;
 }
 
-export const dbBitrix = globalThis.__libraryMainBitrixDb ?? createBitrixPool();
+type BitrixDatabase = {
+  query<T extends QueryResultRow = QueryResultRow>(
+    text: string,
+    params?: any[],
+  ): Promise<QueryResult<T>>;
+  connect(): Promise<PoolClient>;
+  end(): Promise<void>;
+};
+
+const bitrixPool = globalThis.__libraryMainBitrixDb ?? createBitrixPool();
+
+export const dbBitrix: BitrixDatabase = bitrixPool;
 
 if (process.env.NODE_ENV !== 'production') {
-  globalThis.__libraryMainBitrixDb = dbBitrix;
+  globalThis.__libraryMainBitrixDb = bitrixPool;
 }
