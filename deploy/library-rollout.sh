@@ -57,6 +57,39 @@ run_shell() {
   bash -lc "$*"
 }
 
+git_worktree_clean() {
+  git diff --quiet &&
+    git diff --cached --quiet &&
+    [[ -z "$(git ls-files --others --exclude-standard)" ]]
+}
+
+update_git_checkout() {
+  run git fetch origin main
+
+  local local_head
+  local remote_head
+  local_head="$(git rev-parse HEAD)"
+  remote_head="$(git rev-parse origin/main)"
+
+  if [[ "$local_head" == "$remote_head" ]]; then
+    log "git checkout is already at origin/main"
+    return 0
+  fi
+
+  if git merge-base --is-ancestor HEAD origin/main; then
+    run git merge --ff-only origin/main
+    return 0
+  fi
+
+  if ! git_worktree_clean; then
+    log "origin/main was force-updated, but working tree has local changes; refusing to reset"
+    return 1
+  fi
+
+  log "origin/main was force-updated; resetting clean deployment checkout"
+  run git reset --hard origin/main
+}
+
 node_modules_install_valid() {
   [[ -f node_modules/tsx/dist/cli.mjs ]] &&
     [[ -x node_modules/.bin/tsx ]] &&
@@ -401,7 +434,7 @@ log "starting rollout in $APP_REALPATH"
 run git status --short
 
 if [[ "$SKIP_GIT_PULL" != "1" ]]; then
-  run git pull --ff-only origin main
+  update_git_checkout
 fi
 
 install_systemd_units_if_needed

@@ -121,4 +121,8 @@ test('library rollout loads shared monitoring env and skips QA timer without cre
   assert.match(rollout, /remove_node_modules_tree/);
   assert.match(rollout, /LIBRARY_ROLLOUT_UI_QA_ATTEMPTS/);
   assert.match(rollout, /browser UI QA failed on attempt/);
+  assert.match(rollout, /update_git_checkout/);
+  assert.match(rollout, /git fetch origin main/);
+  assert.match(rollout, /origin\/main was force-updated; resetting clean deployment checkout/);
+  assert.match(rollout, /git reset --hard origin\/main/);
 });
