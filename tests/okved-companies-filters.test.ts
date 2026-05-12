@@ -13,6 +13,7 @@ const componentSource = fs.readFileSync(
   path.join(process.cwd(), 'components/library/okved-tab.tsx'),
   'utf8',
 );
+const pp719Source = fs.readFileSync(path.join(process.cwd(), 'lib/pp719.ts'), 'utf8');
 
 test('okved companies query accepts responsible filter', () => {
   const parsed = okvedCompaniesQuerySchema.parse({
@@ -45,10 +46,12 @@ test('okved companies API supports Bitrix company color filter options', () => {
 
 test('okved companies API supports PP719 filter and status fields', () => {
   assert.match(routeSource, /searchParams\.get\('pp719'\) === '1'/);
-  assert.match(routeSource, /FROM pp719companies p/);
-  assert.match(routeSource, /btrim\(p\.inn\) = btrim\(d\.inn\)/);
+  assert.match(routeSource, /loadPp719Inns\(\)/);
+  assert.match(routeSource, /d\.inn = ANY\(\$\$\{i\}::text\[\]\)/);
   assert.match(routeSource, /d\.analysis_score/);
-  assert.match(routeSource, /AS in_pp719/);
+  assert.match(routeSource, /in_pp719: pp719InnSet\.has\(inn\)/);
+  assert.match(pp719Source, /PP719_INN_COLUMN_CANDIDATES/);
+  assert.match(pp719Source, /information_schema\.columns/);
 });
 
 test('okved companies API supports prodclass filter between industry and okved', () => {

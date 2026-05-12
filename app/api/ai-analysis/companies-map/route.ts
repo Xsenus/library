@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db } from '@/lib/db';
 import { dbBitrix } from '@/lib/db-bitrix';
 import { requireApiAuth } from '@/lib/api-auth';
+import { loadPp719Inns } from '@/lib/pp719';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -26,7 +27,6 @@ type MapCompanyRow = {
   year: number | string | null;
   analysis_ok: number | string | null;
   analysis_score: number | string | null;
-  in_pp719: boolean | string | number | null;
 };
 
 type CompanyMetaRow = {
@@ -272,6 +272,7 @@ export async function GET(request: NextRequest) {
     const scoreTo = parseFiniteNumber(searchParams.get('scoreTo'));
     const revenueFromMln = parseFiniteNumber(searchParams.get('revenueFromMln'));
     const revenueToMln = parseFiniteNumber(searchParams.get('revenueToMln'));
+    const pp719Inns = await loadPp719Inns();
 
     const where: string[] = ["(d.status = 'ACTIVE' OR d.status = 'REORGANIZING')"];
     const args: unknown[] = [];
@@ -426,13 +427,18 @@ export async function GET(request: NextRequest) {
     }
 
     if (pp719Only) {
-      where.push(`
-        EXISTS (
-          SELECT 1
-          FROM pp719companies p
-          WHERE btrim(p.inn) = btrim(d.inn)
-        )
-      `);
+      if (!pp719Inns.length) {
+        const [responsibles, colors] = await Promise.all([loadResponsibleOptions(), loadCompanyColorOptions()]);
+        return NextResponse.json({
+          items: [],
+          total: 0,
+          withGeo: 0,
+          skippedNoGeo: 0,
+          filterOptions: { responsibles, colors },
+        });
+      }
+      args.push(pp719Inns);
+      where.push(`d.inn = ANY($${args.length}::text[])`);
     }
 
     const whereSql = `WHERE ${where.join(' AND ')}`;
@@ -469,12 +475,7 @@ export async function GET(request: NextRequest) {
         d."revenue-3" AS revenue_3,
         d.year,
         d.analysis_ok,
-        d.analysis_score,
-        EXISTS (
-          SELECT 1
-          FROM pp719companies p
-          WHERE btrim(p.inn) = btrim(d.inn)
-        ) AS in_pp719
+        d.analysis_score
       FROM dadata_result d
       ${whereSql}
         AND d.geo_lat IS NOT NULL
@@ -494,6 +495,7 @@ export async function GET(request: NextRequest) {
     const rows = dataRes.rows ?? [];
     const inns = rows.map((row: MapCompanyRow) => String(row.inn ?? '').trim()).filter(Boolean);
     const metaByInn = await loadCompanyMeta(inns);
+    const pp719InnSet = new Set(pp719Inns);
 
     const items = rows
       .map((row: MapCompanyRow) => {
@@ -523,7 +525,7 @@ export async function GET(request: NextRequest) {
           year: toNumber(row.year),
           analysis_ok: toNumber(row.analysis_ok),
           analysis_score: toNumber(row.analysis_score),
-          in_pp719: row.in_pp719 === true || row.in_pp719 === 'true' || row.in_pp719 === 1 || row.in_pp719 === '1',
+          in_pp719: pp719InnSet.has(inn),
           responsible: meta?.assigned_name ?? null,
           color_label: meta?.color_label ?? null,
           color_xml_id: meta?.color_xml_id ?? null,

@@ -5,6 +5,7 @@ import { db } from '@/lib/db';
 import { okvedCompaniesQuerySchema, okvedCompanySchema } from '@/lib/validators';
 import { requireApiAuth } from '@/lib/api-auth';
 import { ensureCompanyMetaTable } from '@/lib/b24-meta';
+import { loadPp719Inns } from '@/lib/pp719';
 
 export const dynamic = 'force-dynamic';
 export const revalidate = 0;
@@ -115,6 +116,7 @@ export async function GET(request: NextRequest) {
       | 'revenue_asc';
     const includeExtra = (searchParams.get('extra') ?? '0') === '1'; // ЧБ №2
     const includeParent = (searchParams.get('parent') ?? '0') === '1'; // ЧБ №3
+    const pp719Inns = await loadPp719Inns();
 
     const industryIdRaw = searchParams.get('industryId');
     const industryId = industryIdRaw && /^\d+$/.test(industryIdRaw) ? Number(industryIdRaw) : null;
@@ -294,13 +296,19 @@ export async function GET(request: NextRequest) {
     }
 
     if (pp719Only) {
-      where.push(`
-        EXISTS (
-          SELECT 1
-          FROM pp719companies p
-          WHERE btrim(p.inn) = btrim(d.inn)
-        )
-      `);
+      if (!pp719Inns.length) {
+        return NextResponse.json({
+          items: [],
+          total: 0,
+          page: base.page,
+          pageSize: base.pageSize,
+          filterOptions: { colors: await loadCompanyColorOptions() },
+        });
+      }
+
+      where.push(`d.inn = ANY($${i}::text[])`);
+      args.push(pp719Inns);
+      i++;
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
@@ -334,12 +342,7 @@ export async function GET(request: NextRequest) {
         "income-1"  AS income_1,
         "income-2"  AS income_2,
         "income-3"  AS income_3,
-        d.analysis_score,
-        EXISTS (
-          SELECT 1
-          FROM pp719companies p
-          WHERE btrim(p.inn) = btrim(d.inn)
-        ) AS in_pp719
+        d.analysis_score
       FROM dadata_result d
       ${whereSql}
       ${orderSql}
@@ -350,7 +353,11 @@ export async function GET(request: NextRequest) {
     const total = countRes.rows?.[0]?.cnt ?? 0;
 
     const dataRes = await dbBitrix.query(dataSql, [...args, offset, base.pageSize]);
-    const items = dataRes.rows.map((r: any) => okvedCompanySchema.parse(r));
+    const pp719InnSet = new Set(pp719Inns);
+    const items = dataRes.rows.map((r: any) => {
+      const inn = String(r.inn ?? '').trim();
+      return okvedCompanySchema.parse({ ...r, in_pp719: pp719InnSet.has(inn) });
+    });
 
     return NextResponse.json({
       items,

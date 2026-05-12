@@ -12,6 +12,7 @@ const routeSource = fs.readFileSync(
   path.join(process.cwd(), 'app/api/ai-analysis/companies-map/route.ts'),
   'utf8',
 );
+const pp719Source = fs.readFileSync(path.join(process.cwd(), 'lib/pp719.ts'), 'utf8');
 
 const okvedRouteSource = fs.readFileSync(
   path.join(process.cwd(), 'app/api/okved/route.ts'),
@@ -125,9 +126,11 @@ test('companies map supports filtering companies by Bitrix color', () => {
 
 test('companies map supports PP719 filter badges and revenue year chart in balloons', () => {
   assert.match(routeSource, /searchParams\.get\('pp719'\) === '1'/);
-  assert.match(routeSource, /FROM pp719companies p/);
-  assert.match(routeSource, /btrim\(p\.inn\) = btrim\(d\.inn\)/);
-  assert.match(routeSource, /AS in_pp719/);
+  assert.match(routeSource, /loadPp719Inns\(\)/);
+  assert.match(routeSource, /d\.inn = ANY\(\$\$\{args\.length\}::text\[\]\)/);
+  assert.match(routeSource, /in_pp719: pp719InnSet\.has\(inn\)/);
+  assert.match(pp719Source, /PP719_INN_COLUMN_CANDIDATES/);
+  assert.match(pp719Source, /information_schema\.columns/);
   assert.match(routeSource, /d\."revenue-2" AS revenue_2/);
   assert.match(routeSource, /d\."revenue-3" AS revenue_3/);
   assert.match(componentSource, /testId="companies-map-pp719-filter"/);
