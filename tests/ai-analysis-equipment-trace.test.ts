@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { normalizeEquipmentTracePayload } from '../lib/ai-analysis-equipment-trace';
+import { normalizeEquipmentTracePaths, normalizeEquipmentTracePayload } from '../lib/ai-analysis-equipment-trace';
 
 test('normalizeEquipmentTracePayload keeps only winner-path data for 3way equipment', () => {
   const items = normalizeEquipmentTracePayload({
@@ -162,6 +162,67 @@ test('normalizeEquipmentTracePayload marks okved sourced equipment when strategy
       matched_product_name: null,
       origin_kind: 'okved',
       origin_name: 'Подбор по ОКВЭД',
+    },
+  ]);
+});
+
+test('normalizeEquipmentTracePaths exposes site and okved path rows separately', () => {
+  const paths = normalizeEquipmentTracePaths({
+    site_equipment: [{ equipment_id: 12, equipment: 'Site filling line', equipment_score: 0.81 }],
+    equipment_3way_details: [
+      {
+        equipment_id: 12,
+        equipment_name: 'Filling machine',
+        equipment_score: 0.83,
+        db_score: 0.95,
+        score_e3: 0.7097,
+        factor: 0.9,
+      },
+    ],
+    equipment_1way_details: [
+      {
+        id: 99,
+        equipment_name: 'Isolator',
+        db_score: 0.8,
+        score_1: 0.89,
+        score_e1: 0.534,
+        factor: 0.75,
+        path: 'fallback',
+      },
+    ],
+  });
+
+  assert.deepEqual(paths.site_equipment, [
+    {
+      equipment_id: '12',
+      equipment_name: 'Filling machine',
+      final_score: 0.7097,
+      db_score: 0.95,
+      vector_score: 0.747,
+      gen_score: 0.95,
+      factor: 0.9,
+      calculation_path: '3way',
+      matched_site_equipment: 'Site filling line',
+      matched_site_equipment_score: 0.81,
+      matched_product_id: null,
+      matched_product_name: null,
+    },
+  ]);
+
+  assert.deepEqual(paths.okved_equipment, [
+    {
+      equipment_id: '99',
+      equipment_name: 'Isolator',
+      final_score: 0.534,
+      db_score: 0.8,
+      vector_score: 0.6675,
+      gen_score: 0.8,
+      factor: 0.75,
+      calculation_path: 'fallback',
+      matched_site_equipment: null,
+      matched_site_equipment_score: null,
+      matched_product_id: null,
+      matched_product_name: null,
     },
   ]);
 });

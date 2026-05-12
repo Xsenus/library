@@ -48,6 +48,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip';
 import { Separator } from '@/components/ui/separator';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import SquareImgButton from '@/components/library/square-img-button';
 import InlineRevenueBars from '@/components/library/inline-revenue-bar';
 import { cn } from '@/lib/utils';
@@ -252,6 +253,26 @@ type EquipmentScoreTrace = {
   origin_name?: string | null;
 };
 
+type EquipmentPathTrace = {
+  equipment_id: string;
+  equipment_name?: string | null;
+  final_score?: number | null;
+  db_score?: number | null;
+  vector_score?: number | null;
+  gen_score?: number | null;
+  factor?: number | null;
+  calculation_path?: string | null;
+  matched_site_equipment?: string | null;
+  matched_site_equipment_score?: number | null;
+  matched_product_id?: string | null;
+  matched_product_name?: string | null;
+};
+
+type EquipmentTracePaths = {
+  site_equipment?: EquipmentPathTrace[];
+  okved_equipment?: EquipmentPathTrace[];
+};
+
 type ProductTraceEquipmentLink = {
   equipment_id: string;
   equipment_name?: string | null;
@@ -428,6 +449,7 @@ const equipmentSettingsHelp: Record<
 
 type EquipmentTraceResponse = {
   items?: EquipmentScoreTrace[];
+  paths?: EquipmentTracePaths | null;
   selection_strategy?: string | null;
   selection_reason?: string | null;
 };
@@ -1531,6 +1553,7 @@ export default function AiCompanyAnalysisTab() {
   const [integrationHealth, setIntegrationHealth] = useState<AiIntegrationHealth | null>(null);
   const [billing, setBilling] = useState<BillingResponse | null>(null);
   const [equipmentTraceById, setEquipmentTraceById] = useState<Record<string, EquipmentScoreTrace>>({});
+  const [equipmentTracePaths, setEquipmentTracePaths] = useState<EquipmentTracePaths>({});
   const [equipmentTraceStrategy, setEquipmentTraceStrategy] = useState<string | null>(null);
   const [equipmentTraceReason, setEquipmentTraceReason] = useState<string | null>(null);
   const [equipmentTraceLoading, setEquipmentTraceLoading] = useState(false);
@@ -1992,6 +2015,7 @@ export default function AiCompanyAnalysisTab() {
     lastEquipmentTraceInn.current = inn;
     setEquipmentTraceLoading(true);
     setEquipmentTraceError(null);
+    setEquipmentTracePaths({});
     setEquipmentTraceStrategy(null);
     setEquipmentTraceReason(null);
 
@@ -2020,6 +2044,7 @@ export default function AiCompanyAnalysisTab() {
 
       if (lastEquipmentTraceInn.current === inn) {
         setEquipmentTraceById(next);
+        setEquipmentTracePaths((data as EquipmentTraceResponse | null)?.paths ?? {});
         setEquipmentTraceStrategy(
           typeof (data as EquipmentTraceResponse | null)?.selection_strategy === 'string'
             ? ((data as EquipmentTraceResponse).selection_strategy ?? null)
@@ -2035,6 +2060,7 @@ export default function AiCompanyAnalysisTab() {
       console.error('Failed to load equipment trace', error);
       if (lastEquipmentTraceInn.current === inn) {
         setEquipmentTraceById({});
+        setEquipmentTracePaths({});
         setEquipmentTraceStrategy(null);
         setEquipmentTraceReason(null);
         setEquipmentTraceError(
@@ -3955,6 +3981,35 @@ export default function AiCompanyAnalysisTab() {
     infoCompany?.analysis_description ||
     [analyzerInfo?.company?.domain1, analyzerInfo?.company?.domain2].filter(Boolean).join('\n') ||
     null;
+  const fullAnalyzerResponseText = (() => {
+    const raw = infoCompany?.analysis_info as any;
+    const candidates = [
+      raw?.answer_raw,
+      raw?.ai?.answer_raw,
+      raw?.external_response_raw,
+      raw?.ai?.external_response_raw,
+      raw?.raw_answer,
+      raw?.ai?.raw_answer,
+      raw?.full_response,
+      raw?.ai?.full_response,
+      raw?.full_gpt_response,
+      raw?.ai?.full_gpt_response,
+    ];
+
+    for (const candidate of candidates) {
+      if (typeof candidate === 'string' && candidate.trim()) return candidate.trim();
+      if (candidate && typeof candidate === 'object') {
+        try {
+          const text = JSON.stringify(candidate, null, 2);
+          if (text && text !== '{}') return text;
+        } catch {
+          // ignore non-serializable payloads
+        }
+      }
+    }
+
+    return analyzerDescriptionText;
+  })();
 
   const buildEquipmentCardHref = (item: { id?: string; industryId?: string; prodclassId?: string; workshopId?: string }) => {
     if (!item.id) return null;
@@ -3962,6 +4017,13 @@ export default function AiCompanyAnalysisTab() {
     if (item.industryId) params.set('industryId', item.industryId);
     if (item.prodclassId) params.set('prodclassId', item.prodclassId);
     if (item.workshopId) params.set('workshopId', item.workshopId);
+    return `/library?${params.toString()}`;
+  };
+
+  const buildGoodsHref = (id?: string | null) => {
+    const normalized = String(id ?? '').trim();
+    if (!normalized) return null;
+    const params = new URLSearchParams({ tab: 'library', goodsId: normalized });
     return `/library?${params.toString()}`;
   };
 
@@ -6024,8 +6086,8 @@ export default function AiCompanyAnalysisTab() {
 
                 <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
                   <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">ИИ-описание сайта</div>
-                  <div className="rounded-lg border bg-muted/20 p-3 text-sm whitespace-pre-wrap">
-                    {analyzerDescriptionText || (showOkvedFallbackBadge ? 'Сайт не найден — использован подбор по ОКВЭД.' : '—')}
+                  <div className="max-h-[360px] overflow-auto rounded-lg border bg-muted/20 p-3 text-sm whitespace-pre-wrap">
+                    {fullAnalyzerResponseText || (showOkvedFallbackBadge ? 'Сайт не найден — использован подбор по ОКВЭД.' : '—')}
                   </div>
                 </div>
 
@@ -6054,7 +6116,22 @@ export default function AiCompanyAnalysisTab() {
                     return (
                       <div className="space-y-2">
                         {traceStatusNote}
-                        <ul data-testid="ai-analysis-company-equipment-list" className="grid gap-2 sm:grid-cols-2">
+                        <Table data-testid="ai-analysis-company-equipment-list" className="min-w-[1120px] text-xs">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="w-[52px] px-3 py-2">#</TableHead>
+                              <TableHead className="w-[90px] px-3 py-2">ID</TableHead>
+                              <TableHead className="px-3 py-2">Оборудование / кейс</TableHead>
+                              <TableHead className="px-3 py-2">Источник TOP</TableHead>
+                              <TableHead className="px-3 py-2">Связанный объект</TableHead>
+                              <TableHead className="w-[92px] px-3 py-2 text-right">VECTOR</TableHead>
+                              <TableHead className="w-[92px] px-3 py-2 text-right">GEN</TableHead>
+                              <TableHead className="w-[72px] px-3 py-2 text-right">K</TableHead>
+                              <TableHead className="w-[92px] px-3 py-2 text-right">FINAL</TableHead>
+                              <TableHead className="w-[64px] px-3 py-2 text-right">Ссылка</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
                           {equipmentItems.map((item, idx) => {
                             const trace = item.trace ?? (item.id ? equipmentTraceById[item.id] : undefined);
                             const cardView = buildEquipmentCardView({
@@ -6088,101 +6165,50 @@ export default function AiCompanyAnalysisTab() {
                               displayFinalScore,
                             ].some((value) => value != null);
 
+                            const sourceLabel = [calcPathLabel, finalSourceLabel, originLabel].filter(Boolean).join(' · ') || '—';
+                            const sourceObject =
+                              matchedProductName ||
+                              (matchedSiteEquipment ? `${matchedSiteEquipment}${matchedSiteScore ? ` (${matchedSiteScore})` : ''}` : null) ||
+                              originName ||
+                              (trace?.origin_kind === 'okved' || showOkvedFallbackBadge ? 'по ОКВЭД' : null);
+
                             return (
-                              <li
-                                key={`${item.name}-${item.id ?? idx}`}
-                                className="rounded-lg border bg-muted/20 px-3 py-3"
-                              >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0 flex-1 space-y-1">
-                                    <div className="truncate pr-2 font-medium leading-snug text-foreground">
-                                      {cardView.equipmentName}
-                                    </div>
-                                    {matchedProductName ? (
-                                      <div className="text-[11px] text-muted-foreground">
-                                        <span className="font-medium text-foreground/90">Найдено через продукцию:</span>{' '}
-                                        {matchedProductName}
-                                      </div>
-                                    ) : matchedSiteEquipment ? (
-                                      <div className="text-[11px] text-muted-foreground">
-                                        <span className="font-medium text-foreground/90">Найдено на сайте:</span>{' '}
-                                        {matchedSiteEquipment}
-                                        {matchedSiteScore ? ` (${matchedSiteScore})` : ''}
-                                      </div>
-                                    ) : trace?.origin_kind === 'okved' || showOkvedFallbackBadge ? (
-                                      <div className="text-[11px] text-muted-foreground">
-                                        <span className="font-medium text-foreground/90">Подбор:</span>{' '}
-                                        {originName || 'по ОКВЭД'}
-                                      </div>
-                                    ) : originName ? (
-                                      <div className="text-[11px] text-muted-foreground">
-                                        <span className="font-medium text-foreground/90">Источник:</span>{' '}
-                                        {originName}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                  <div className="flex shrink-0 items-center justify-end gap-2 self-start">
-                                    <Badge variant="outline" className="min-w-[72px] justify-center rounded-full text-[12px] tabular-nums">
-                                      {scoreLabel}
-                                    </Badge>
-                                    {item.href ? (
-                                      <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7 shrink-0">
-                                        <a href={item.href} target="_blank" rel="noopener noreferrer">
-                                          <ExternalLink className="h-3.5 w-3.5" />
-                                        </a>
-                                      </Button>
-                                    ) : null}
-                                  </div>
-                                </div>
-                                <div className="mt-2 grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-center">
-                                  {hasTraceBreakdown ? (
-                                    <div className="flex min-w-0 flex-wrap items-center gap-x-5 gap-y-1 text-[11px] text-muted-foreground">
-                                      <div className="whitespace-nowrap">
-                                        <span className="font-medium text-foreground/90">VECTOR:</span>{' '}
-                                        {formatSimilarityScore(displayVectorScore) ?? formatRawScore(displayVectorScore) ?? '\u2014'}
-                                      </div>
-                                      <div className="whitespace-nowrap">
-                                        <span className="font-medium text-foreground/90">GEN:</span>{' '}
-                                        {formatSimilarityScore(displayGenScore) ?? formatRawScore(displayGenScore) ?? '\u2014'}
-                                      </div>
-                                      <div className="whitespace-nowrap">
-                                        <span className="font-medium text-foreground/90">K:</span>{' '}
-                                        {formatRawScore(displayFactor) ?? '\u2014'}
-                                      </div>
-                                      <div className="whitespace-nowrap">
-                                        <span className="font-medium text-foreground/90">FINAL:</span>{' '}
-                                        {formatSimilarityScore(displayFinalScore) ?? formatRawScore(displayFinalScore) ?? '\u2014'}
-                                      </div>
-                                    </div>
-                                  ) : (
-                                    <div className="text-[11px] text-muted-foreground">
-                                      Детали расчета пока не переданы сервисом.
-                                    </div>
-                                  )}
-                                  {(calcPathLabel || finalSourceLabel || originLabel) && (
-                                    <div className="flex flex-wrap items-center justify-start gap-2 md:justify-end">
-                                      {calcPathLabel && (
-                                        <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
-                                          {calcPathLabel}
-                                        </Badge>
-                                      )}
-                                      {finalSourceLabel && (
-                                        <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
-                                          {finalSourceLabel}
-                                        </Badge>
-                                      )}
-                                      {originLabel && (
-                                        <Badge variant="outline" className="h-7 rounded-full px-3 text-[11px]">
-                                          {originLabel}
-                                        </Badge>
-                                      )}
-                                    </div>
-                                  )}
-                                </div>
-                              </li>
+                              <TableRow key={`${item.name}-${item.id ?? idx}`}>
+                                <TableCell className="px-3 py-2 tabular-nums">{idx + 1}</TableCell>
+                                <TableCell className="px-3 py-2 tabular-nums">{item.id ?? trace?.equipment_id ?? '—'}</TableCell>
+                                <TableCell className="max-w-[300px] px-3 py-2 font-medium">
+                                  <div className="line-clamp-2">{cardView.equipmentName}</div>
+                                </TableCell>
+                                <TableCell className="px-3 py-2">{sourceLabel}</TableCell>
+                                <TableCell className="max-w-[260px] px-3 py-2 text-muted-foreground">
+                                  <div className="line-clamp-2">{sourceObject ?? '—'}</div>
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right tabular-nums">
+                                  {hasTraceBreakdown ? formatSimilarityScore(displayVectorScore) ?? formatRawScore(displayVectorScore) ?? '—' : '—'}
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right tabular-nums">
+                                  {hasTraceBreakdown ? formatSimilarityScore(displayGenScore) ?? formatRawScore(displayGenScore) ?? '—' : '—'}
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right tabular-nums">
+                                  {hasTraceBreakdown ? formatRawScore(displayFactor) ?? '—' : '—'}
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right font-medium tabular-nums">
+                                  {scoreLabel}
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right">
+                                  {item.href ? (
+                                    <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7">
+                                      <a href={item.href} target="_blank" rel="noopener noreferrer" aria-label="Открыть в библиотеке">
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                      </a>
+                                    </Button>
+                                  ) : '—'}
+                                </TableCell>
+                              </TableRow>
                             );
                           })}
-                        </ul>
+                          </TableBody>
+                        </Table>
                       </div>
                     );
                   })()}
@@ -6190,7 +6216,7 @@ export default function AiCompanyAnalysisTab() {
 
                 <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
                   <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Виды найденной продукции на сайте и ТНВЭД
+                    Путь 1. Продукция сайта → ТНВЭД → товар из базы → оборудование / кейс
                   </div>
                   {(() => {
                     const productItems = topProducts(infoCompany, analyzerInfo);
@@ -6215,7 +6241,20 @@ export default function AiCompanyAnalysisTab() {
                     return (
                       <div className="space-y-2">
                         {traceStatusNote}
-                        <ul className="grid gap-2 sm:grid-cols-2">
+                        <Table className="min-w-[1120px] text-xs">
+                          <TableHeader>
+                            <TableRow>
+                              <TableHead className="w-[52px] px-3 py-2">#</TableHead>
+                              <TableHead className="w-[90px] px-3 py-2">ID</TableHead>
+                              <TableHead className="px-3 py-2">Продукция с сайта</TableHead>
+                              <TableHead className="w-[110px] px-3 py-2">ТН ВЭД</TableHead>
+                              <TableHead className="w-[110px] px-3 py-2 text-right">Сходство</TableHead>
+                              <TableHead className="px-3 py-2">Товар из базы</TableHead>
+                              <TableHead className="px-3 py-2">Соответствующее оборудование / кейс</TableHead>
+                              <TableHead className="w-[64px] px-3 py-2 text-right">Ссылка</TableHead>
+                            </TableRow>
+                          </TableHeader>
+                          <TableBody>
                           {productItems.map((item, idx) => {
                             const traceLookupKey = buildProductTraceLookupKey(item.id, item.name);
                             const trace = item.trace ?? (traceLookupKey ? productTraceByKey[traceLookupKey] : undefined);
@@ -6223,78 +6262,211 @@ export default function AiCompanyAnalysisTab() {
                             const displayFactor = trace?.factor ?? null;
                             const goodsTypeSourceLabel = formatGoodsTypeSource(trace?.goods_type_source ?? item.goodsTypeSource);
                             const linkedEquipment = trace?.linked_equipment ?? [];
+                            const goodsHref = buildGoodsHref(trace?.goods_type_id ?? item.id);
+                            const equipmentLabels = linkedEquipment.length
+                              ? linkedEquipment.slice(0, 4).map((equipment) => {
+                                  const score =
+                                    equipment.final_score != null
+                                      ? ` · ${formatSimilarityScore(equipment.final_score) ?? formatRawScore(equipment.final_score)}`
+                                      : '';
+                                  return `${equipment.equipment_name || `Оборудование #${equipment.equipment_id}`}${score}`;
+                                }).join('; ')
+                              : '—';
 
                             return (
-                              <li
+                              <TableRow
                                 key={`${item.name}-${item.id ?? idx}`}
-                                className="rounded-lg border bg-muted/20 px-3 py-2.5"
                               >
-                                <div className="flex items-start justify-between gap-3">
-                                  <div className="min-w-0 space-y-1">
-                                    <div className="font-medium leading-snug text-foreground">
-                                      {trace?.goods_type_name || item.name}
+                                <TableCell className="px-3 py-2 tabular-nums">{idx + 1}</TableCell>
+                                <TableCell className="px-3 py-2 tabular-nums">{trace?.goods_type_id ?? item.id ?? '—'}</TableCell>
+                                <TableCell className="max-w-[260px] px-3 py-2 font-medium">
+                                  <div className="line-clamp-2">{item.name}</div>
+                                  <div className="mt-1 text-[11px] font-normal text-muted-foreground">
+                                    Источник: {item.source === 'okved' ? 'ОКВЭД' : item.source === 'site' ? 'сайт' : 'не указан'}
+                                    {goodsTypeSourceLabel ? ` · ${goodsTypeSourceLabel}` : ''}
+                                    {displayFactor != null ? ` · K: ${formatRawScore(displayFactor) ?? displayFactor}` : ''}
+                                  </div>
+                                </TableCell>
+                                <TableCell className="px-3 py-2 tabular-nums">{item.code ?? trace?.goods_type_id ?? '—'}</TableCell>
+                                <TableCell className="px-3 py-2 text-right tabular-nums">
+                                  {displayScore != null ? formatSimilarityScore(displayScore) ?? formatRawScore(displayScore) : '—'}
+                                </TableCell>
+                                <TableCell className="max-w-[240px] px-3 py-2">
+                                  <div className="line-clamp-2">{trace?.goods_type_name || item.name}</div>
+                                </TableCell>
+                                <TableCell className="max-w-[360px] px-3 py-2 text-muted-foreground">
+                                  <div className="line-clamp-3">{equipmentLabels}</div>
+                                  {trace ? (
+                                    <div className="mt-1 text-[11px]">
+                                      Связано: {trace.linked_equipment_count}
                                     </div>
-                                    {item.code && (
-                                      <div className="text-[11px] text-muted-foreground">
-                                        <span className="font-medium text-foreground/90">ТН ВЭД:</span>{' '}
-                                        {item.code}
-                                      </div>
-                                    )}
-                                    {trace ? (
-                                      <div className="text-[11px] text-muted-foreground">
-                                        <span className="font-medium text-foreground/90">Связано с оборудованием:</span>{' '}
-                                        {trace.linked_equipment_count}
-                                        {displayFactor != null ? ` · K: ${formatRawScore(displayFactor) ?? displayFactor}` : ''}
-                                      </div>
-                                    ) : null}
-                                  </div>
-                                  <div className="flex min-w-[118px] flex-col items-end justify-center gap-2 self-start">
-                                    <Badge variant="outline" className="text-[12px]">
-                                      {displayScore != null ? formatSimilarityScore(displayScore) ?? formatRawScore(displayScore) : '—'}
-                                    </Badge>
-                                    <div className="flex items-center justify-end gap-2">
-                                      <Badge variant="outline" className="text-[12px]">
-                                        Источник: {item.source === 'okved' ? 'ОКВЭД' : item.source === 'site' ? 'сайт' : 'не указан'}
-                                      </Badge>
-                                      {goodsTypeSourceLabel && (
-                                        <Badge variant="outline" className="text-[12px]">
-                                          {goodsTypeSourceLabel}
-                                        </Badge>
-                                      )}
-                                      {displayScore == null && (
-                                        <Tooltip>
-                                          <TooltipTrigger asChild>
-                                            <Badge variant="outline" className="text-[12px]">?</Badge>
-                                          </TooltipTrigger>
-                                          <TooltipContent>не сматчено со справочником</TooltipContent>
-                                        </Tooltip>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                                {linkedEquipment.length ? (
-                                  <div className="mt-2 flex flex-wrap gap-2">
-                                    {linkedEquipment.slice(0, 3).map((equipment) => (
-                                      <Badge
-                                        key={`${item.name}-${equipment.equipment_id}`}
-                                        variant="outline"
-                                        className="max-w-full rounded-full px-3 text-[11px]"
-                                      >
-                                        <span className="truncate">
-                                          {equipment.equipment_name || `Оборудование #${equipment.equipment_id}`}
-                                          {equipment.final_score != null
-                                            ? ` · ${formatSimilarityScore(equipment.final_score) ?? formatRawScore(equipment.final_score)}`
-                                            : ''}
-                                        </span>
-                                      </Badge>
-                                    ))}
-                                  </div>
-                                ) : null}
-                              </li>
+                                  ) : null}
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right">
+                                  {goodsHref ? (
+                                    <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7">
+                                      <a href={goodsHref} target="_blank" rel="noopener noreferrer" aria-label="Открыть товар в библиотеке">
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                      </a>
+                                    </Button>
+                                  ) : displayScore == null ? (
+                                    <Tooltip>
+                                      <TooltipTrigger asChild>
+                                        <Badge variant="outline" className="text-[12px]">?</Badge>
+                                      </TooltipTrigger>
+                                      <TooltipContent>не сматчено со справочником</TooltipContent>
+                                    </Tooltip>
+                                  ) : '—'}
+                                </TableCell>
+                              </TableRow>
                             );
                           })}
-                        </ul>
+                          </TableBody>
+                        </Table>
                       </div>
+                    );
+                  })()}
+                </div>
+
+                <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                  <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Путь 2. Оборудование с сайта → оборудование из базы → кейс
+                  </div>
+                  {(() => {
+                    const rows = Array.isArray(equipmentTracePaths.site_equipment) ? equipmentTracePaths.site_equipment : [];
+                    if (equipmentTraceLoading) {
+                      return (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Загружаем путь 2
+                        </div>
+                      );
+                    }
+                    if (!rows.length) return <div className="text-sm text-muted-foreground">нет данных</div>;
+                    return (
+                      <Table className="min-w-[1040px] text-xs">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-[52px] px-3 py-2">#</TableHead>
+                            <TableHead className="w-[90px] px-3 py-2">ID</TableHead>
+                            <TableHead className="px-3 py-2">Оборудование с сайта</TableHead>
+                            <TableHead className="w-[110px] px-3 py-2 text-right">Сходство</TableHead>
+                            <TableHead className="px-3 py-2">Оборудование из базы / кейс</TableHead>
+                            <TableHead className="w-[92px] px-3 py-2 text-right">GEN</TableHead>
+                            <TableHead className="w-[72px] px-3 py-2 text-right">K</TableHead>
+                            <TableHead className="w-[92px] px-3 py-2 text-right">FINAL</TableHead>
+                            <TableHead className="w-[64px] px-3 py-2 text-right">Ссылка</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {rows.map((row, idx) => {
+                            const href = buildEquipmentCardHref({ id: row.equipment_id });
+                            return (
+                              <TableRow key={`site-path-${row.equipment_id}-${idx}`}>
+                                <TableCell className="px-3 py-2 tabular-nums">{idx + 1}</TableCell>
+                                <TableCell className="px-3 py-2 tabular-nums">{row.equipment_id}</TableCell>
+                                <TableCell className="max-w-[320px] px-3 py-2">
+                                  <div className="line-clamp-2">{row.matched_site_equipment ?? '—'}</div>
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right tabular-nums">
+                                  {formatSimilarityScore(row.matched_site_equipment_score ?? row.vector_score) ?? formatRawScore(row.matched_site_equipment_score ?? row.vector_score) ?? '—'}
+                                </TableCell>
+                                <TableCell className="max-w-[320px] px-3 py-2 font-medium">
+                                  <div className="line-clamp-2">{row.equipment_name ?? `Оборудование #${row.equipment_id}`}</div>
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right tabular-nums">
+                                  {formatSimilarityScore(row.gen_score ?? row.db_score) ?? formatRawScore(row.gen_score ?? row.db_score) ?? '—'}
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right tabular-nums">{formatRawScore(row.factor) ?? '—'}</TableCell>
+                                <TableCell className="px-3 py-2 text-right font-medium tabular-nums">
+                                  {formatSimilarityScore(row.final_score) ?? formatRawScore(row.final_score) ?? '—'}
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right">
+                                  {href ? (
+                                    <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7">
+                                      <a href={href} target="_blank" rel="noopener noreferrer" aria-label="Открыть в библиотеке">
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                      </a>
+                                    </Button>
+                                  ) : '—'}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    );
+                  })()}
+                </div>
+
+                <div className="rounded-xl border bg-background/90 p-4 shadow-sm">
+                  <div className="mb-1 text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Путь 3. ОКВЭД → оборудование из базы → кейс
+                  </div>
+                  {(() => {
+                    const rows = Array.isArray(equipmentTracePaths.okved_equipment) ? equipmentTracePaths.okved_equipment : [];
+                    if (equipmentTraceLoading) {
+                      return (
+                        <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                          Загружаем путь 3
+                        </div>
+                      );
+                    }
+                    if (!rows.length) return <div className="text-sm text-muted-foreground">нет данных</div>;
+                    return (
+                      <Table className="min-w-[960px] text-xs">
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="w-[52px] px-3 py-2">#</TableHead>
+                            <TableHead className="w-[90px] px-3 py-2">ID</TableHead>
+                            <TableHead className="px-3 py-2">ОКВЭД / основание</TableHead>
+                            <TableHead className="px-3 py-2">Оборудование / кейс</TableHead>
+                            <TableHead className="w-[92px] px-3 py-2 text-right">VECTOR</TableHead>
+                            <TableHead className="w-[92px] px-3 py-2 text-right">GEN</TableHead>
+                            <TableHead className="w-[72px] px-3 py-2 text-right">K</TableHead>
+                            <TableHead className="w-[92px] px-3 py-2 text-right">FINAL</TableHead>
+                            <TableHead className="w-[64px] px-3 py-2 text-right">Ссылка</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {rows.map((row, idx) => {
+                            const href = buildEquipmentCardHref({ id: row.equipment_id });
+                            const basis = equipmentTraceReason || infoCompany.main_okved || 'Подбор по ОКВЭД';
+                            return (
+                              <TableRow key={`okved-path-${row.equipment_id}-${idx}`}>
+                                <TableCell className="px-3 py-2 tabular-nums">{idx + 1}</TableCell>
+                                <TableCell className="px-3 py-2 tabular-nums">{row.equipment_id}</TableCell>
+                                <TableCell className="max-w-[280px] px-3 py-2 text-muted-foreground">
+                                  <div className="line-clamp-2">{basis}</div>
+                                </TableCell>
+                                <TableCell className="max-w-[340px] px-3 py-2 font-medium">
+                                  <div className="line-clamp-2">{row.equipment_name ?? `Оборудование #${row.equipment_id}`}</div>
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right tabular-nums">
+                                  {formatSimilarityScore(row.vector_score) ?? formatRawScore(row.vector_score) ?? '—'}
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right tabular-nums">
+                                  {formatSimilarityScore(row.gen_score ?? row.db_score) ?? formatRawScore(row.gen_score ?? row.db_score) ?? '—'}
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right tabular-nums">{formatRawScore(row.factor) ?? '—'}</TableCell>
+                                <TableCell className="px-3 py-2 text-right font-medium tabular-nums">
+                                  {formatSimilarityScore(row.final_score) ?? formatRawScore(row.final_score) ?? '—'}
+                                </TableCell>
+                                <TableCell className="px-3 py-2 text-right">
+                                  {href ? (
+                                    <Button asChild type="button" variant="ghost" size="icon" className="h-7 w-7">
+                                      <a href={href} target="_blank" rel="noopener noreferrer" aria-label="Открыть в библиотеке">
+                                        <ExternalLink className="h-3.5 w-3.5" />
+                                      </a>
+                                    </Button>
+                                  ) : '—'}
+                                </TableCell>
+                              </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
                     );
                   })()}
                 </div>

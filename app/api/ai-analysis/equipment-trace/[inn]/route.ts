@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 
 import { callAiIntegration } from '@/lib/ai-integration';
-import { normalizeEquipmentTracePayload } from '@/lib/ai-analysis-equipment-trace';
+import { normalizeEquipmentTracePaths, normalizeEquipmentTracePayload } from '@/lib/ai-analysis-equipment-trace';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -44,6 +44,7 @@ export async function GET(_request: Request, { params }: RouteContext) {
   return NextResponse.json(
     {
       items: normalizeEquipmentTracePayload(res.data),
+      paths: normalizeEquipmentTracePaths(res.data),
       selection_strategy:
         res.data && typeof res.data === 'object' && typeof (res.data as { selection_strategy?: unknown }).selection_strategy === 'string'
           ? (res.data as { selection_strategy: string }).selection_strategy

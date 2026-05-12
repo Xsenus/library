@@ -516,6 +516,7 @@ type SiteAnalyzerFallback = {
   descriptionOkvedScore: number | null;
   scoreSource: string | null;
   prodclassByOkved: number | null;
+  fullGptResponse: any;
   goods: any[];
   equipment: any[];
 };
@@ -873,6 +874,10 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
         openAiMeta.names.has('equipment') ? 'equipment' : null,
         openAiMeta.names.has('goods') ? 'goods' : null,
         openAiMeta.names.has('goods_type') ? 'goods_type' : null,
+        openAiMeta.names.has('answer_raw') ? 'answer_raw' : null,
+        openAiMeta.names.has('external_response_raw') ? 'external_response_raw' : null,
+        openAiMeta.names.has('raw_answer') ? 'raw_answer' : null,
+        openAiMeta.names.has('full_response') ? 'full_response' : null,
         openAiMeta.names.has('domain') ? 'domain' : null,
         openAiMeta.names.has('url') ? 'url' : null,
       ].filter(Boolean) as string[];
@@ -1199,6 +1204,12 @@ async function loadSiteAnalyzerFallbacks(inns: string[]): Promise<Map<string, Si
       scoreSource: parseString(prodclassRow.score_source) ?? parseString((openAiRow as any).score_source),
       prodclassByOkved:
         parseNumber(prodclassRow.prodclass_by_okved) ?? parseNumber((openAiRow as any).prodclass_by_okved),
+      fullGptResponse:
+        (openAiRow as any).answer_raw ??
+        (openAiRow as any).external_response_raw ??
+        (openAiRow as any).raw_answer ??
+        (openAiRow as any).full_response ??
+        null,
       goods: fallbackGoods.map((g) => ({
         id: parseNumber(g.goods_type_id) ?? parseNumber(g.match_id) ?? parseNumber((g as any).id),
         name:
@@ -1570,6 +1581,7 @@ function mergeAnalyzerInfo(
     scoreSource: string | null;
     prodclassByOkved: number | null;
     prodclass: { id: number; name: string | null; score: number | null; source: 'site' | 'okved' } | null;
+    fullGptResponse?: any;
   },
 ) {
   const company = base?.company && typeof base.company === 'object' ? { ...base.company } : {};
@@ -1580,6 +1592,9 @@ function mergeAnalyzerInfo(
   if (!ai.sites && sanitizedSites?.length) ai.sites = sanitizedSites;
   if (!ai.products && extra.tnved?.length) ai.products = extra.tnved;
   if (!ai.equipment && extra.equipment?.length) ai.equipment = extra.equipment;
+  if (ai.full_gpt_response == null && extra.fullGptResponse != null) {
+    ai.full_gpt_response = extra.fullGptResponse;
+  }
 
   if (ai.description_score == null && extra.descriptionScore != null) {
     ai.description_score = extra.descriptionScore;
@@ -2317,6 +2332,7 @@ export async function GET(request: NextRequest) {
                 source: isOkvedFallback ? 'okved' : 'site',
               }
             : null,
+        fullGptResponse: siteFallback?.fullGptResponse ?? null,
       }));
       const pipeline = parsePipeline(row.analysis_pipeline || (analysisInfo as any)?.pipeline);
 

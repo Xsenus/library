@@ -7,6 +7,14 @@ const componentSource = fs.readFileSync(
   path.join(process.cwd(), 'components/library/ai-company-analysis-tab.tsx'),
   'utf8',
 );
+const equipmentTraceRouteSource = fs.readFileSync(
+  path.join(process.cwd(), 'app/api/ai-analysis/equipment-trace/[inn]/route.ts'),
+  'utf8',
+);
+const companiesRouteSource = fs.readFileSync(
+  path.join(process.cwd(), 'app/api/ai-analysis/companies/route.ts'),
+  'utf8',
+);
 
 test('AI analysis companies tab exposes nested list modes and visible search', () => {
   assert.match(componentSource, /type CompanyListMode = 'all' \| 'analyzed'/);
@@ -60,4 +68,28 @@ test('analyzed companies mode requests successful analyses sorted by finish hist
     /requestStatusFilters = companyListMode === 'analyzed' \? \['success'\] : statusFilters/,
   );
   assert.match(componentSource, /params\.set\('q', debouncedSearch\)/);
+});
+
+test('company analysis dialog exposes path tables for audit and future reports', () => {
+  assert.match(componentSource, /Путь 1\. Продукция сайта/);
+  assert.match(componentSource, /Путь 2\. Оборудование с сайта/);
+  assert.match(componentSource, /Путь 3\. ОКВЭД/);
+  assert.match(componentSource, /Продукция с сайта/);
+  assert.match(componentSource, /Оборудование с сайта/);
+  assert.match(componentSource, /Источник TOP/);
+  assert.match(componentSource, /buildGoodsHref/);
+  assert.match(componentSource, /goodsId/);
+  assert.match(componentSource, /equipmentId/);
+});
+
+test('company analysis dialog uses full GPT response when backend exposes it', () => {
+  assert.match(componentSource, /fullAnalyzerResponseText/);
+  assert.match(componentSource, /full_gpt_response/);
+  assert.match(companiesRouteSource, /fullGptResponse/);
+  assert.match(companiesRouteSource, /ai\.full_gpt_response/);
+});
+
+test('equipment trace API exposes detailed paths beside top items', () => {
+  assert.match(equipmentTraceRouteSource, /normalizeEquipmentTracePaths/);
+  assert.match(equipmentTraceRouteSource, /paths: normalizeEquipmentTracePaths\(res\.data\)/);
 });

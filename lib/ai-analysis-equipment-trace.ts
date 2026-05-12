@@ -17,6 +17,26 @@ export type EquipmentScoreTrace = {
   origin_name?: string | null;
 };
 
+export type EquipmentPathTrace = {
+  equipment_id: string;
+  equipment_name?: string | null;
+  final_score?: number | null;
+  db_score?: number | null;
+  vector_score?: number | null;
+  gen_score?: number | null;
+  factor?: number | null;
+  calculation_path?: string | null;
+  matched_site_equipment?: string | null;
+  matched_site_equipment_score?: number | null;
+  matched_product_id?: string | null;
+  matched_product_name?: string | null;
+};
+
+export type EquipmentTracePaths = {
+  site_equipment: EquipmentPathTrace[];
+  okved_equipment: EquipmentPathTrace[];
+};
+
 type AnyRecord = Record<string, unknown>;
 type TraceSource = '1way' | '2way' | '3way';
 
@@ -192,6 +212,85 @@ function createTraceFromWinner(
   item.origin_kind = 'site';
   item.origin_name = item.matched_site_equipment ?? null;
   return item;
+}
+
+function sortPathRows(left: EquipmentPathTrace, right: EquipmentPathTrace): number {
+  const leftScore = left.final_score ?? left.vector_score ?? left.matched_site_equipment_score ?? -1;
+  const rightScore = right.final_score ?? right.vector_score ?? right.matched_site_equipment_score ?? -1;
+  if (leftScore !== rightScore) return rightScore - leftScore;
+  return String(left.equipment_name ?? left.equipment_id).localeCompare(String(right.equipment_name ?? right.equipment_id), 'ru');
+}
+
+export function normalizeEquipmentTracePaths(payload: unknown): EquipmentTracePaths {
+  const root = recordFrom(payload);
+  if (!root) return { site_equipment: [], okved_equipment: [] };
+
+  const oneWayDetails = readArray(root, 'equipment_1way_details');
+  const threeWayDetails = readArray(root, 'equipment_3way_details');
+  const siteEquipment = readArray(root, 'site_equipment');
+
+  const siteByEquipmentId = new Map<string, { name: string | null; score: number | null }>();
+  for (const item of siteEquipment) {
+    const equipmentId = normalizeId(item.equipment_id ?? item.id);
+    if (!equipmentId) continue;
+    const candidate = {
+      name: toText(item.equipment ?? item.equipment_site ?? item.name),
+      score: scoreOrNull(item, 'equipment_score', 'score', 'match_score'),
+    };
+    const current = siteByEquipmentId.get(equipmentId);
+    if (!current || (candidate.score ?? -1) > (current.score ?? -1)) {
+      siteByEquipmentId.set(equipmentId, candidate);
+    }
+  }
+
+  const siteRows = threeWayDetails.reduce<EquipmentPathTrace[]>((acc, item) => {
+    const equipmentId = normalizeId(item.equipment_id ?? item.id);
+    if (!equipmentId) return acc;
+    const siteMatch = siteByEquipmentId.get(equipmentId);
+    acc.push({
+      equipment_id: equipmentId,
+      equipment_name: toText(item.equipment_name) ?? null,
+      final_score: scoreOrNull(item, 'final_score', 'score_e3', 'SCORE_E3'),
+      db_score: scoreOrNull(item, 'db_score', 'gen_score', 'clean_score', 'crore_3', 'CRORE_3'),
+      vector_score: deriveVectorScore(item, '3way'),
+      gen_score: scoreOrNull(item, 'gen_score', 'db_score', 'clean_score', 'crore_3', 'CRORE_3'),
+      factor: scoreOrNull(item, 'factor') ?? 1,
+      calculation_path: '3way',
+      matched_site_equipment: siteMatch?.name ?? toText(item.equipment ?? item.equipment_site) ?? null,
+      matched_site_equipment_score: siteMatch?.score ?? scoreOrNull(item, 'equipment_score', 'score', 'match_score'),
+      matched_product_id: null,
+      matched_product_name: null,
+    });
+    return acc;
+  }, []);
+
+  const okvedRows = oneWayDetails.reduce<EquipmentPathTrace[]>((acc, item) => {
+    const equipmentId = normalizeId(item.id ?? item.equipment_id);
+    if (!equipmentId) return acc;
+    acc.push({
+      equipment_id: equipmentId,
+      equipment_name: toText(item.equipment_name) ?? null,
+      final_score: scoreOrNull(item, 'final_score', 'score_e1', 'SCORE_E1'),
+      db_score: scoreOrNull(item, 'db_score', 'clean_score', 'equipment_score_max'),
+      vector_score: deriveVectorScore(item, '1way'),
+      gen_score: scoreOrNull(item, 'gen_score', 'clean_score', 'db_score', 'equipment_score_max'),
+      factor: scoreOrNull(item, 'factor'),
+      calculation_path: toText(item.path) ?? '1way',
+      matched_site_equipment: null,
+      matched_site_equipment_score: null,
+      matched_product_id: null,
+      matched_product_name: null,
+    });
+    return acc;
+  }, []);
+
+  siteRows.sort(sortPathRows);
+  okvedRows.sort(sortPathRows);
+
+  return {
+    site_equipment: siteRows,
+    okved_equipment: okvedRows,
+  };
 }
 
 export function normalizeEquipmentTracePayload(payload: unknown): EquipmentScoreTrace[] {
