@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { X } from 'lucide-react';
 import InlineRevenueBars from './inline-revenue-bar';
 import SquareImgButton from './square-img-button';
+import { CompanyStatusBadges, hasRevenueGrowth } from './company-status-badges';
 
 type OkvedMain = ReturnType<typeof okvedMainSchema.parse>;
 type SortKey = 'revenue_desc' | 'revenue_asc';
@@ -163,6 +164,7 @@ export default function OkvedTab() {
   const initialSort = ((sp.get('sort') as SortKey) ?? 'revenue_desc') as SortKey;
   const initialResponsible = sp.get('responsible') ?? '';
   const initialColor = sp.get('color') ?? 'all';
+  const initialPp719Only = sp.get('pp719') === '1';
   const initialExtra = (sp.get('extra') ?? '0') === '1'; // ЧБ №2
   const initialParent = (sp.get('parent') ?? '0') === '1'; // ЧБ №3
   const initialPage = Number(sp.get('page')) || 1;
@@ -202,6 +204,7 @@ export default function OkvedTab() {
   const [responsibleFilter, setResponsibleFilter] = useState<string>(initialResponsible);
   const [companyColor, setCompanyColor] = useState<string>(initialColor || 'all');
   const [companyColorOptions, setCompanyColorOptions] = useState<CompanyColorOption[]>([]);
+  const [pp719Only, setPp719Only] = useState<boolean>(initialPp719Only);
   const [sortKey, setSortKey] = useState<SortKey>(initialSort);
 
   const [responsibles, setResponsibles] = useState<Record<string, RespInfo>>({});
@@ -379,6 +382,7 @@ export default function OkvedTab() {
     if (searchName.trim()) url.searchParams.set('q', searchName.trim());
     if (responsibleFilter.trim()) url.searchParams.set('responsible', responsibleFilter.trim());
     if (companyColor !== 'all') url.searchParams.set('color', companyColor);
+    if (pp719Only) url.searchParams.set('pp719', '1');
     url.searchParams.set('sort', sortKey);
     if (csOkvedEnabled && industryId !== 'all') {
       url.searchParams.set('industryId', industryId);
@@ -422,6 +426,9 @@ export default function OkvedTab() {
     if (companyColor !== 'all') qs.set('color', companyColor);
     else qs.delete('color');
 
+    if (pp719Only) qs.set('pp719', '1');
+    else qs.delete('pp719');
+
     qs.set('sort', sortKey);
     qs.set('extra', includeExtraState ? '1' : '0');
     qs.set('parent', includeParentState ? '1' : '0');
@@ -443,6 +450,7 @@ export default function OkvedTab() {
     searchName,
     responsibleFilter,
     companyColor,
+    pp719Only,
     includeExtraState,
     includeParentState,
     sortKey,
@@ -549,6 +557,7 @@ export default function OkvedTab() {
     searchName,
     responsibleFilter,
     companyColor,
+    pp719Only,
     includeExtraState,
     includeParentState,
     sortKey,
@@ -912,6 +921,17 @@ export default function OkvedTab() {
               </select>
             </div>
 
+            <label className="inline-flex items-center gap-2 text-xs leading-none">
+              <input
+                data-testid="okved-companies-pp719-filter"
+                type="checkbox"
+                className="h-4 w-4"
+                checked={pp719Only}
+                onChange={(e) => setPp719Only(e.target.checked)}
+              />
+              Компании в реестре ПП719
+            </label>
+
             {/* Поиск в списке слева */}
             <Input
               className="h-8 text-xs"
@@ -1144,6 +1164,7 @@ export default function OkvedTab() {
                       const rowBg = colorRowBg(resp?.colorLabel, resp?.colorXmlId);
                       const hasColor = !!rowBg;
                       const sites = companySites[c.inn] ?? [];
+                      const revenueGrowing = hasRevenueGrowth(c.revenue, c.revenue_1);
                       const sitesExpanded = expandedSites.has(c.inn);
                       const visibleSites = sitesExpanded ? sites : sites.slice(0, 3);
                       const showSitesToggle = sites.length > 3;
@@ -1179,7 +1200,16 @@ export default function OkvedTab() {
                           </td>
 
                           <td className="py-0.5 pr-2 whitespace-nowrap">{c.inn}</td>
-                          <td className="py-0.5 pr-3">{c.short_name}</td>
+                          <td className="py-0.5 pr-3">
+                            <div className="flex min-w-[150px] flex-col gap-1">
+                              <span>{c.short_name}</span>
+                              <CompanyStatusBadges
+                                inPp719={c.in_pp719}
+                                revenueGrowing={revenueGrowing}
+                                analysisScore={c.analysis_score}
+                              />
+                            </div>
+                          </td>
                           <td className="py-0.5 pr-3 align-middle text-xs min-w-[140px] max-w-[220px]">
                             {visibleSites.length ? (
                               <div className="flex flex-col gap-0.5">
@@ -1226,6 +1256,7 @@ export default function OkvedTab() {
                                   revenue={[c.revenue_3, c.revenue_2, c.revenue_1, c.revenue]}
                                   income={[c.income_3, c.income_2, c.income_1, c.income]}
                                   year={c.year}
+                                  showYears
                                 />
                               </div>
                               <div className="text-right tabular-nums w-[56px]">

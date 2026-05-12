@@ -11,6 +11,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { useDebounce } from '@/hooks/use-debounce';
 import { cn } from '@/lib/utils';
+import { formatAnalysisScore, getAnalysisScoreBadgeStyle, hasRevenueGrowth } from './company-status-badges';
 
 type IndustryItem = { id: number; industry: string };
 type ProdclassItem = { id: number; prodclass: string; industry_id: number };
@@ -31,8 +32,12 @@ type MapCompany = {
   smb_type: string | null;
   smb_category: string | null;
   revenue_1: number | null;
+  revenue_2: number | null;
+  revenue_3: number | null;
+  year: number | null;
   analysis_ok: number | null;
   analysis_score: number | null;
+  in_pp719: boolean;
   responsible: string | null;
   color_label: string | null;
   color_xml_id: string | null;
@@ -192,11 +197,70 @@ function formatEnterpriseType(value: string | null | undefined): string {
   return found?.label ?? value ?? '—';
 }
 
+function buildAnalysisScoreStyle(score: number | null | undefined): string {
+  const style = getAnalysisScoreBadgeStyle(score);
+  return `background:${style.backgroundColor};color:${style.color};`;
+}
+
+function buildStatusBadgesHtml(company: MapCompany): string {
+  const scoreText = formatAnalysisScore(company.analysis_score);
+  const growing = hasRevenueGrowth(company.revenue, company.revenue_1);
+  if (!company.in_pp719 && !growing && !scoreText) return '';
+
+  const base = 'display:inline-flex;height:20px;align-items:center;border-radius:4px;padding:0 6px;font-size:11px;font-weight:800;line-height:1;';
+  const badges = [
+    company.in_pp719
+      ? `<span style="${base}background:#2563eb;color:white;">719</span>`
+      : '',
+    growing
+      ? `<span style="${base}background:#84cc16;color:#1a2e05;">Рост</span>`
+      : '',
+    scoreText
+      ? `<span title="Балл анализа" style="${base}${buildAnalysisScoreStyle(company.analysis_score)}">${escapeHtml(scoreText)}</span>`
+      : '',
+  ].filter(Boolean);
+
+  return `<div style="display:flex;flex-wrap:wrap;gap:4px;margin:-2px 0 8px 0;">${badges.join('')}</div>`;
+}
+
+function buildRevenueChartHtml(company: MapCompany): string {
+  const values = [company.revenue_3, company.revenue_2, company.revenue_1, company.revenue];
+  const hasValues = values.some((value) => typeof value === 'number' && Number.isFinite(value));
+  if (!hasValues) return '';
+
+  const max = Math.max(...values.map((value) => (typeof value === 'number' && Number.isFinite(value) ? Math.abs(value) : 0)), 1);
+  const currentYear = typeof company.year === 'number' && Number.isFinite(company.year)
+    ? company.year
+    : new Date().getFullYear() - 1;
+
+  const bars = values.map((value, index) => {
+    const safeValue = typeof value === 'number' && Number.isFinite(value) ? value : 0;
+    const height = Math.max(4, Math.round((Math.abs(safeValue) / max) * 42));
+    const year = currentYear - 3 + index;
+    const color = year === currentYear ? '#60a5fa' : '#cbd5e1';
+    return `
+      <div style="display:flex;flex-direction:column;align-items:center;justify-content:flex-end;gap:3px;width:28px;height:58px;">
+        <div title="${escapeHtml(String(year))}: ${escapeHtml(formatRevenueMln(safeValue))} млн" style="width:18px;height:${height}px;border-radius:4px 4px 1px 1px;background:${color};"></div>
+        <span style="font-size:10px;color:#64748b;line-height:1;">${String(year).slice(-2)}</span>
+      </div>
+    `;
+  });
+
+  return `
+    <div style="display:flex;align-items:flex-end;gap:4px;margin:8px 0 2px 0;border-top:1px solid #e2e8f0;padding-top:8px;">
+      <span style="align-self:center;margin-right:6px;color:#64748b;">Год</span>
+      ${bars.join('')}
+    </div>
+  `;
+}
+
 function buildBalloonContent(company: MapCompany): string {
   const revenue = formatRevenueMln(company.revenue);
   const score = formatScore(company.analysis_score);
   const bitrixHref = buildBitrixHref(company.inn);
   const site = extractFirstSite(company.web_sites);
+  const badges = buildStatusBadgesHtml(company);
+  const revenueChart = buildRevenueChartHtml(company);
   const siteLine = site
     ? `<div style="display:flex;justify-content:space-between;gap:16px;padding:3px 0;"><span style="color:#64748b;">Сайт</span><a href="${escapeHtml(siteHref(site))}" target="_blank" rel="noopener noreferrer" style="color:#2563eb;text-decoration:none;font-weight:600;">${escapeHtml(site)}</a></div>`
     : '';
@@ -204,6 +268,7 @@ function buildBalloonContent(company: MapCompany): string {
   return `
     <div style="min-width:280px;max-width:380px;font-family:Inter,Arial,sans-serif;font-size:13px;line-height:1.45;color:#0f172a;padding:2px;">
       <div style="font-weight:750;font-size:15px;line-height:1.3;margin-bottom:10px;color:#020617;">${escapeHtml(company.short_name)}</div>
+      ${badges}
       <div style="display:grid;gap:4px;border-top:1px solid #e2e8f0;border-bottom:1px solid #e2e8f0;padding:8px 0;">
         <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">ИНН</span><b>${escapeHtml(company.inn)}</b></div>
         <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">Выручка</span><b>${escapeHtml(revenue)} млн</b></div>
@@ -214,6 +279,7 @@ function buildBalloonContent(company: MapCompany): string {
         <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">Филиалов</span><b>${escapeHtml(formatInteger(company.branch_count))}</b></div>
         <div style="display:flex;justify-content:space-between;gap:16px;"><span style="color:#64748b;">Тип</span><b>${escapeHtml(formatEnterpriseType(company.smb_category || company.smb_type))}</b></div>
       </div>
+      ${revenueChart}
       ${siteLine}
       <div style="margin-top:8px;color:#475569;">${escapeHtml(company.address || 'Адрес не указан')}</div>
       <a href="${escapeHtml(bitrixHref)}" target="_blank" rel="noopener noreferrer" style="display:inline-flex;align-items:center;justify-content:center;margin-top:12px;border-radius:10px;background:#2563eb;color:white;font-weight:700;text-decoration:none;padding:8px 12px;">Открыть в Bitrix24</a>
@@ -432,12 +498,14 @@ function ModernCheckbox({
   children,
   className,
   disabled,
+  testId,
 }: {
   checked: boolean;
   onCheckedChange: (value: boolean) => void;
   children: ReactNode;
   className?: string;
   disabled?: boolean;
+  testId?: string;
 }) {
   return (
     <label
@@ -450,6 +518,7 @@ function ModernCheckbox({
       )}
     >
       <Checkbox
+        data-testid={testId}
         checked={checked}
         disabled={disabled}
         onCheckedChange={(value) => onCheckedChange(Boolean(value))}
@@ -577,6 +646,7 @@ export default function CompaniesMapTab() {
   const [scoreTo, setScoreTo] = useState('');
   const [responsible, setResponsible] = useState('');
   const [companyColor, setCompanyColor] = useState('all');
+  const [pp719Only, setPp719Only] = useState(false);
   const [responsibleOpen, setResponsibleOpen] = useState(false);
   const [revenueFromMln, setRevenueFromMln] = useState('');
   const [revenueToMln, setRevenueToMln] = useState('');
@@ -615,10 +685,12 @@ export default function CompaniesMapTab() {
     if (debouncedScoreFrom.trim() || debouncedScoreTo.trim()) count += 1;
     if (debouncedResponsible.trim()) count += 1;
     if (companyColor !== 'all') count += 1;
+    if (pp719Only) count += 1;
     if (debouncedRevenueFromMln.trim() || debouncedRevenueToMln.trim()) count += 1;
     return count;
   }, [
     companyColor,
+    pp719Only,
     debouncedResponsible,
     debouncedRevenueFromMln,
     debouncedRevenueToMln,
@@ -645,6 +717,7 @@ export default function CompaniesMapTab() {
     setScoreTo('');
     setResponsible('');
     setCompanyColor('all');
+    setPp719Only(false);
     setRevenueFromMln('');
     setRevenueToMln('');
   }, []);
@@ -680,6 +753,7 @@ export default function CompaniesMapTab() {
         if (debouncedScoreTo.trim()) params.set('scoreTo', debouncedScoreTo.trim());
         if (debouncedResponsible.trim()) params.set('responsible', debouncedResponsible.trim());
         if (companyColor !== 'all') params.set('color', companyColor);
+        if (pp719Only) params.set('pp719', '1');
         if (debouncedRevenueFromMln.trim()) params.set('revenueFromMln', debouncedRevenueFromMln.trim());
         if (debouncedRevenueToMln.trim()) params.set('revenueToMln', debouncedRevenueToMln.trim());
 
@@ -713,6 +787,7 @@ export default function CompaniesMapTab() {
       debouncedScoreTo,
       enterpriseType,
       companyColor,
+      pp719Only,
       industryId,
       mainOkvedOnly,
       okvedCode,
@@ -1234,9 +1309,20 @@ export default function CompaniesMapTab() {
                   Выручка в рост
                 </ModernCheckbox>
               </div>
+
+              <div className="order-10 flex min-w-0 items-end">
+                <ModernCheckbox
+                  checked={pp719Only}
+                  onCheckedChange={setPp719Only}
+                  className="h-10 w-full"
+                  testId="companies-map-pp719-filter"
+                >
+                  Компании в реестре ПП719
+                </ModernCheckbox>
+              </div>
             </div>
 
-            {(selectedIndustryLabel || selectedProdclassLabel || selectedEnterpriseTypeLabel || selectedCompanyColorLabel || okvedCode !== 'all' || revenueGrowing || error) && (
+            {(selectedIndustryLabel || selectedProdclassLabel || selectedEnterpriseTypeLabel || selectedCompanyColorLabel || okvedCode !== 'all' || revenueGrowing || pp719Only || error) && (
             <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-wrap items-center gap-2">
                 {selectedIndustryLabel && <ActiveFilterBadge>Отрасль: {selectedIndustryLabel}</ActiveFilterBadge>}
@@ -1245,6 +1331,7 @@ export default function CompaniesMapTab() {
                 {selectedCompanyColorLabel && <ActiveFilterBadge>Цвет: {selectedCompanyColorLabel}</ActiveFilterBadge>}
                 {okvedCode !== 'all' && <ActiveFilterBadge>ОКВЭД: {okvedCode}</ActiveFilterBadge>}
                 {revenueGrowing && <ActiveFilterBadge>Выручка в рост</ActiveFilterBadge>}
+                {pp719Only && <ActiveFilterBadge>ПП719</ActiveFilterBadge>}
               </div>
               {error && <Badge variant="destructive">{error}</Badge>}
             </div>

@@ -43,6 +43,14 @@ test('okved companies API supports Bitrix company color filter options', () => {
   assert.match(routeSource, /filterOptions: \{ colors: await loadCompanyColorOptions\(\) \}/);
 });
 
+test('okved companies API supports PP719 filter and status fields', () => {
+  assert.match(routeSource, /searchParams\.get\('pp719'\) === '1'/);
+  assert.match(routeSource, /FROM pp719companies p/);
+  assert.match(routeSource, /btrim\(p\.inn\) = btrim\(d\.inn\)/);
+  assert.match(routeSource, /d\.analysis_score/);
+  assert.match(routeSource, /AS in_pp719/);
+});
+
 test('okved companies API supports prodclass filter between industry and okved', () => {
   assert.match(routeSource, /searchParams\.get\('prodclassId'\)/);
   assert.match(routeSource, /getOkvedCodesForProdclass\(prodclassId\)/);
@@ -52,13 +60,23 @@ test('okved companies API supports prodclass filter between industry and okved',
 test('okved companies UI exposes responsible filter and company sites column', () => {
   assert.match(componentSource, /data-testid="okved-companies-responsible-filter"/);
   assert.match(componentSource, /data-testid="okved-companies-color-filter"/);
+  assert.match(componentSource, /data-testid="okved-companies-pp719-filter"/);
   assert.match(componentSource, /url\.searchParams\.set\('responsible',\s*responsibleFilter\.trim\(\)\)/);
   assert.match(componentSource, /url\.searchParams\.set\('color', companyColor\)/);
   assert.match(componentSource, /qs\.set\('color', companyColor\)/);
+  assert.match(componentSource, /url\.searchParams\.set\('pp719', '1'\)/);
   assert.match(componentSource, /\/api\/b24\/contacts\?maxAgeMinutes=\$\{CONTACTS_MAX_AGE_MINUTES\}/);
   assert.match(componentSource, /companySites\[c\.inn\]\s*\?\?/);
   assert.match(componentSource, /showSitesToggle/);
   assert.match(componentSource, /href=\{siteHref\(site\)\}/);
+});
+
+test('okved companies UI renders status badges and revenue years', () => {
+  assert.match(componentSource, /CompanyStatusBadges/);
+  assert.match(componentSource, /hasRevenueGrowth\(c\.revenue, c\.revenue_1\)/);
+  assert.match(componentSource, /inPp719=\{c\.in_pp719\}/);
+  assert.match(componentSource, /analysisScore=\{c\.analysis_score\}/);
+  assert.match(componentSource, /showYears/);
 });
 
 test('okved companies UI exposes three step industry type okved filter', () => {

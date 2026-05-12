@@ -20,6 +20,7 @@ type Props = {
   height?: number;
   className?: string;
   showGuides?: boolean;
+  showYears?: boolean;
   radius?: number;
   animate?: boolean;
   animationDuration?: number;
@@ -42,6 +43,7 @@ export default function InlineRevenueBars({
   height = 45,
   className = '',
   showGuides = false,
+  showYears = false,
   radius = 3,
   animate = true,
   animationDuration = 600,
@@ -92,9 +94,12 @@ export default function InlineRevenueBars({
   const zeroY = height - ((0 - yMin) / range) * height;
 
   // Layout calculations
-  const padding = { left: 2, right: 2, top: 4, bottom: 4 };
+  const padding = { left: 2, right: 2, top: 4, bottom: showYears ? 13 : 4 };
   const chartWidth = width - padding.left - padding.right;
   const chartHeight = height - padding.top - padding.bottom;
+  const yearLabels = Array.from({ length: 4 }, (_, index) =>
+    typeof year === 'number' && Number.isFinite(year) ? String(year - 3 + index) : '',
+  );
 
   const barCount = 4;
   const groupGap = Math.max(1, chartWidth * 0.02);
@@ -329,6 +334,27 @@ export default function InlineRevenueBars({
             );
           }
         })}
+
+        {showYears && (
+          <g>
+            {yearLabels.map((label, i) => {
+              const groupX = padding.left + i * (groupWidth + groupGap);
+              return (
+                <text
+                  key={`year-${i}`}
+                  x={groupX + groupWidth / 2}
+                  y={height - 1}
+                  textAnchor="middle"
+                  fontSize="8"
+                  fill="currentColor"
+                  opacity={0.68}
+                >
+                  {label.slice(-2)}
+                </text>
+              );
+            })}
+          </g>
+        )}
       </svg>
     </div>
   );

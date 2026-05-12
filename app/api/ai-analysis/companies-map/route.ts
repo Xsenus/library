@@ -21,8 +21,12 @@ type MapCompanyRow = {
   smb_type: string | null;
   smb_category: string | null;
   revenue_1: number | string | null;
+  revenue_2: number | string | null;
+  revenue_3: number | string | null;
+  year: number | string | null;
   analysis_ok: number | string | null;
   analysis_score: number | string | null;
+  in_pp719: boolean | string | number | null;
 };
 
 type CompanyMetaRow = {
@@ -261,6 +265,7 @@ export async function GET(request: NextRequest) {
     const mainOkvedOnly = searchParams.get('mainOkvedOnly') !== '0';
     const responsible = (searchParams.get('responsible') ?? '').trim();
     const color = (searchParams.get('color') ?? '').trim();
+    const pp719Only = searchParams.get('pp719') === '1';
     const successOnly = searchParams.get('success') === '1';
     const revenueGrowing = searchParams.get('revenueGrowing') === '1';
     const scoreFrom = parseFiniteNumber(searchParams.get('scoreFrom'));
@@ -420,6 +425,16 @@ export async function GET(request: NextRequest) {
       where.push(`d.inn = ANY($${args.length}::text[])`);
     }
 
+    if (pp719Only) {
+      where.push(`
+        EXISTS (
+          SELECT 1
+          FROM pp719companies p
+          WHERE btrim(p.inn) = btrim(d.inn)
+        )
+      `);
+    }
+
     const whereSql = `WHERE ${where.join(' AND ')}`;
 
     const statsSql = `
@@ -450,8 +465,16 @@ export async function GET(request: NextRequest) {
         d.smb_type,
         d.smb_category,
         d."revenue-1" AS revenue_1,
+        d."revenue-2" AS revenue_2,
+        d."revenue-3" AS revenue_3,
+        d.year,
         d.analysis_ok,
-        d.analysis_score
+        d.analysis_score,
+        EXISTS (
+          SELECT 1
+          FROM pp719companies p
+          WHERE btrim(p.inn) = btrim(d.inn)
+        ) AS in_pp719
       FROM dadata_result d
       ${whereSql}
         AND d.geo_lat IS NOT NULL
@@ -495,8 +518,12 @@ export async function GET(request: NextRequest) {
           smb_type: row.smb_type ?? null,
           smb_category: row.smb_category ?? null,
           revenue_1: toNumber(row.revenue_1),
+          revenue_2: toNumber(row.revenue_2),
+          revenue_3: toNumber(row.revenue_3),
+          year: toNumber(row.year),
           analysis_ok: toNumber(row.analysis_ok),
           analysis_score: toNumber(row.analysis_score),
+          in_pp719: row.in_pp719 === true || row.in_pp719 === 'true' || row.in_pp719 === 1 || row.in_pp719 === '1',
           responsible: meta?.assigned_name ?? null,
           color_label: meta?.color_label ?? null,
           color_xml_id: meta?.color_xml_id ?? null,

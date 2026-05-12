@@ -123,6 +123,20 @@ test('companies map supports filtering companies by Bitrix color', () => {
   assert.match(componentSource, /setColorOptions\(Array\.isArray\(data\.filterOptions\?\.colors\)/);
 });
 
+test('companies map supports PP719 filter badges and revenue year chart in balloons', () => {
+  assert.match(routeSource, /searchParams\.get\('pp719'\) === '1'/);
+  assert.match(routeSource, /FROM pp719companies p/);
+  assert.match(routeSource, /btrim\(p\.inn\) = btrim\(d\.inn\)/);
+  assert.match(routeSource, /AS in_pp719/);
+  assert.match(routeSource, /d\."revenue-2" AS revenue_2/);
+  assert.match(routeSource, /d\."revenue-3" AS revenue_3/);
+  assert.match(componentSource, /testId="companies-map-pp719-filter"/);
+  assert.match(componentSource, /params\.set\('pp719', '1'\)/);
+  assert.match(componentSource, /buildStatusBadgesHtml/);
+  assert.match(componentSource, /buildRevenueChartHtml/);
+  assert.match(componentSource, /formatAnalysisScore\(company\.analysis_score\)/);
+});
+
 test('companies map uses industry to type to okved cascade', () => {
   assert.match(componentSource, /type ProdclassItem/);
   assert.match(componentSource, /pageSize=100&scope=okved/);

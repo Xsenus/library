@@ -231,6 +231,8 @@ export const okvedCompanySchema = z.object({
   income_3: z.coerce.number().nullable().optional(),
 
   employee_count: z.coerce.number().nullable().optional(),
+  analysis_score: z.coerce.number().nullable().optional(),
+  in_pp719: z.coerce.boolean().optional(),
 });
 export type OkvedCompany = z.infer<typeof okvedCompanySchema>;
 

@@ -109,6 +109,7 @@ export async function GET(request: NextRequest) {
     const q = (searchParams.get('q') ?? '').trim();
     const responsible = (base.responsible ?? '').trim();
     const color = (searchParams.get('color') ?? '').trim();
+    const pp719Only = searchParams.get('pp719') === '1';
     const sortParam = (searchParams.get('sort') ?? 'revenue_desc') as
       | 'revenue_desc'
       | 'revenue_asc';
@@ -292,6 +293,16 @@ export async function GET(request: NextRequest) {
       i++;
     }
 
+    if (pp719Only) {
+      where.push(`
+        EXISTS (
+          SELECT 1
+          FROM pp719companies p
+          WHERE btrim(p.inn) = btrim(d.inn)
+        )
+      `);
+    }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const orderSql =
@@ -322,7 +333,13 @@ export async function GET(request: NextRequest) {
         "revenue-3" AS revenue_3,
         "income-1"  AS income_1,
         "income-2"  AS income_2,
-        "income-3"  AS income_3
+        "income-3"  AS income_3,
+        d.analysis_score,
+        EXISTS (
+          SELECT 1
+          FROM pp719companies p
+          WHERE btrim(p.inn) = btrim(d.inn)
+        ) AS in_pp719
       FROM dadata_result d
       ${whereSql}
       ${orderSql}
