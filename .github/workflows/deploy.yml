@@ -30,4 +30,12 @@ jobs:
             set -euo pipefail
             cd /opt/library/app
             echo "[deploy] node=$(node -v) npm=$(npm -v)"
+            echo "[deploy] sync git checkout with origin/main"
+            git fetch origin main
+            if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$(git ls-files --others --exclude-standard)" ]; then
+              echo "[deploy] working tree has local changes; refusing to reset"
+              git status --short
+              exit 2
+            fi
+            git reset --hard origin/main
             bash deploy/library-rollout.sh
