@@ -331,9 +331,9 @@ async function captureCaseArtifacts({
     await equipmentSection.waitFor({ state: 'visible', timeout: timeoutMs });
     const expectedPathTables = [
       { id: 'ai-analysis-path-top', tabId: 'ai-analysis-path-tab-top', label: 'Топ-10 оборудования' },
-      { id: 'ai-analysis-path-products', tabId: 'ai-analysis-path-tab-products', label: 'Путь 1' },
-      { id: 'ai-analysis-path-site-equipment', tabId: 'ai-analysis-path-tab-site-equipment', label: 'Путь 2' },
-      { id: 'ai-analysis-path-okved', tabId: 'ai-analysis-path-tab-okved', label: 'Путь 3' },
+      { id: 'ai-analysis-path-products', tabId: 'ai-analysis-path-tab-products', label: 'Товары сайта' },
+      { id: 'ai-analysis-path-site-equipment', tabId: 'ai-analysis-path-tab-site-equipment', label: 'Оборудование сайта' },
+      { id: 'ai-analysis-path-okved', tabId: 'ai-analysis-path-tab-okved', label: 'ОКВЭД' },
     ];
     for (const table of expectedPathTables) {
       await page.getByTestId(table.tabId).click();

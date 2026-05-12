@@ -71,9 +71,10 @@ test('analyzed companies mode requests successful analyses sorted by finish hist
 });
 
 test('company analysis dialog exposes path tables for audit and future reports', () => {
-  assert.match(componentSource, /Путь 1\. Продукция сайта/);
-  assert.match(componentSource, /Путь 2\. Оборудование с сайта/);
-  assert.match(componentSource, /Путь 3\. ОКВЭД/);
+  assert.match(componentSource, /Итоговый TOP-10/);
+  assert.match(componentSource, /Товары сайта/);
+  assert.match(componentSource, /Оборудование сайта/);
+  assert.match(componentSource, /ОКВЭД/);
   assert.match(componentSource, /Продукция с сайта/);
   assert.match(componentSource, /Оборудование с сайта/);
   assert.match(componentSource, /Источник TOP/);
