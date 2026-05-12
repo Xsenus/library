@@ -165,6 +165,7 @@ export default function OkvedTab() {
   const initialResponsible = sp.get('responsible') ?? '';
   const initialColor = sp.get('color') ?? 'all';
   const initialPp719Only = sp.get('pp719') === '1';
+  const initialRevenueGrowing = sp.get('revenueGrowing') === '1';
   const initialExtra = (sp.get('extra') ?? '0') === '1'; // ЧБ №2
   const initialParent = (sp.get('parent') ?? '0') === '1'; // ЧБ №3
   const initialPage = Number(sp.get('page')) || 1;
@@ -205,6 +206,7 @@ export default function OkvedTab() {
   const [companyColor, setCompanyColor] = useState<string>(initialColor || 'all');
   const [companyColorOptions, setCompanyColorOptions] = useState<CompanyColorOption[]>([]);
   const [pp719Only, setPp719Only] = useState<boolean>(initialPp719Only);
+  const [revenueGrowingOnly, setRevenueGrowingOnly] = useState<boolean>(initialRevenueGrowing);
   const [sortKey, setSortKey] = useState<SortKey>(initialSort);
 
   const [responsibles, setResponsibles] = useState<Record<string, RespInfo>>({});
@@ -383,6 +385,7 @@ export default function OkvedTab() {
     if (responsibleFilter.trim()) url.searchParams.set('responsible', responsibleFilter.trim());
     if (companyColor !== 'all') url.searchParams.set('color', companyColor);
     if (pp719Only) url.searchParams.set('pp719', '1');
+    if (revenueGrowingOnly) url.searchParams.set('revenueGrowing', '1');
     url.searchParams.set('sort', sortKey);
     if (csOkvedEnabled && industryId !== 'all') {
       url.searchParams.set('industryId', industryId);
@@ -429,6 +432,9 @@ export default function OkvedTab() {
     if (pp719Only) qs.set('pp719', '1');
     else qs.delete('pp719');
 
+    if (revenueGrowingOnly) qs.set('revenueGrowing', '1');
+    else qs.delete('revenueGrowing');
+
     qs.set('sort', sortKey);
     qs.set('extra', includeExtraState ? '1' : '0');
     qs.set('parent', includeParentState ? '1' : '0');
@@ -451,6 +457,7 @@ export default function OkvedTab() {
     responsibleFilter,
     companyColor,
     pp719Only,
+    revenueGrowingOnly,
     includeExtraState,
     includeParentState,
     sortKey,
@@ -558,6 +565,7 @@ export default function OkvedTab() {
     responsibleFilter,
     companyColor,
     pp719Only,
+    revenueGrowingOnly,
     includeExtraState,
     includeParentState,
     sortKey,
@@ -933,6 +941,17 @@ export default function OkvedTab() {
             </label>
 
             {/* Поиск в списке слева */}
+            <label className="inline-flex items-center gap-2 text-xs leading-none">
+              <input
+                data-testid="okved-companies-revenue-growing-filter"
+                type="checkbox"
+                className="h-4 w-4"
+                checked={revenueGrowingOnly}
+                onChange={(e) => setRevenueGrowingOnly(e.target.checked)}
+              />
+              Выручка в рост
+            </label>
+
             <Input
               className="h-8 text-xs"
               placeholder="Поиск по коду/названию…"

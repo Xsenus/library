@@ -54,6 +54,11 @@ test('okved companies API supports PP719 filter and status fields', () => {
   assert.match(pp719Source, /information_schema\.columns/);
 });
 
+test('okved companies API supports revenue growth filter', () => {
+  assert.match(routeSource, /searchParams\.get\('revenueGrowing'\) === '1'/);
+  assert.match(routeSource, /d\.revenue IS NOT NULL AND d\."revenue-1" IS NOT NULL AND d\.revenue > d\."revenue-1"/);
+});
+
 test('okved companies API supports prodclass filter between industry and okved', () => {
   assert.match(routeSource, /searchParams\.get\('prodclassId'\)/);
   assert.match(routeSource, /getOkvedCodesForProdclass\(prodclassId\)/);
@@ -64,10 +69,13 @@ test('okved companies UI exposes responsible filter and company sites column', (
   assert.match(componentSource, /data-testid="okved-companies-responsible-filter"/);
   assert.match(componentSource, /data-testid="okved-companies-color-filter"/);
   assert.match(componentSource, /data-testid="okved-companies-pp719-filter"/);
+  assert.match(componentSource, /data-testid="okved-companies-revenue-growing-filter"/);
   assert.match(componentSource, /url\.searchParams\.set\('responsible',\s*responsibleFilter\.trim\(\)\)/);
   assert.match(componentSource, /url\.searchParams\.set\('color', companyColor\)/);
   assert.match(componentSource, /qs\.set\('color', companyColor\)/);
   assert.match(componentSource, /url\.searchParams\.set\('pp719', '1'\)/);
+  assert.match(componentSource, /url\.searchParams\.set\('revenueGrowing', '1'\)/);
+  assert.match(componentSource, /qs\.set\('revenueGrowing', '1'\)/);
   assert.match(componentSource, /\/api\/b24\/contacts\?maxAgeMinutes=\$\{CONTACTS_MAX_AGE_MINUTES\}/);
   assert.match(componentSource, /companySites\[c\.inn\]\s*\?\?/);
   assert.match(componentSource, /showSitesToggle/);

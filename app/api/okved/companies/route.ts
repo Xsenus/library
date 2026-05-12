@@ -111,6 +111,7 @@ export async function GET(request: NextRequest) {
     const responsible = (base.responsible ?? '').trim();
     const color = (searchParams.get('color') ?? '').trim();
     const pp719Only = searchParams.get('pp719') === '1';
+    const revenueGrowing = searchParams.get('revenueGrowing') === '1';
     const sortParam = (searchParams.get('sort') ?? 'revenue_desc') as
       | 'revenue_desc'
       | 'revenue_asc';
@@ -309,6 +310,10 @@ export async function GET(request: NextRequest) {
       where.push(`d.inn = ANY($${i}::text[])`);
       args.push(pp719Inns);
       i++;
+    }
+
+    if (revenueGrowing) {
+      where.push(`d.revenue IS NOT NULL AND d."revenue-1" IS NOT NULL AND d.revenue > d."revenue-1"`);
     }
 
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
