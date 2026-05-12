@@ -45,6 +45,52 @@ async function getOkvedCodesForProdclass(prodclassId: number): Promise<string[]>
   return rows.map((row) => row.code).filter(Boolean);
 }
 
+type CompanyColorOption = {
+  value: string;
+  label: string;
+};
+
+async function loadCompanyColorOptions(): Promise<CompanyColorOption[]> {
+  await ensureCompanyMetaTable();
+
+  const { rows } = await db.query<{ value: string | null; label: string | null }>(
+    `
+      SELECT DISTINCT
+        COALESCE(NULLIF(btrim(color_xml_id), ''), NULLIF(btrim(color_label), '')) AS value,
+        COALESCE(NULLIF(btrim(color_label), ''), NULLIF(btrim(color_xml_id), '')) AS label
+      FROM b24_company_meta
+      WHERE COALESCE(NULLIF(btrim(color_xml_id), ''), NULLIF(btrim(color_label), '')) IS NOT NULL
+      ORDER BY label
+      LIMIT 100
+    `,
+  );
+
+  return rows
+    .map((row) => ({
+      value: String(row.value ?? '').trim(),
+      label: String(row.label ?? '').trim(),
+    }))
+    .filter((row) => row.value && row.label);
+}
+
+async function resolveColorInns(color: string): Promise<string[]> {
+  const normalized = color.trim();
+  if (!normalized) return [];
+
+  await ensureCompanyMetaTable();
+
+  const { rows } = await db.query<{ inn: string }>(
+    `
+      SELECT inn
+      FROM b24_company_meta
+      WHERE color_xml_id = $1 OR color_label = $1
+    `,
+    [normalized],
+  );
+
+  return rows.map((row) => String(row.inn ?? '').trim()).filter(Boolean);
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireApiAuth();
@@ -62,6 +108,7 @@ export async function GET(request: NextRequest) {
 
     const q = (searchParams.get('q') ?? '').trim();
     const responsible = (base.responsible ?? '').trim();
+    const color = (searchParams.get('color') ?? '').trim();
     const sortParam = (searchParams.get('sort') ?? 'revenue_desc') as
       | 'revenue_desc'
       | 'revenue_asc';
@@ -227,6 +274,24 @@ export async function GET(request: NextRequest) {
       i++;
     }
 
+    if (color) {
+      const colorInns = await resolveColorInns(color);
+
+      if (!colorInns.length) {
+        return NextResponse.json({
+          items: [],
+          total: 0,
+          page: base.page,
+          pageSize: base.pageSize,
+          filterOptions: { colors: await loadCompanyColorOptions() },
+        });
+      }
+
+      where.push(`d.inn = ANY($${i}::text[])`);
+      args.push(colorInns);
+      i++;
+    }
+
     const whereSql = where.length ? `WHERE ${where.join(' AND ')}` : '';
 
     const orderSql =
@@ -275,6 +340,7 @@ export async function GET(request: NextRequest) {
       total,
       page: base.page,
       pageSize: base.pageSize,
+      filterOptions: { colors: await loadCompanyColorOptions() },
     });
   } catch (e) {
     console.error('GET /api/okved/companies error', e);

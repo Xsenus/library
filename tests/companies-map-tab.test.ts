@@ -40,10 +40,11 @@ test('companies map uses the redesigned commercial filter layout', () => {
   assert.match(componentSource, /label="Тип предприятия" className="order-2"/);
   assert.match(componentSource, /label="ОКВЭД" className="order-3"/);
   assert.match(componentSource, /label="Ответственный" className="order-4"/);
-  assert.match(componentSource, /label="Размер бизнеса" className="order-5"/);
-  assert.match(componentSource, /label="Скор" className="order-6"/);
-  assert.match(componentSource, /label="Выручка, млн" className="order-7"/);
-  assert.match(componentSource, /className="order-8 flex min-w-0 items-end"/);
+  assert.match(componentSource, /label="Цвет компании" className="order-5"/);
+  assert.match(componentSource, /label="Размер бизнеса" className="order-6"/);
+  assert.match(componentSource, /label="Скор" className="order-7"/);
+  assert.match(componentSource, /label="Выручка, млн" className="order-8"/);
+  assert.match(componentSource, /className="order-9 flex min-w-0 items-end"/);
   assert.match(componentSource, /rounded-2xl border border-slate-200 bg-white/);
   assert.match(componentSource, /shadow-\[0_18px_50px_rgba\(15,23,42,0\.08\)\]/);
   assert.match(componentSource, /aria-label="Режим отображения карты"/);
@@ -109,6 +110,17 @@ test('companies map API supports enterprise type main OKVED and revenue growth f
   assert.match(routeSource, /TRIM\(d\.main_okved\) = \$\$\{param\}/);
   assert.match(routeSource, /d\.revenue > d\."revenue-1"/);
   assert.match(routeSource, /d\.web_sites/);
+});
+
+test('companies map supports filtering companies by Bitrix color', () => {
+  assert.match(routeSource, /searchParams\.get\('color'\)/);
+  assert.match(routeSource, /function resolveColorInns/);
+  assert.match(routeSource, /WHERE color_xml_id = \$1 OR color_label = \$1/);
+  assert.match(routeSource, /function loadCompanyColorOptions/);
+  assert.match(routeSource, /filterOptions: \{ responsibles, colors \}/);
+  assert.match(componentSource, /data-testid="companies-map-color-filter"/);
+  assert.match(componentSource, /params\.set\('color', companyColor\)/);
+  assert.match(componentSource, /setColorOptions\(Array\.isArray\(data\.filterOptions\?\.colors\)/);
 });
 
 test('companies map uses industry to type to okved cascade', () => {

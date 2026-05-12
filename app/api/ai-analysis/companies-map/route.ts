@@ -29,12 +29,15 @@ type CompanyMetaRow = {
   inn: string;
   company_id: string | null;
   assigned_name: string | null;
+  color_label: string | null;
+  color_xml_id: string | null;
 };
 
 type OkvedRootRow = { root: string };
 type OkvedCodeRow = { code: string };
 type InnRow = { inn: string };
 type ResponsibleRow = { assigned_name: string | null };
+type ColorRow = { value: string | null; label: string | null };
 type MapStatsRow = { total: number; with_geo: number };
 type QueryResult<Row> = { rows?: Row[] };
 
@@ -42,6 +45,7 @@ const rootsCache = new Map<number, { roots: string[]; ts: number }>();
 const ROOTS_TTL_MS = 10 * 60 * 1000;
 const RESPONSIBLES_TTL_MS = 5 * 60 * 1000;
 let responsiblesCache: { items: string[]; ts: number } | null = null;
+let colorsCache: { items: Array<{ value: string; label: string }>; ts: number } | null = null;
 
 function parseFiniteNumber(value: string | null): number | null {
   if (value == null || value.trim() === '') return null;
@@ -141,6 +145,26 @@ async function resolveResponsibleInns(responsible: string): Promise<string[] | n
   }
 }
 
+async function resolveColorInns(color: string): Promise<string[] | null> {
+  const normalized = color.trim();
+  if (!normalized) return null;
+
+  try {
+    const { rows } = await db.query<InnRow>(
+      `
+        SELECT inn
+        FROM b24_company_meta
+        WHERE color_xml_id = $1 OR color_label = $1
+      `,
+      [normalized],
+    );
+    return rows.map((row: InnRow) => String(row.inn ?? '').trim()).filter(Boolean);
+  } catch (error) {
+    console.warn('companies-map: failed to resolve company color filter', error);
+    return [];
+  }
+}
+
 async function loadCompanyMeta(inns: string[]): Promise<Map<string, CompanyMetaRow>> {
   if (!inns.length) return new Map();
 
@@ -148,6 +172,7 @@ async function loadCompanyMeta(inns: string[]): Promise<Map<string, CompanyMetaR
     const { rows } = await db.query<CompanyMetaRow>(
       `
         SELECT inn, company_id, assigned_name
+          , color_label, color_xml_id
         FROM b24_company_meta
         WHERE inn = ANY($1::text[])
       `,
@@ -161,6 +186,39 @@ async function loadCompanyMeta(inns: string[]): Promise<Map<string, CompanyMetaR
   } catch (error) {
     console.warn('companies-map: failed to load company meta', error);
     return new Map();
+  }
+}
+
+async function loadCompanyColorOptions(): Promise<Array<{ value: string; label: string }>> {
+  const now = Date.now();
+  if (colorsCache && now - colorsCache.ts < RESPONSIBLES_TTL_MS) {
+    return colorsCache.items;
+  }
+
+  try {
+    const { rows } = await db.query<ColorRow>(
+      `
+        SELECT DISTINCT
+          COALESCE(NULLIF(btrim(color_xml_id), ''), NULLIF(btrim(color_label), '')) AS value,
+          COALESCE(NULLIF(btrim(color_label), ''), NULLIF(btrim(color_xml_id), '')) AS label
+        FROM b24_company_meta
+        WHERE COALESCE(NULLIF(btrim(color_xml_id), ''), NULLIF(btrim(color_label), '')) IS NOT NULL
+        ORDER BY label
+        LIMIT 100
+      `,
+    );
+    const items = rows
+      .map((row: ColorRow) => ({
+        value: String(row.value ?? '').trim(),
+        label: String(row.label ?? '').trim(),
+      }))
+      .filter((row) => row.value && row.label);
+    colorsCache = { items, ts: now };
+    return items;
+  } catch (error) {
+    console.warn('companies-map: failed to load company color options', error);
+    colorsCache = { items: [], ts: now };
+    return [];
   }
 }
 
@@ -202,6 +260,7 @@ export async function GET(request: NextRequest) {
     const enterpriseType = (searchParams.get('enterpriseType') ?? '').trim();
     const mainOkvedOnly = searchParams.get('mainOkvedOnly') !== '0';
     const responsible = (searchParams.get('responsible') ?? '').trim();
+    const color = (searchParams.get('color') ?? '').trim();
     const successOnly = searchParams.get('success') === '1';
     const revenueGrowing = searchParams.get('revenueGrowing') === '1';
     const scoreFrom = parseFiniteNumber(searchParams.get('scoreFrom'));
@@ -215,13 +274,13 @@ export async function GET(request: NextRequest) {
     if (industryId) {
       const roots = await getOkvedRootsForIndustry(industryId);
       if (!roots.length) {
-        const responsibles = await loadResponsibleOptions();
+        const [responsibles, colors] = await Promise.all([loadResponsibleOptions(), loadCompanyColorOptions()]);
         return NextResponse.json({
           items: [],
           total: 0,
           withGeo: 0,
           skippedNoGeo: 0,
-          filterOptions: { responsibles },
+          filterOptions: { responsibles, colors },
         });
       }
       args.push(roots);
@@ -231,13 +290,13 @@ export async function GET(request: NextRequest) {
     if (prodclassId) {
       const codes = await getOkvedCodesForProdclass(prodclassId);
       if (!codes.length) {
-        const responsibles = await loadResponsibleOptions();
+        const [responsibles, colors] = await Promise.all([loadResponsibleOptions(), loadCompanyColorOptions()]);
         return NextResponse.json({
           items: [],
           total: 0,
           withGeo: 0,
           skippedNoGeo: 0,
-          filterOptions: { responsibles },
+          filterOptions: { responsibles, colors },
         });
       }
 
@@ -332,16 +391,32 @@ export async function GET(request: NextRequest) {
     if (responsible) {
       const responsibleInns = await resolveResponsibleInns(responsible);
       if (!responsibleInns?.length) {
-        const responsibles = await loadResponsibleOptions();
+        const [responsibles, colors] = await Promise.all([loadResponsibleOptions(), loadCompanyColorOptions()]);
         return NextResponse.json({
           items: [],
           total: 0,
           withGeo: 0,
           skippedNoGeo: 0,
-          filterOptions: { responsibles },
+          filterOptions: { responsibles, colors },
         });
       }
       args.push(responsibleInns);
+      where.push(`d.inn = ANY($${args.length}::text[])`);
+    }
+
+    if (color) {
+      const colorInns = await resolveColorInns(color);
+      if (!colorInns?.length) {
+        const [responsibles, colors] = await Promise.all([loadResponsibleOptions(), loadCompanyColorOptions()]);
+        return NextResponse.json({
+          items: [],
+          total: 0,
+          withGeo: 0,
+          skippedNoGeo: 0,
+          filterOptions: { responsibles, colors },
+        });
+      }
+      args.push(colorInns);
       where.push(`d.inn = ANY($${args.length}::text[])`);
     }
 
@@ -386,10 +461,11 @@ export async function GET(request: NextRequest) {
       ORDER BY d.revenue DESC NULLS LAST, d.inn
     `;
 
-    const [statsRes, dataRes, responsibles] = await Promise.all([
+    const [statsRes, dataRes, responsibles, colors] = await Promise.all([
       dbBitrix.query(statsSql, args) as Promise<QueryResult<MapStatsRow>>,
       dbBitrix.query(dataSql, args) as Promise<QueryResult<MapCompanyRow>>,
       loadResponsibleOptions(),
+      loadCompanyColorOptions(),
     ]);
 
     const rows = dataRes.rows ?? [];
@@ -422,6 +498,8 @@ export async function GET(request: NextRequest) {
           analysis_ok: toNumber(row.analysis_ok),
           analysis_score: toNumber(row.analysis_score),
           responsible: meta?.assigned_name ?? null,
+          color_label: meta?.color_label ?? null,
+          color_xml_id: meta?.color_xml_id ?? null,
           company_id: meta?.company_id ?? null,
         };
       })
@@ -435,12 +513,12 @@ export async function GET(request: NextRequest) {
       total,
       withGeo,
       skippedNoGeo: Math.max(0, total - withGeo),
-      filterOptions: { responsibles },
+      filterOptions: { responsibles, colors },
     });
   } catch (error) {
     console.error('GET /api/ai-analysis/companies-map error', error);
     return NextResponse.json(
-      { items: [], total: 0, withGeo: 0, skippedNoGeo: 0, filterOptions: { responsibles: [] } },
+      { items: [], total: 0, withGeo: 0, skippedNoGeo: 0, filterOptions: { responsibles: [], colors: [] } },
       { status: 500 },
     );
   }

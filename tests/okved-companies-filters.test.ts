@@ -35,6 +35,14 @@ test('okved companies API filters by cached Bitrix responsible', () => {
   assert.match(routeSource, /d\.inn\s*=\s*ANY\(\$\$\{i\}::text\[\]\)/);
 });
 
+test('okved companies API supports Bitrix company color filter options', () => {
+  assert.match(routeSource, /searchParams\.get\('color'\)/);
+  assert.match(routeSource, /function resolveColorInns/);
+  assert.match(routeSource, /WHERE color_xml_id = \$1 OR color_label = \$1/);
+  assert.match(routeSource, /function loadCompanyColorOptions/);
+  assert.match(routeSource, /filterOptions: \{ colors: await loadCompanyColorOptions\(\) \}/);
+});
+
 test('okved companies API supports prodclass filter between industry and okved', () => {
   assert.match(routeSource, /searchParams\.get\('prodclassId'\)/);
   assert.match(routeSource, /getOkvedCodesForProdclass\(prodclassId\)/);
@@ -43,7 +51,10 @@ test('okved companies API supports prodclass filter between industry and okved',
 
 test('okved companies UI exposes responsible filter and company sites column', () => {
   assert.match(componentSource, /data-testid="okved-companies-responsible-filter"/);
+  assert.match(componentSource, /data-testid="okved-companies-color-filter"/);
   assert.match(componentSource, /url\.searchParams\.set\('responsible',\s*responsibleFilter\.trim\(\)\)/);
+  assert.match(componentSource, /url\.searchParams\.set\('color', companyColor\)/);
+  assert.match(componentSource, /qs\.set\('color', companyColor\)/);
   assert.match(componentSource, /\/api\/b24\/contacts\?maxAgeMinutes=\$\{CONTACTS_MAX_AGE_MINUTES\}/);
   assert.match(componentSource, /companySites\[c\.inn\]\s*\?\?/);
   assert.match(componentSource, /showSitesToggle/);

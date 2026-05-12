@@ -30,6 +30,11 @@ type ListResponse<T> = {
   totalPages: number;
 };
 
+type CompanyColorOption = {
+  value: string;
+  label: string;
+};
+
 // ——— стили подсветки выбранного фильтра ———
 const ACTIVE_ROW =
   'bg-blue-100 text-blue-700 ring-1 ring-blue-300 dark:bg-blue-900/40 dark:text-blue-100 dark:ring-blue-700';
@@ -157,6 +162,7 @@ export default function OkvedTab() {
   const initialQ = sp.get('q') ?? '';
   const initialSort = ((sp.get('sort') as SortKey) ?? 'revenue_desc') as SortKey;
   const initialResponsible = sp.get('responsible') ?? '';
+  const initialColor = sp.get('color') ?? 'all';
   const initialExtra = (sp.get('extra') ?? '0') === '1'; // ЧБ №2
   const initialParent = (sp.get('parent') ?? '0') === '1'; // ЧБ №3
   const initialPage = Number(sp.get('page')) || 1;
@@ -194,6 +200,8 @@ export default function OkvedTab() {
 
   const [searchName, setSearchName] = useState<string>(initialQ);
   const [responsibleFilter, setResponsibleFilter] = useState<string>(initialResponsible);
+  const [companyColor, setCompanyColor] = useState<string>(initialColor || 'all');
+  const [companyColorOptions, setCompanyColorOptions] = useState<CompanyColorOption[]>([]);
   const [sortKey, setSortKey] = useState<SortKey>(initialSort);
 
   const [responsibles, setResponsibles] = useState<Record<string, RespInfo>>({});
@@ -370,6 +378,7 @@ export default function OkvedTab() {
     url.searchParams.set('pageSize', String(pageSize));
     if (searchName.trim()) url.searchParams.set('q', searchName.trim());
     if (responsibleFilter.trim()) url.searchParams.set('responsible', responsibleFilter.trim());
+    if (companyColor !== 'all') url.searchParams.set('color', companyColor);
     url.searchParams.set('sort', sortKey);
     if (csOkvedEnabled && industryId !== 'all') {
       url.searchParams.set('industryId', industryId);
@@ -386,6 +395,7 @@ export default function OkvedTab() {
         if (myId !== companiesReqId.current) return;
         setCompanies(Array.isArray(data.items) ? data.items : []);
         setTotal(Number.isFinite(data.total) ? data.total : 0);
+        setCompanyColorOptions(Array.isArray(data.filterOptions?.colors) ? data.filterOptions.colors : []);
       } catch (e: any) {
         if (e?.name === 'AbortError') return;
         console.error('Failed to load companies:', e);
@@ -409,6 +419,9 @@ export default function OkvedTab() {
     if (responsibleFilter.trim()) qs.set('responsible', responsibleFilter.trim());
     else qs.delete('responsible');
 
+    if (companyColor !== 'all') qs.set('color', companyColor);
+    else qs.delete('color');
+
     qs.set('sort', sortKey);
     qs.set('extra', includeExtraState ? '1' : '0');
     qs.set('parent', includeParentState ? '1' : '0');
@@ -429,6 +442,7 @@ export default function OkvedTab() {
     page,
     searchName,
     responsibleFilter,
+    companyColor,
     includeExtraState,
     includeParentState,
     sortKey,
@@ -534,6 +548,7 @@ export default function OkvedTab() {
     okved,
     searchName,
     responsibleFilter,
+    companyColor,
     includeExtraState,
     includeParentState,
     sortKey,
@@ -878,6 +893,23 @@ export default function OkvedTab() {
                 value={responsibleFilter}
                 onChange={(e) => setResponsibleFilter(e.target.value)}
               />
+            </div>
+
+            <div className="space-y-1">
+              <div className="text-[11px] uppercase text-muted-foreground">Цвет компании</div>
+              <select
+                data-testid="okved-companies-color-filter"
+                className="h-8 w-full rounded-md border border-input bg-background px-2 text-xs"
+                value={companyColor}
+                onChange={(e) => setCompanyColor(e.target.value)}
+              >
+                <option value="all">Все цвета</option>
+                {companyColorOptions.map((item) => (
+                  <option key={item.value} value={item.value}>
+                    {item.label}
+                  </option>
+                ))}
+              </select>
             </div>
 
             {/* Поиск в списке слева */}

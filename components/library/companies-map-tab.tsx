@@ -34,6 +34,8 @@ type MapCompany = {
   analysis_ok: number | null;
   analysis_score: number | null;
   responsible: string | null;
+  color_label: string | null;
+  color_xml_id: string | null;
   company_id: string | null;
 };
 
@@ -44,6 +46,7 @@ type CompaniesMapResponse = {
   skippedNoGeo?: number;
   filterOptions?: {
     responsibles?: string[];
+    colors?: Array<{ value: string; label: string }>;
   };
 };
 
@@ -551,6 +554,7 @@ export default function CompaniesMapTab() {
   const [withGeo, setWithGeo] = useState(0);
   const [skippedNoGeo, setSkippedNoGeo] = useState(0);
   const [responsibleOptions, setResponsibleOptions] = useState<string[]>([]);
+  const [colorOptions, setColorOptions] = useState<Array<{ value: string; label: string }>>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [lastLoadedAt, setLastLoadedAt] = useState<string | null>(null);
@@ -572,6 +576,7 @@ export default function CompaniesMapTab() {
   const [scoreFrom, setScoreFrom] = useState('');
   const [scoreTo, setScoreTo] = useState('');
   const [responsible, setResponsible] = useState('');
+  const [companyColor, setCompanyColor] = useState('all');
   const [responsibleOpen, setResponsibleOpen] = useState(false);
   const [revenueFromMln, setRevenueFromMln] = useState('');
   const [revenueToMln, setRevenueToMln] = useState('');
@@ -609,9 +614,11 @@ export default function CompaniesMapTab() {
     if (revenueGrowing) count += 1;
     if (debouncedScoreFrom.trim() || debouncedScoreTo.trim()) count += 1;
     if (debouncedResponsible.trim()) count += 1;
+    if (companyColor !== 'all') count += 1;
     if (debouncedRevenueFromMln.trim() || debouncedRevenueToMln.trim()) count += 1;
     return count;
   }, [
+    companyColor,
     debouncedResponsible,
     debouncedRevenueFromMln,
     debouncedRevenueToMln,
@@ -637,6 +644,7 @@ export default function CompaniesMapTab() {
     setScoreFrom('');
     setScoreTo('');
     setResponsible('');
+    setCompanyColor('all');
     setRevenueFromMln('');
     setRevenueToMln('');
   }, []);
@@ -671,6 +679,7 @@ export default function CompaniesMapTab() {
         if (debouncedScoreFrom.trim()) params.set('scoreFrom', debouncedScoreFrom.trim());
         if (debouncedScoreTo.trim()) params.set('scoreTo', debouncedScoreTo.trim());
         if (debouncedResponsible.trim()) params.set('responsible', debouncedResponsible.trim());
+        if (companyColor !== 'all') params.set('color', companyColor);
         if (debouncedRevenueFromMln.trim()) params.set('revenueFromMln', debouncedRevenueFromMln.trim());
         if (debouncedRevenueToMln.trim()) params.set('revenueToMln', debouncedRevenueToMln.trim());
 
@@ -686,6 +695,7 @@ export default function CompaniesMapTab() {
         setWithGeo(Number.isFinite(Number(data.withGeo)) ? Number(data.withGeo) : 0);
         setSkippedNoGeo(Number.isFinite(Number(data.skippedNoGeo)) ? Number(data.skippedNoGeo) : 0);
         setResponsibleOptions(Array.isArray(data.filterOptions?.responsibles) ? data.filterOptions!.responsibles! : []);
+        setColorOptions(Array.isArray(data.filterOptions?.colors) ? data.filterOptions!.colors! : []);
         setLastLoadedAt(new Date().toISOString());
       } catch (err: any) {
         if (err?.name === 'AbortError') return;
@@ -702,6 +712,7 @@ export default function CompaniesMapTab() {
       debouncedScoreFrom,
       debouncedScoreTo,
       enterpriseType,
+      companyColor,
       industryId,
       mainOkvedOnly,
       okvedCode,
@@ -974,6 +985,10 @@ export default function CompaniesMapTab() {
     () => ENTERPRISE_TYPES.find((item) => item.value === enterpriseType)?.label ?? null,
     [enterpriseType],
   );
+  const selectedCompanyColorLabel = useMemo(
+    () => colorOptions.find((item) => item.value === companyColor)?.label ?? null,
+    [colorOptions, companyColor],
+  );
   const lastLoadedTime = useMemo(
     () =>
       lastLoadedAt
@@ -1160,7 +1175,23 @@ export default function CompaniesMapTab() {
                 </Popover>
               </FilterField>
 
-              <FilterField label="Скор" className="order-6">
+              <FilterField label="Цвет компании" className="order-5">
+                <Select value={companyColor} onValueChange={setCompanyColor}>
+                  <SelectTrigger data-testid="companies-map-color-filter" className={CONTROL_CLASS}>
+                    <SelectValue placeholder="Все цвета" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="all">Все цвета</SelectItem>
+                    {colorOptions.map((item) => (
+                      <SelectItem key={item.value} value={item.value}>
+                        {item.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </FilterField>
+
+              <FilterField label="Скор" className="order-7">
                 <RangeInputs
                   fromValue={scoreFrom}
                   toValue={scoreTo}
@@ -1171,7 +1202,7 @@ export default function CompaniesMapTab() {
                 />
               </FilterField>
 
-              <FilterField label="Выручка, млн" className="order-7">
+              <FilterField label="Выручка, млн" className="order-8">
                 <RangeInputs
                   fromValue={revenueFromMln}
                   toValue={revenueToMln}
@@ -1182,7 +1213,7 @@ export default function CompaniesMapTab() {
                 />
               </FilterField>
 
-              <FilterField label="Размер бизнеса" className="order-5">
+              <FilterField label="Размер бизнеса" className="order-6">
                 <Select value={enterpriseType} onValueChange={setEnterpriseType}>
                   <SelectTrigger className={CONTROL_CLASS}>
                     <SelectValue placeholder="Все размеры" />
@@ -1198,19 +1229,20 @@ export default function CompaniesMapTab() {
                 </Select>
               </FilterField>
 
-              <div className="order-8 flex min-w-0 items-end">
+              <div className="order-9 flex min-w-0 items-end">
                 <ModernCheckbox checked={revenueGrowing} onCheckedChange={setRevenueGrowing} className="h-10 w-full">
                   Выручка в рост
                 </ModernCheckbox>
               </div>
             </div>
 
-            {(selectedIndustryLabel || selectedProdclassLabel || selectedEnterpriseTypeLabel || okvedCode !== 'all' || revenueGrowing || error) && (
+            {(selectedIndustryLabel || selectedProdclassLabel || selectedEnterpriseTypeLabel || selectedCompanyColorLabel || okvedCode !== 'all' || revenueGrowing || error) && (
             <div className="flex flex-col gap-3 border-t border-slate-100 pt-4 lg:flex-row lg:items-center lg:justify-between">
               <div className="flex flex-wrap items-center gap-2">
                 {selectedIndustryLabel && <ActiveFilterBadge>Отрасль: {selectedIndustryLabel}</ActiveFilterBadge>}
                 {selectedProdclassLabel && <ActiveFilterBadge>Тип: {selectedProdclassLabel}</ActiveFilterBadge>}
                 {selectedEnterpriseTypeLabel && <ActiveFilterBadge>Размер: {selectedEnterpriseTypeLabel}</ActiveFilterBadge>}
+                {selectedCompanyColorLabel && <ActiveFilterBadge>Цвет: {selectedCompanyColorLabel}</ActiveFilterBadge>}
                 {okvedCode !== 'all' && <ActiveFilterBadge>ОКВЭД: {okvedCode}</ActiveFilterBadge>}
                 {revenueGrowing && <ActiveFilterBadge>Выручка в рост</ActiveFilterBadge>}
               </div>
